@@ -1,0 +1,60 @@
+[package]
+name = "timeline"
+version = "0.1.0"
+edition = "2021"
+description = "Minimal time-series store using Parquet with a simple SQL-like query language, HTTP and WebSocket APIs, with a postgres-wired interface"
+authors = ["Euan Duncan Macinnes"]
+
+include = ["scripts/"]
+
+[dependencies]
+axum = { version = "0.8.6", features = ["macros", "ws", "json"] }
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2.0.17"
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+regex = "1"
+chrono = { version = "=0.4.42", features = ["serde"] }
+parking_lot = "0.12"
+
+futures-util = "0.3"
+
+# Optional Postgres wire protocol via pgwire
+pgwire = { version = "0.33", optional = true, default-features = false }
+
+# Polars for convenient Parquet IO and simple grouping
+polars = { version = "0.51.0", default-features = false, features = ["lazy", "parquet", "fmt", "serde", "strings", "temporal"] }
+polars-core = { version = "0.51.0", default-features = false }
+
+# Password hashing
+argon2 = { version = "0.5", features = ["password-hash"] }
+password-hash = "0.5"
+rand_core = "0.9"
+getrandom = "0.2"
+
+# Windows path handling
+path-absolutize = "3"
+
+# HTTP client for CLI interpreter connect mode
+reqwest = { version = "0.12", features = ["json", "cookies", "rustls-tls"] }
+
+# Lua scripting engine for UDFs
+mlua = { version = "0.9", features = ["lua54", "vendored", "serialize"] }
+once_cell = "1"
+
+[profile.release]
+lto = true
+codegen-units = 1
+
+[features]
+# Enable the optional pgwire dependency via a named feature that matches cfg(feature = "pgwire") in code
+pgwire = ["dep:pgwire"]
+# Build with pgwire enabled by default so the binary exposes pgwire unless disabled at runtime
+default = ["pgwire"]
+
+[dev-dependencies]
+futures = "0.3.31"
+tempfile = "3"
