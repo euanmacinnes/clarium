@@ -9,7 +9,7 @@ use crate::tprintln;
 fn test_perf_retrieval_one_day_per_second() {
     let tmp = tempfile::tempdir().unwrap();
     let store = Store::new(tmp.path()).unwrap();
-    let db = "timeline/public/db1.time";
+    let db = "clarium/public/db1.time";
     let start_ms: i64 = 1_700_000_000_000;
     let count: i64 = 86_400;
     let mut records: Vec<Record> = Vec::with_capacity(count as usize);
@@ -43,7 +43,7 @@ fn test_perf_retrieval_one_day_per_second() {
 fn test_perf_aggregate_one_day_per_second() {
     let tmp = tempfile::tempdir().unwrap();
     let store = Store::new(tmp.path()).unwrap();
-    let db = "timeline/public/db1.time";
+    let db = "clarium/public/db1.time";
     let start_ms: i64 = 1_700_000_000_000;
     let count: i64 = 86_400;
     let mut records: Vec<Record> = Vec::with_capacity(count as usize);

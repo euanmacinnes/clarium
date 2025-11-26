@@ -8,7 +8,7 @@ use serde_json::json;
 fn test_slice_using_where_and_filter() {
     let tmp = tempfile::tempdir().unwrap();
     let store = Store::new(tmp.path()).unwrap();
-    let tbl = "timeline/public/sl_where.time";
+    let tbl = "clarium/public/sl_where.time";
     let base: i64 = 1_800_000_000_000;
     // two intervals with a reason label
     let recs = vec![
@@ -28,7 +28,7 @@ fn test_slice_using_where_and_filter() {
     // WHERE variant
     let q1 = format!("SLICE USING {} WHERE reason = 'power'", tbl);
     let p1 = match query::parse(&q1).unwrap() { Command::Slice(p) => p, _ => unreachable!() };
-    let ctx1 = DataContext::with_defaults("timeline", "public");
+    let ctx1 = DataContext::with_defaults("clarium", "public");
     let df1 = run_slice(&shared, &p1, &ctx1).unwrap();
     assert_eq!(df1.height(), 1);
     let st1 = df1.column("_start_date").unwrap().i64().unwrap().get(0).unwrap();
@@ -38,7 +38,7 @@ fn test_slice_using_where_and_filter() {
     // FILTER alias
     let q2 = format!("SLICE USING {} FILTER reason = 'net'", tbl);
     let p2 = match query::parse(&q2).unwrap() { Command::Slice(p) => p, _ => unreachable!() };
-    let ctx2 = DataContext::with_defaults("timeline", "public");
+    let ctx2 = DataContext::with_defaults("clarium", "public");
     let df2 = run_slice(&shared, &p2, &ctx2).unwrap();
     assert_eq!(df2.height(), 1);
     let st2 = df2.column("_start_date").unwrap().i64().unwrap().get(0).unwrap();
@@ -51,8 +51,8 @@ fn test_slice_using_where_and_filter() {
 fn test_slice_union_intersect_where() {
     let tmp = tempfile::tempdir().unwrap();
     let store = Store::new(tmp.path()).unwrap();
-    let a = "timeline/public/sl_a.time";
-    let b = "timeline/public/sl_b.time";
+    let a = "clarium/public/sl_a.time";
+    let b = "clarium/public/sl_b.time";
     let base: i64 = 1_800_000_100_000;
     // a: [0, 30s]
     let recs_a = vec![
@@ -81,7 +81,7 @@ fn test_slice_union_intersect_where() {
     // INTERSECT only rows from b where reason='power' -> expect [10s,20s]
     let q = format!("SLICE USING {} INTERSECT {} WHERE reason = 'power'", a, b);
     let p = match query::parse(&q).unwrap() { Command::Slice(p) => p, _ => unreachable!() };
-    let ctx = DataContext::with_defaults("timeline", "public");
+    let ctx = DataContext::with_defaults("clarium", "public");
     let df = run_slice(&shared, &p, &ctx).unwrap();
     assert_eq!(df.height(), 1);
     let st = df.column("_start_date").unwrap().i64().unwrap().get(0).unwrap();

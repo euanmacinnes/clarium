@@ -12,7 +12,7 @@ use std::{collections::HashMap, path::{Path, PathBuf}, fs};
 use std::sync::atomic::{AtomicU64, Ordering};
 use polars::prelude::DataType;
 use std::cell::RefCell;
-use std::hash::{Hash, Hasher};
+use std::hash::Hash;
 use tracing::debug;
 
 #[derive(Clone, Default)]
@@ -171,14 +171,20 @@ impl ScriptRegistry {
                 if p.is_file() && p.extension().and_then(|e| e.to_str()).unwrap_or("").eq_ignore_ascii_case("lua") {
                     let name = p.file_stem().and_then(|s| s.to_str()).unwrap_or("").to_string();
                     let code = fs::read_to_string(&p)?;
+                    // Load under unqualified name
                     self.load_script_text(&name, &code)?;
+                    // Also expose all globally provided functions under pg_catalog.<name>
+                    // so clients using schema-qualified calls can resolve them.
+                    let qualified = format!("pg_catalog.{}", name);
+                    self.load_script_text(&qualified, &code)?;
                     // Try sidecar .meta.json
                     let mut applied_meta = false;
                     let sidecar = p.with_extension("meta.json");
                     if sidecar.exists() {
                         if let Ok(txt) = fs::read_to_string(&sidecar) {
                             if let Ok(meta) = Self::parse_meta_json(&txt, &kind) {
-                                self.set_meta(&name, meta);
+                                self.set_meta(&name, meta.clone());
+                                self.set_meta(&qualified, meta);
                                 applied_meta = true;
                             }
                         }
@@ -186,20 +192,24 @@ impl ScriptRegistry {
                     // Try embedded JSON docstring at top of Lua file: --[[ { ... } ]]
                     if !applied_meta {
                         if let Some(meta) = Self::parse_embedded_meta(&code, &kind) {
-                            self.set_meta(&name, meta);
+                            self.set_meta(&name, meta.clone());
+                            self.set_meta(&qualified, meta);
                             applied_meta = true;
                         }
                     }
                     // Try to read metadata via meta function in a fresh Lua state
                     if !applied_meta {
                         if let Ok(meta) = self.fetch_meta_via_lua(&name, &kind) {
-                            self.set_meta(&name, meta);
+                            self.set_meta(&name, meta.clone());
+                            self.set_meta(&qualified, meta);
                             applied_meta = true;
                         }
                     }
                     // default meta when not provided
                     if !applied_meta {
-                        self.set_meta(&name, ScriptMeta { kind: kind.clone(), returns: Vec::new(), nullable: true, version: 0 });
+                        let meta = ScriptMeta { kind: kind.clone(), returns: Vec::new(), nullable: true, version: 0 };
+                        self.set_meta(&name, meta.clone());
+                        self.set_meta(&qualified, meta);
                     }
                 }
             }
@@ -453,7 +463,7 @@ impl ScriptRegistry {
                 // Log current registry snapshot to aid debugging when function is missing
                 if cfg!(debug_assertions) {
                     let snap = self.debug_snapshot();
-                    tracing::debug!(target: "timeline::udf", "UDF lookup miss: '{}' registry-snapshot: {}", name, snap);
+                    tracing::debug!(target: "clarium::udf", "UDF lookup miss: '{}' registry-snapshot: {}", name, snap);
                 }
                 // Attempt to auto-load from disk if present in any global scripts folder.
                 if let Some(code) = self.try_load_script_from_global_scripts(name)? {
@@ -464,7 +474,7 @@ impl ScriptRegistry {
                     let value2: mlua::Value = globals.get(lname.as_str())
                         .map_err(|e| anyhow!("UDF '{}' error: {}", name, e))?;
                     if value2.is_nil() {
-                        tracing::debug!(target: "timeline::udf", "UDF still nil after autoload: '{}'", name);
+                        tracing::debug!(target: "clarium::udf", "UDF still nil after autoload: '{}'", name);
                         return Err(anyhow!("UDF '{}' not found after loading script", name));
                     }
                     let func: mlua::Function = match value2 {
@@ -481,7 +491,7 @@ impl ScriptRegistry {
                         .map(|p| p.display().to_string())
                         .collect::<Vec<_>>()
                         .join("; ");
-                    tracing::debug!(target: "timeline::udf", "UDF autoload miss: '{}' searched=[{}]", name, hint);
+                    tracing::debug!(target: "clarium::udf", "UDF autoload miss: '{}' searched=[{}]", name, hint);
                     return Err(anyhow!(
                         "UDF '{}' not found in registry. Auto-load looked for a script at: {}",
                         name, hint
@@ -727,6 +737,8 @@ impl ScriptRegistry {
             );
             // Update registry (bumps version/stamp)
             self.load_script_text(name, &code)?;
+            let qualified = format!("pg_catalog.{}", name);
+            self.load_script_text(&qualified, &code)?;
 
             // Attempt to load metadata similar to bulk loader
             let mut applied_meta = false;
@@ -734,25 +746,30 @@ impl ScriptRegistry {
             if sidecar.exists() {
                 if let Ok(txt) = fs::read_to_string(&sidecar) {
                     if let Ok(meta) = Self::parse_meta_json(&txt, &kind) {
-                        self.set_meta(name, meta);
+                        self.set_meta(name, meta.clone());
+                        self.set_meta(&qualified, meta);
                         applied_meta = true;
                     }
                 }
             }
             if !applied_meta {
                 if let Some(meta) = Self::parse_embedded_meta(&code, &kind) {
-                    self.set_meta(name, meta);
+                    self.set_meta(name, meta.clone());
+                    self.set_meta(&qualified, meta);
                     applied_meta = true;
                 }
             }
             if !applied_meta {
                 if let Ok(meta) = self.fetch_meta_via_lua(name, &kind) {
-                    self.set_meta(name, meta);
+                    self.set_meta(name, meta.clone());
+                    self.set_meta(&qualified, meta);
                     applied_meta = true;
                 }
             }
             if !applied_meta {
-                self.set_meta(name, ScriptMeta { kind, returns: Vec::new(), nullable: true, version: 0 });
+                let meta = ScriptMeta { kind, returns: Vec::new(), nullable: true, version: 0 };
+                self.set_meta(name, meta.clone());
+                self.set_meta(&qualified, meta);
             }
 
             Ok(Some(code))

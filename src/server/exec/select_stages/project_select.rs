@@ -237,7 +237,7 @@ pub fn project_select(df: DataFrame, q: &Query, ctx: &mut DataContext) -> Result
                         Ok(_) => { /* ok */ }
                         Err(_) if provided_by_wildcard => {
                             // Defer to wildcard expansion instead of erroring here
-                            tracing::debug!(target: "timeline::exec", "SELECT validation: deferring resolution of '{}' due to wildcard presence", item.column);
+                            tracing::debug!(target: "clarium::exec", "SELECT validation: deferring resolution of '{}' due to wildcard presence", item.column);
                         }
                         Err(_) => {
                             return Err(crate::server::data_context::DataContext::column_not_found_error(
@@ -270,7 +270,7 @@ pub fn project_select(df: DataFrame, q: &Query, ctx: &mut DataContext) -> Result
     }
 
     let has_aggs = q.select.iter().any(|i| i.func.is_some());
-    let has_str = q.select.iter().any(|i| i.str_func.is_some());
+    let _has_str = q.select.iter().any(|i| i.str_func.is_some());
 
     if has_aggs {
         // Aggregated projection without GROUP BY
@@ -470,7 +470,7 @@ pub fn project_select(df: DataFrame, q: &Query, ctx: &mut DataContext) -> Result
             };
 
             let want_prefix = format!("{}.", prefix);
-            tracing::debug!(target: "timeline::exec", "SELECT: expanding qualified wildcard '{}.*' using prefix '{}'", qualifier, prefix);
+            tracing::debug!(target: "clarium::exec", "SELECT: expanding qualified wildcard '{}.*' using prefix '{}'", qualifier, prefix);
             for cname in df.get_column_names() {
                 let cname_s = cname.as_str();
                 if cname_s.starts_with(&want_prefix) {

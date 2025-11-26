@@ -6,7 +6,7 @@ use serde_json::json;
 async fn test_delete_rows_between() {
     let tmp = tempfile::tempdir().unwrap();
     let store = Store::new(tmp.path()).unwrap();
-    let db = "timeline/public/db_del.time";
+    let db = "clarium/public/db_del.time";
     let base: i64 = 1_700_000_000_000;
     let mut recs = Vec::new();
     for i in 0..5 { let mut m = serde_json::Map::new(); m.insert("v".into(), json!(i as i64)); recs.push(Record{ _time: base + i*1000, sensors: m}); }

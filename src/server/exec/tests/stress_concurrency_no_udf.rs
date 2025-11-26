@@ -43,7 +43,7 @@ fn stress_parallel_queries_no_udf() {
     system::set_null_on_error(true);
 
     let tmp = tempfile::tempdir().unwrap();
-    let db = "timeline/public/stress_no_udf.time";
+    let db = "clarium/public/stress_no_udf.time";
     let shared = seed_stress_table(&tmp, db, 8, 500); // 8 groups x 500 rows = 4000 rows
 
     let threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(8).min(16);
@@ -110,7 +110,7 @@ fn stress_complex_no_udf_queries() {
     system::set_null_on_error(true);
 
     let tmp = tempfile::tempdir().unwrap();
-    let db = "timeline/public/stress2_no_udf.time";
+    let db = "clarium/public/stress2_no_udf.time";
     let shared = seed_stress_table(&tmp, db, 4, 800);
 
     for i in 0..100usize {

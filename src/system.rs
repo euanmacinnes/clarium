@@ -32,7 +32,7 @@ fn get_or_assign_table_oid(table_dir: &Path, db: &str, schema: &str, table: &str
         let obj = json.as_object_mut();
         if let Some(obj) = obj {
             // nested object to avoid clashing with user-defined keys
-            let o = obj.entry("__timeline_oids__").or_insert(serde_json::json!({}));
+            let o = obj.entry("__clarium_oids__").or_insert(serde_json::json!({}));
             if let Some(map) = o.as_object() {
                 if let Some(v) = map.get("class_oid").and_then(|v| v.as_i64()) {
                     return v as i32;
@@ -133,7 +133,7 @@ fn enumerate_tables(store: &SharedStore) -> Vec<TableMeta> {
 
 // Core-facing: materialize known system tables as DataFrame for use in queries
 pub fn system_table_df(name: &str, store: &SharedStore) -> Option<DataFrame> {
-    debug!(target: "timeline::system", "system_table_df: input='{}'", name);
+    debug!(target: "clarium::system", "system_table_df: input='{}'", name);
     // Strip alias/trailing tokens after first whitespace (e.g., "pg_type t")
     let mut base = name.trim().to_string();
     if let Some(idx) = base.find(|c: char| c.is_whitespace()) { base = base[..idx].to_string(); }
@@ -150,7 +150,7 @@ pub fn system_table_df(name: &str, store: &SharedStore) -> Option<DataFrame> {
     let parts: Vec<&str> = dotted.split('.').collect();
     let last1 = parts.last().copied().unwrap_or("");
     let last2 = if parts.len() >= 2 { format!("{}.{}", parts[parts.len()-2], parts[parts.len()-1]) } else { String::new() };
-    debug!(target: "timeline::system", "system_table_df: normalized base='{}' dotted='{}' last1='{}' last2='{}'", base, dotted, last1, last2);
+    debug!(target: "clarium::system", "system_table_df: normalized base='{}' dotted='{}' last1='{}' last2='{}'", base, dotted, last1, last2);
 
     // Helper closures to test suffix equality
     let is = |s: &str| last2 == s || last1 == s;
@@ -175,7 +175,7 @@ pub fn system_table_df(name: &str, store: &SharedStore) -> Option<DataFrame> {
         schemas.sort(); schemas.dedup();
         let series = Series::new("schema_name".into(), schemas);
         let out = DataFrame::new(vec![series.into()]).ok();
-        if let Some(ref df) = out { debug!(target: "timeline::system", "system_table_df: matched information_schema.schemata rows={}", df.height()); } else { debug!(target: "timeline::system", "system_table_df: schemata build failed"); }
+        if let Some(ref df) = out { debug!(target: "clarium::system", "system_table_df: matched information_schema.schemata rows={}", df.height()); } else { debug!(target: "clarium::system", "system_table_df: schemata build failed"); }
         return out;
     }
 
@@ -322,9 +322,9 @@ pub fn system_table_df(name: &str, store: &SharedStore) -> Option<DataFrame> {
             Series::new("typtype".into(), typtype).into(),
         ]).ok();
         if let Some(ref df) = df {
-            debug!(target: "timeline::system", "system_table_df: matched pg_type rows={}, cols={:?}", df.height(), df.get_column_names());
+            debug!(target: "clarium::system", "system_table_df: matched pg_type rows={}, cols={:?}", df.height(), df.get_column_names());
         } else {
-            debug!(target: "timeline::system", "system_table_df: pg_type build failed");
+            debug!(target: "clarium::system", "system_table_df: pg_type build failed");
         }
         return df;
     }
@@ -372,7 +372,7 @@ pub fn system_table_df(name: &str, store: &SharedStore) -> Option<DataFrame> {
     
     if last1 == "pg_constraint" || last2 == "pg_catalog.pg_constraint" {
         // Provide pg_constraint for primary key constraints
-        // Timeline tables with 'primary-key': True have a PRIMARY marker column in schema.json
+        // clarium tables with 'primary-key': True have a PRIMARY marker column in schema.json
         let metas = enumerate_tables(store);
         let mut conrelid: Vec<i32> = Vec::new();
         let mut conname: Vec<String> = Vec::new();
@@ -418,7 +418,7 @@ pub fn system_table_df(name: &str, store: &SharedStore) -> Option<DataFrame> {
                     conname.push(format!("{}_pkey", m.table));
                     contype.push("p".to_string()); // 'p' = primary key
                     conkey.push(pk_columns);
-                    conindid.push(0); // 0 = no index (Timeline doesn't have separate index tracking)
+                    conindid.push(0); // 0 = no index (clarium doesn't have separate index tracking)
                     oid.push(constraint_oid);
                     constraint_oid += 1;
                 }
@@ -559,6 +559,6 @@ pub fn system_table_df(name: &str, store: &SharedStore) -> Option<DataFrame> {
         ]).ok();
     }
 
-    debug!(target: "timeline::system", "system_table_df: no match for '{}' (base='{}')", name, base);
+    debug!(target: "clarium::system", "system_table_df: no match for '{}' (base='{}')", name, base);
     None
 }

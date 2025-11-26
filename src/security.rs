@@ -73,8 +73,8 @@ pub fn ensure_default_admin(db_root: &str) -> Result<()> {
     let p = global_user_path(db_root);
     if p.exists() { return Ok(()); }
     let mut df = mk_schema_df();
-    let hash = hash_password("timeline")?;
-    let usernames = Series::new("username".into(), vec!["timeline".to_string()]);
+    let hash = hash_password("clarium")?;
+    let usernames = Series::new("username".into(), vec!["clarium".to_string()]);
     let hashes = Series::new("password_hash".into(), vec![hash]);
     let is_admin = Series::new("is_admin".into(), vec![true]);
     let perm_select = Series::new("perm_select".into(), vec![true]);

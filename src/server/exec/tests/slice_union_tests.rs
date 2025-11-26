@@ -8,8 +8,8 @@ use serde_json::json;
 fn test_slice_union_coalesce_labels_lhs_sticky() {
     let tmp = tempfile::tempdir().unwrap();
     let store = Store::new(tmp.path()).unwrap();
-    let db1 = "timeline/public/union_a.time";
-    let db2 = "timeline/public/union_b.time";
+    let db1 = "clarium/public/union_a.time";
+    let db2 = "clarium/public/union_b.time";
     let base: i64 = 1_900_000_000_000;
     // db1: [0,10] with labels M1/X
     {
@@ -32,7 +32,7 @@ fn test_slice_union_coalesce_labels_lhs_sticky() {
     let shared = SharedStore::new(tmp.path()).unwrap();
     let qtext = format!("SLICE USING LABELS(machine, kind) {} LABEL('M1','X') UNION {} LABEL('M2','Y')", db1, db2);
     let plan = match query::parse(&qtext).unwrap() { Command::Slice(p) => p, _ => unreachable!() };
-    let ctx = DataContext::with_defaults("timeline", "public");
+    let ctx = DataContext::with_defaults("clarium", "public");
     let df = run_slice(&shared, &plan, &ctx).unwrap();
     // Expect single coalesced interval [0,15]
     assert_eq!(df.height(), 1);
@@ -51,8 +51,8 @@ fn test_slice_union_coalesce_labels_lhs_sticky() {
 fn test_slice_union_coalesce_labels_lhs_null_filled_by_rhs() {
     let tmp = tempfile::tempdir().unwrap();
     let store = Store::new(tmp.path()).unwrap();
-    let db1 = "timeline/public/union_c.time";
-    let db2 = "timeline/public/union_d.time";
+    let db1 = "clarium/public/union_c.time";
+    let db2 = "clarium/public/union_d.time";
     let base: i64 = 1_900_100_000_000;
     // db1: [0,10] with no labels (will set NULL, '')
     {
@@ -76,7 +76,7 @@ fn test_slice_union_coalesce_labels_lhs_null_filled_by_rhs() {
     // LHS provides NULL and empty string; RHS provides non-empty -> should fill from RHS
     let qtext = format!("SLICE USING LABELS(machine, kind) {} LABEL(NULL, '') UNION {} LABEL('M2','Y')", db1, db2);
     let plan = match query::parse(&qtext).unwrap() { Command::Slice(p) => p, _ => unreachable!() };
-    let ctx = DataContext::with_defaults("timeline", "public");
+    let ctx = DataContext::with_defaults("clarium", "public");
     let df = run_slice(&shared, &plan, &ctx).unwrap();
     assert_eq!(df.height(), 1);
     let st = df.column("_start_date").unwrap().i64().unwrap().get(0).unwrap();

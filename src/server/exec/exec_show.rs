@@ -20,7 +20,7 @@ pub async fn execute_show(store: &SharedStore, cmd: Command) -> Result<Value> {
         Command::ShowSearchPath => single_kv("search_path", "public"),
         Command::ShowDefaultTransactionIsolation => single_kv("default_transaction_isolation", "read committed"),
         Command::ShowTransactionReadOnly => single_kv("transaction_read_only", "off"),
-        Command::ShowApplicationName => single_kv("application_name", "timeline"),
+        Command::ShowApplicationName => single_kv("application_name", "clarium"),
         Command::ShowExtraFloatDigits => single_kv("extra_float_digits", "3"),
         Command::ShowAll => show_all(),
         Command::ShowSchemas => show_schemas(store),
@@ -174,7 +174,7 @@ mod tests {
         let mut base = std::env::temp_dir();
         let ts = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis();
         let pid = std::process::id();
-        base.push(format!("timeline_tests_{}_{}", pid, ts));
+        base.push(format!("clarium_tests_{}_{}", pid, ts));
         base
     }
 

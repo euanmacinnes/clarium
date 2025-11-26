@@ -4,7 +4,7 @@
 //! - SELECT: delegates to existing query engine and streams rows
 //! - INSERT: basic INSERT INTO <db>(col, ...) VALUES (...)
 
-use anyhow::{anyhow, Context, Result, bail};
+use anyhow::{anyhow, Result, bail};
 use std::net::SocketAddr;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tracing::{error, info, debug};
@@ -95,7 +95,7 @@ async fn handle_conn(socket: &mut tokio::net::TcpStream, store: SharedStore) -> 
             // Initialize session state honoring dbname/database if provided
             let db = params.get("database").cloned()
                 .or_else(|| params.get("dbname").cloned())
-                .unwrap_or_else(|| "timeline".to_string());
+                .unwrap_or_else(|| "clarium".to_string());
             let mut state = ConnState { current_database: db, current_schema: "public".to_string(), statements: HashMap::new(), portals: HashMap::new(), in_error: false };
             run_query_loop(socket, &store, &user, &mut state).await?;
             Ok(())
@@ -124,7 +124,7 @@ async fn handle_conn(socket: &mut tokio::net::TcpStream, store: SharedStore) -> 
         // Initialize session state honoring dbname/database if provided
         let db = params.get("database").cloned()
             .or_else(|| params.get("dbname").cloned())
-            .unwrap_or_else(|| "timeline".to_string());
+            .unwrap_or_else(|| "clarium".to_string());
         let mut state = ConnState { current_database: db, current_schema: "public".to_string(), statements: HashMap::new(), portals: HashMap::new(), in_error: false };
         run_query_loop(socket, &store, &user, &mut state).await?;
         Ok(())
@@ -813,9 +813,9 @@ async fn handle_query(socket: &mut tokio::net::TcpStream, store: &SharedStore, u
     }
 
     // Normalize query identifiers with current defaults for engine-bound statements (shared with HTTP)
-    debug!(target: "timeline::pgwire", "incoming sql: raw='{}'", q_trim);
+    debug!(target: "clarium::pgwire", "incoming sql: raw='{}'", q_trim);
     let q_effective = crate::server::exec::normalize_query_with_defaults(q_trim, &state.current_database, &state.current_schema);
-    debug!(target: "timeline::pgwire", "effective sql after defaults: '{}'; defaults db='{}' schema='{}'", q_effective, state.current_database, state.current_schema);
+    debug!(target: "clarium::pgwire", "effective sql after defaults: '{}'; defaults db='{}' schema='{}'", q_effective, state.current_database, state.current_schema);
 
 
     // CREATE TABLE support (basic) to allow SQLAlchemy to create tables
@@ -1456,7 +1456,7 @@ async fn handle_describe(socket: &mut tokio::net::TcpStream, store: &SharedStore
     }
 }
 
-async fn handle_execute(socket: &mut tokio::net::TcpStream, store: &SharedStore, user: &str, state: &mut ConnState) -> Result<()> {
+async fn handle_execute(socket: &mut tokio::net::TcpStream, store: &SharedStore, _user: &str, state: &mut ConnState) -> Result<()> {
     let _len = read_u32(socket).await? as usize;
     let portal_name = read_cstring(socket).await?;
     let _max_rows = read_i32(socket).await?; // ignored for now

@@ -1,8 +1,8 @@
 //!
-//! Timeline CLI binary
+//! clarium CLI binary
 //! -------------------
 //! Command-line tool and interactive interpreter for interacting with a local
-//! Timeline store or a remote Timeline HTTP API. In REPL mode, supports a
+//! clarium store or a remote clarium HTTP API. In REPL mode, supports a
 //! `connect` command to authenticate and run queries against a server.
 
 use std::env;
@@ -13,12 +13,12 @@ use anyhow::{anyhow, Context, Result};
 use reqwest::header::{HeaderMap, HeaderValue};
 use reqwest::Url;
 
-use timeline::server::exec::execute_query2;
-use timeline::storage::SharedStore;
+use clarium::server::exec::execute_query2;
+use clarium::storage::SharedStore;
 
 fn print_usage(program: &str) {
     eprintln!(
-        "Usage:\n  {program} --query \"<SQL>\" [--root <db_root>]\n  {program} -q \"<SQL>\" [--root <db_root>]\n  {program} [--root <db_root>]    # reads query text from stdin\n  {program} --repl [--root <db_root>]  # start interactive interpreter\n\nInteractive commands:\n  connect <http(s)://host:port> <user> <password>   connect to remote Timeline server via HTTP API\n  use database <name>                                set current database on remote session\n  use schema <name>                                  set current schema on remote session\n  help                                               show this help\n  quit | exit                                        exit the interpreter\n  <SQL>                                              run a SQL-like query locally (no connect) or remotely (after connect)\n\nExamples:\n  {program} --query \"SCHEMA SHOW timeline\"\n  {program} --repl\n    > connect http://127.0.0.1:7878 timeline timeline\n    > SELECT AVG(value) FROM demo BY 5m\n\nDefaults:\n  --root defaults to dbs\\rust_timeseries relative to current working directory."
+        "Usage:\n  {program} --query \"<SQL>\" [--root <db_root>]\n  {program} -q \"<SQL>\" [--root <db_root>]\n  {program} [--root <db_root>]    # reads query text from stdin\n  {program} --repl [--root <db_root>]  # start interactive interpreter\n\nInteractive commands:\n  connect <http(s)://host:port> <user> <password>   connect to remote clarium server via HTTP API\n  use database <name>                                set current database on remote session\n  use schema <name>                                  set current schema on remote session\n  help                                               show this help\n  quit | exit                                        exit the interpreter\n  <SQL>                                              run a SQL-like query locally (no connect) or remotely (after connect)\n\nExamples:\n  {program} --query \"SCHEMA SHOW clarium\"\n  {program} --repl\n    > connect http://127.0.0.1:7878 clarium clarium\n    > SELECT AVG(value) FROM demo BY 5m\n\nDefaults:\n  --root defaults to dbs\\rust_timeseries relative to current working directory."
     );
 }
 
@@ -93,9 +93,9 @@ impl HttpSession {
     }
 }
 
-/// Entry point for the Timeline CLI. Parses flags and either runs a one-shot
+/// Entry point for the clarium CLI. Parses flags and either runs a one-shot
 /// query (from --query or stdin) against a local store, or starts the interactive
-/// interpreter which can connect to a remote Timeline server.
+/// interpreter which can connect to a remote clarium server.
 fn main() -> Result<()> {
     let mut args: Vec<String> = env::args().collect();
     let program = args.remove(0);
@@ -185,7 +185,7 @@ fn run_repl(rt: tokio::runtime::Runtime, store: SharedStore) -> Result<()> {
     let stdin = io::stdin();
     let mut stdout = io::stdout();
     let mut input = String::new();
-    println!("timeline-cli interpreter. Type 'help' for commands.");
+    println!("clarium-cli interpreter. Type 'help' for commands.");
     loop {
         input.clear();
         print!("> "); let _ = stdout.flush();
@@ -195,7 +195,7 @@ fn run_repl(rt: tokio::runtime::Runtime, store: SharedStore) -> Result<()> {
         let up = line.to_uppercase();
         if up == "EXIT" || up == "QUIT" { break; }
         if up == "HELP" {
-            print_usage("timeline_cli");
+            print_usage("clarium_cli");
             continue;
         }
         if up.starts_with("CONNECT ") {

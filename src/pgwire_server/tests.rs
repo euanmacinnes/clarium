@@ -117,9 +117,9 @@ mod protocol_tests {
 
     #[test]
     fn test_parse_insert_basic() {
-        let sql = "INSERT INTO timeline (id, name) VALUES (1, 'test')";
+        let sql = "INSERT INTO clarium (id, name) VALUES (1, 'test')";
         let ins = parse_insert(sql).unwrap();
-        assert_eq!(ins.database, "timeline");
+        assert_eq!(ins.database, "clarium");
         assert_eq!(ins.columns, vec!["id", "name"]);
         assert_eq!(ins.values.len(), 2);
     }
@@ -216,7 +216,7 @@ mod create_table_catalog_tests {
         let store = SharedStore::new(tmp.path()).unwrap();
         
         // Create a table via do_create_table
-        let sql = "CREATE TABLE timeline/public/test_table (id BIGINT, name TEXT, value DOUBLE PRECISION)";
+        let sql = "CREATE TABLE clarium/public/test_table (id BIGINT, name TEXT, value DOUBLE PRECISION)";
         let result = do_create_table(&store, sql);
         assert!(result.is_ok(), "CREATE TABLE failed: {:?}", result.err());
         
@@ -238,7 +238,7 @@ mod create_table_catalog_tests {
         let store = SharedStore::new(tmp.path()).unwrap();
         
         // Create a table via do_create_table
-        let sql = "CREATE TABLE timeline/public/my_test (col1 INT, col2 VARCHAR(50))";
+        let sql = "CREATE TABLE clarium/public/my_test (col1 INT, col2 VARCHAR(50))";
         let result = do_create_table(&store, sql);
         assert!(result.is_ok(), "CREATE TABLE failed: {:?}", result.err());
         
@@ -260,7 +260,7 @@ mod create_table_catalog_tests {
         let store = SharedStore::new(tmp.path()).unwrap();
         
         // Create a table with specific columns
-        let sql = "CREATE TABLE timeline/public/col_test (id BIGINT, description TEXT, amount FLOAT)";
+        let sql = "CREATE TABLE clarium/public/col_test (id BIGINT, description TEXT, amount FLOAT)";
         let result = do_create_table(&store, sql);
         assert!(result.is_ok(), "CREATE TABLE failed: {:?}", result.err());
         
@@ -303,7 +303,7 @@ mod create_table_catalog_tests {
         // Normalize with defaults (as done in handle_query)
         let normalized = crate::server::exec::normalize_query_with_defaults(
             unqualified_sql,
-            "timeline",
+            "clarium",
             "public"
         );
         

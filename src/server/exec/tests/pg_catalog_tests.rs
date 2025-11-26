@@ -27,10 +27,10 @@ fn test_pg_catalog_version() {
     let val = col.get(0).unwrap();
     match val {
         polars::prelude::AnyValue::String(s) => {
-            assert!(s.contains("PostgreSQL") || s.contains("TimelineDB"));
+            assert!(s.contains("PostgreSQL") || s.contains("clariumDB"));
         }
         polars::prelude::AnyValue::StringOwned(s) => {
-            assert!(s.contains("PostgreSQL") || s.contains("TimelineDB"));
+            assert!(s.contains("PostgreSQL") || s.contains("clariumDB"));
         }
         _ => panic!("Expected string value for version(), got {:?}", val)
     }
@@ -356,7 +356,7 @@ fn test_pg_class_namespace_join_with_oid() {
     // SQL: SELECT pg_catalog.pg_class.relname 
     // FROM pg_catalog.pg_class JOIN pg_catalog.pg_namespace 
     // ON pg_catalog.pg_namespace.oid = pg_catalog.pg_class.relnamespace 
-    // WHERE pg_catalog.pg_class.relname = 'timeline_test_y21ycf' 
+    // WHERE pg_catalog.pg_class.relname = 'clarium_test_y21ycf'
     // AND pg_catalog.pg_class.relkind = ANY (ARRAY['r', 'p', 'f', 'v', 'm'])
     // AND pg_catalog.pg_table_is_visible(pg_catalog.pg_class.oid) 
     // AND pg_catalog.pg_namespace.nspname != 'pg_catalog'
@@ -365,7 +365,7 @@ fn test_pg_class_namespace_join_with_oid() {
     let store = Store::new(tmp.path()).unwrap();
     // Create a test table matching the pattern
     let recs = vec![Record { _time: 1_700_000_000_000, sensors: serde_json::Map::new() }];
-    store.write_records("demo/public/timeline_test_y21ycf.time", &recs).unwrap();
+    store.write_records("demo/public/clarium_test_y21ycf.time", &recs).unwrap();
     let shared = SharedStore::new(tmp.path()).unwrap();
 
     // Simplified version of the problematic query
@@ -373,7 +373,7 @@ fn test_pg_class_namespace_join_with_oid() {
         "SELECT pg_catalog.pg_class.relname \
          FROM pg_catalog.pg_class \
          JOIN pg_catalog.pg_namespace ON pg_catalog.pg_namespace.oid = pg_catalog.pg_class.relnamespace \
-         WHERE pg_catalog.pg_class.relname = 'timeline_test_y21ycf'"
+         WHERE pg_catalog.pg_class.relname = 'clarium_test_y21ycf'"
     ).unwrap() {
         Command::Select(q) => q,
         _ => unreachable!()
@@ -404,7 +404,7 @@ fn test_pg_class_namespace_join_with_oid() {
 fn test_pg_catalog_pg_get_viewdef() {
     // Test pg_catalog.pg_get_viewdef(oid) function
     // SQLAlchemy calls this to get view definitions
-    // Since Timeline doesn't support views, this should return NULL for all inputs
+    // Since clarium doesn't support views, this should return NULL for all inputs
     let tmp = tempfile::tempdir().unwrap();
     let _store = Store::new(tmp.path()).unwrap();
     let shared = SharedStore::new(tmp.path()).unwrap();

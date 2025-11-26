@@ -42,12 +42,12 @@ fn regclass_oid_with_defaults(name: &str, db: Option<&str>, schema: Option<&str>
         match parts.len() {
             0 => String::new(),
             1 => {
-                let d = db.unwrap_or("timeline");
+                let d = db.unwrap_or("clarium");
                 let s = schema.unwrap_or("public");
                 format!("{}/{}/{}", d, s, parts[0])
             }
             2 => {
-                let d = db.unwrap_or("timeline");
+                let d = db.unwrap_or("clarium");
                 format!("{}/{}/{}", d, parts[0], parts[1])
             }
             _ => format!("{}/{}/{}", parts[0], parts[1], parts[2]),

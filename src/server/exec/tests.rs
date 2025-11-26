@@ -459,7 +459,7 @@ mod select_wildcard_tests {
     fn select_star_time_no_by() {
         let tmp = tempfile::tempdir().unwrap();
         let store = Store::new(tmp.path()).unwrap();
-        let db = "timeline/public/wild.time";
+        let db = "clarium/public/wild.time";
         let t0: i64 = 1_700_000_000_000;
         let recs = vec![
             {
@@ -491,7 +491,7 @@ mod select_wildcard_tests {
     fn select_star_time_with_by_errors() {
         let tmp = tempfile::tempdir().unwrap();
         let store = Store::new(tmp.path()).unwrap();
-        let db = "timeline/public/wild2.time";
+        let db = "clarium/public/wild2.time";
         let t0: i64 = 1_700_000_000_000;
         let mut m = serde_json::Map::new();
         m.insert("v".into(), json!(1.0));
@@ -519,7 +519,7 @@ mod order_limit_tests {
     fn limit_without_order_by_time_series() {
         let tmp = tempfile::tempdir().unwrap();
         let store = Store::new(tmp.path()).unwrap();
-        let db = "timeline/public/ol_no_order.time";
+        let db = "clarium/public/ol_no_order.time";
         let t0: i64 = 1_700_000_000_000;
         let recs = vec![
             { let mut m = serde_json::Map::new(); m.insert("v".into(), json!(1.0)); Record{ _time: t0, sensors: m }},
@@ -541,7 +541,7 @@ mod order_limit_tests {
     fn negative_limit_returns_last_rows_time_series() {
         let tmp = tempfile::tempdir().unwrap();
         let store = Store::new(tmp.path()).unwrap();
-        let db = "timeline/public/ol_negative.time";
+        let db = "clarium/public/ol_negative.time";
         let t0: i64 = 1_700_000_000_000;
         let recs = vec![
             { let mut m = serde_json::Map::new(); m.insert("v".into(), json!(1.0)); Record{ _time: t0, sensors: m }},
@@ -563,7 +563,7 @@ mod order_limit_tests {
     fn no_where_limit_time_series() {
         let tmp = tempfile::tempdir().unwrap();
         let store = Store::new(tmp.path()).unwrap();
-        let db = "timeline/public/ol_simple.time";
+        let db = "clarium/public/ol_simple.time";
         let t0: i64 = 1_700_000_000_000;
         let recs = vec![
             { let mut m = serde_json::Map::new(); m.insert("v".into(), json!(1.0)); Record{ _time: t0, sensors: m }},
@@ -583,7 +583,7 @@ mod order_limit_tests {
     fn order_by_limit_regular_table() {
         let tmp = tempfile::tempdir().unwrap();
         let store = Store::new(tmp.path()).unwrap();
-        let db = "timeline/public/people";
+        let db = "clarium/public/people";
         // create simple regular table
         let ids = Series::new("id".into(), vec![1i64, 2, 3]);
         let names = Series::new("name".into(), vec!["alice", "bob", "carol"]);
@@ -603,7 +603,7 @@ mod order_limit_tests {
     fn order_by_limit_time_series() {
         let tmp = tempfile::tempdir().unwrap();
         let store = Store::new(tmp.path()).unwrap();
-        let db = "timeline/public/ol.time";
+        let db = "clarium/public/ol.time";
         let t0: i64 = 1_700_000_000_000;
         let recs = vec![
             { let mut m = serde_json::Map::new(); m.insert("v".into(), json!(1.0)); Record{ _time: t0, sensors: m }},
@@ -624,7 +624,7 @@ mod order_limit_tests {
     fn order_by_unknown_column_errors() {
         let tmp = tempfile::tempdir().unwrap();
         let store = Store::new(tmp.path()).unwrap();
-        let db = "timeline/public/ol2.time";
+        let db = "clarium/public/ol2.time";
         let t0: i64 = 1_700_000_000_000;
         let recs = vec![{ let mut m = serde_json::Map::new(); m.insert("v".into(), json!(1.0)); Record{ _time: t0, sensors: m }}];
         store.write_records(db, &recs).unwrap();
@@ -648,7 +648,7 @@ mod by_slice_tests {
     fn by_slice_basic_two_intervals() {
         let tmp = tempfile::tempdir().unwrap();
         let store = Store::new(tmp.path()).unwrap();
-        let db = "timeline/public/by_slice_demo.time";
+        let db = "clarium/public/by_slice_demo.time";
         let t0: i64 = 1_800_000_000_000;
         // 0..59s values 1.0, 60..119s values 2.0, 120..179s values 3.0
         let mut recs: Vec<Record> = Vec::new();
@@ -677,7 +677,7 @@ mod by_slice_tests {
     fn by_slice_having_and_errors() {
         let tmp = tempfile::tempdir().unwrap();
         let store = Store::new(tmp.path()).unwrap();
-        let db = "timeline/public/by_slice_demo2.time";
+        let db = "clarium/public/by_slice_demo2.time";
         let base: i64 = 1_801_000_000_000;
         let mut recs: Vec<Record> = Vec::new();
         for i in 0..10 {
@@ -714,7 +714,7 @@ mod by_slice_labels_tests {
     fn by_slice_surfaces_labels_into_select() {
         let tmp = tempfile::tempdir().unwrap();
         let store = Store::new(tmp.path()).unwrap();
-        let db = "timeline/public/by_slice_labels.time";
+        let db = "clarium/public/by_slice_labels.time";
         let t0: i64 = 1_805_000_000_000;
         // Create some simple data across ranges to aggregate over
         let mut recs: Vec<Record> = Vec::new();
@@ -762,7 +762,7 @@ mod complex_select_integration_tests {
         let tmp = tempfile::tempdir().unwrap();
         let store = Store::new(tmp.path()).unwrap();
         // Main data table with values across 10 minutes at 1s cadence
-        let main = "timeline/public/ci_main.time";
+        let main = "clarium/public/ci_main.time";
         let t0: i64 = 1_906_000_000_000; // arbitrary epoch
         let mut recs: Vec<Record> = Vec::new();
         // device alternates M1/M2, kind alternates A/B, w increases, v pattern
@@ -781,7 +781,7 @@ mod complex_select_integration_tests {
         store.write_records(main, &recs).unwrap();
 
         // Slice table 1 (maintenance) with label column kind (pre-filtered to kind='A')
-        let s1 = "timeline/public/ci_maint.time";
+        let s1 = "clarium/public/ci_maint.time";
         let mut s1recs: Vec<Record> = Vec::new();
         // interval: [30s, 180s] kind='A'
         {
@@ -794,7 +794,7 @@ mod complex_select_integration_tests {
         store.write_records(s1, &s1recs).unwrap();
 
         // Slice table 2 (downtime) with a reason column; we'll INTERSECT reason='power'
-        let s2 = "timeline/public/ci_down.time";
+        let s2 = "clarium/public/ci_down.time";
         let mut s2recs: Vec<Record> = Vec::new();
         for (start_s, end_s, reason) in [(60, 200, "power"), (300, 360, "net")] {
             let mut m = serde_json::Map::new();
@@ -835,7 +835,7 @@ mod complex_select_integration_tests {
     fn test_nested_by_slice_with_labels_and_having() {
         let tmp = tempfile::tempdir().unwrap();
         let store = Store::new(tmp.path()).unwrap();
-        let main = "timeline/public/ci_main2.time";
+        let main = "clarium/public/ci_main2.time";
         let t0: i64 = 1_906_100_000_000;
         // Create 6 minutes of per-second data with two phases in v
         let mut recs: Vec<Record> = Vec::new();
@@ -847,8 +847,8 @@ mod complex_select_integration_tests {
         }
         store.write_records(main, &recs).unwrap();
         // Build nested slice sources via tables
-        let a = "timeline/public/ci_a.time"; // [0,180s]
-        let b = "timeline/public/ci_b.time"; // [120,360s]
+        let a = "clarium/public/ci_a.time"; // [0,180s]
+        let b = "clarium/public/ci_b.time"; // [120,360s]
         let mut arecs: Vec<Record> = Vec::new();
         let mut brecs: Vec<Record> = Vec::new();
         arecs.push(Record { _time: t0, sensors: serde_json::Map::from_iter(vec![
@@ -892,7 +892,7 @@ mod complex_select_integration_tests {
         // A larger dataset to emulate demo-like behavior but bounded to keep CI fast
         let tmp = tempfile::tempdir().unwrap();
         let store = Store::new(tmp.path()).unwrap();
-        let main = "timeline/public/ci_demo_like.time";
+        let main = "clarium/public/ci_demo_like.time";
         let t0: i64 = 1_907_000_000_000;
         // 2 hours of per-second data (~7200 rows)
         let mut recs: Vec<Record> = Vec::with_capacity(7200);
@@ -906,7 +906,7 @@ mod complex_select_integration_tests {
         }
         store.write_records(main, &recs).unwrap();
         // Build two slice sources: first half hour and last half hour
-        let s_tbl = "timeline/public/ci_demo_slice.time";
+        let s_tbl = "clarium/public/ci_demo_slice.time";
         let intervals = vec![(0, 1800), (5400, 7200)];
         let mut s_recs: Vec<Record> = Vec::new();
         for (s,e) in intervals {
@@ -944,7 +944,7 @@ mod where_literal_tests {
     fn where_supports_string_int_float_datetime_literals() {
         let tmp = tempfile::tempdir().unwrap();
         let store = Store::new(tmp.path()).unwrap();
-        let db = "timeline/public/db_where.time";
+        let db = "clarium/public/db_where.time";
         let base: i64 = 1_700_000_000_000; // ~2023-11-14
         let mut recs: Vec<Record> = Vec::new();
         // times: base, base+1000, base+2000

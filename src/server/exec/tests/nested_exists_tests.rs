@@ -1,8 +1,7 @@
 use super::super::run_select;
 use crate::query::{self, Command};
-use crate::storage::{Store, SharedStore, Record};
+use crate::storage::{Store, SharedStore};
 use polars::prelude::*;
-use serde_json::json;
 
 /// Test nested EXISTS with multiple correlation levels
 #[test]
@@ -71,8 +70,8 @@ fn test_exists_with_complex_conditions() {
     let store = Store::new(tmp.path()).unwrap();
     let shared = SharedStore::new(tmp.path()).unwrap();
     
-    let orders_db = "timeline/public/orders";
-    let customers_db = "timeline/public/customers";
+    let orders_db = "clarium/public/orders";
+    let customers_db = "clarium/public/customers";
     
     store.create_table(orders_db).unwrap();
     store.create_table(customers_db).unwrap();
@@ -115,9 +114,9 @@ fn test_not_exists_with_nested_exists() {
     let store = Store::new(tmp.path()).unwrap();
     let shared = SharedStore::new(tmp.path()).unwrap();
     
-    let users_db = "timeline/public/users";
-    let posts_db = "timeline/public/posts";
-    let comments_db = "timeline/public/comments";
+    let users_db = "clarium/public/users";
+    let posts_db = "clarium/public/posts";
+    let comments_db = "clarium/public/comments";
     
     store.create_table(users_db).unwrap();
     store.create_table(posts_db).unwrap();
@@ -172,8 +171,8 @@ fn test_exists_multiple_correlation_columns() {
     let store = Store::new(tmp.path()).unwrap();
     let shared = SharedStore::new(tmp.path()).unwrap();
     
-    let sales_db = "timeline/public/sales";
-    let targets_db = "timeline/public/targets";
+    let sales_db = "clarium/public/sales";
+    let targets_db = "clarium/public/targets";
     
     store.create_table(sales_db).unwrap();
     store.create_table(targets_db).unwrap();

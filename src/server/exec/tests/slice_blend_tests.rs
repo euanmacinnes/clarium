@@ -8,7 +8,7 @@ use serde_json::json;
 fn union_table_and_manual_unlabeled() {
     let tmp = tempfile::tempdir().unwrap();
     let store = Store::new(tmp.path()).unwrap();
-    let db = "timeline/public/blend_union_unlabeled.time";
+    let db = "clarium/public/blend_union_unlabeled.time";
     let base: i64 = 1_950_000_000_000;
     // Table interval: [base, base+10_000]
     {
@@ -24,7 +24,7 @@ fn union_table_and_manual_unlabeled() {
     let m_end = base + 15_000;
     let qtext = format!("SLICE USING {} UNION ({}, {}, 'x')", db, m_start, m_end);
     let plan = match query::parse(&qtext).unwrap() { Command::Slice(p) => p, _ => unreachable!() };
-    let ctx = DataContext::with_defaults("timeline", "public");
+    let ctx = DataContext::with_defaults("clarium", "public");
     let df = run_slice(&shared, &plan, &ctx).unwrap();
     assert_eq!(df.height(), 1);
     let st = df.column("_start_date").unwrap().i64().unwrap().get(0).unwrap();
@@ -37,7 +37,7 @@ fn union_table_and_manual_unlabeled() {
 fn intersect_table_and_manual_unlabeled() {
     let tmp = tempfile::tempdir().unwrap();
     let store = Store::new(tmp.path()).unwrap();
-    let db = "timeline/public/blend_intersect_unlabeled.time";
+    let db = "clarium/public/blend_intersect_unlabeled.time";
     let base: i64 = 1_950_100_000_000;
     // Table interval: [base, base+10_000]
     {
@@ -53,7 +53,7 @@ fn intersect_table_and_manual_unlabeled() {
     let m_end = base + 15_000;
     let qtext = format!("SLICE USING {} INTERSECT ({}, {})", db, m_start, m_end);
     let plan = match query::parse(&qtext).unwrap() { Command::Slice(p) => p, _ => unreachable!() };
-    let ctx = DataContext::with_defaults("timeline", "public");
+    let ctx = DataContext::with_defaults("clarium", "public");
     let df = run_slice(&shared, &plan, &ctx).unwrap();
     assert_eq!(df.height(), 1);
     let st = df.column("_start_date").unwrap().i64().unwrap().get(0).unwrap();
@@ -66,7 +66,7 @@ fn intersect_table_and_manual_unlabeled() {
 fn union_table_and_manual_with_labels_lhs_sticky() {
     let tmp = tempfile::tempdir().unwrap();
     let store = Store::new(tmp.path()).unwrap();
-    let db = "timeline/public/blend_union_labeled.time";
+    let db = "clarium/public/blend_union_labeled.time";
     let base: i64 = 1_950_200_000_000;
     // Table interval: [base, base+10_000]
     {
@@ -86,7 +86,7 @@ fn union_table_and_manual_with_labels_lhs_sticky() {
         db, m_start, m_end
     );
     let plan = match query::parse(&qtext).unwrap() { Command::Slice(p) => p, _ => unreachable!() };
-    let ctx = DataContext::with_defaults("timeline", "public");
+    let ctx = DataContext::with_defaults("clarium", "public");
     let df = run_slice(&shared, &plan, &ctx).unwrap();
     assert_eq!(df.height(), 1);
     let st = df.column("_start_date").unwrap().i64().unwrap().get(0).unwrap();
@@ -103,7 +103,7 @@ fn union_table_and_manual_with_labels_lhs_sticky() {
 fn intersect_table_and_manual_with_labels_rhs_overrides_empty_lhs() {
     let tmp = tempfile::tempdir().unwrap();
     let store = Store::new(tmp.path()).unwrap();
-    let db = "timeline/public/blend_intersect_labeled.time";
+    let db = "clarium/public/blend_intersect_labeled.time";
     let base: i64 = 1_950_300_000_000;
     // Table interval: [base, base+10_000]
     {
@@ -123,7 +123,7 @@ fn intersect_table_and_manual_with_labels_rhs_overrides_empty_lhs() {
         db, m_start, m_end
     );
     let plan = match query::parse(&qtext).unwrap() { Command::Slice(p) => p, _ => unreachable!() };
-    let ctx = DataContext::with_defaults("timeline", "public");
+    let ctx = DataContext::with_defaults("clarium", "public");
     let df = run_slice(&shared, &plan, &ctx).unwrap();
     assert_eq!(df.height(), 1);
     let st = df.column("_start_date").unwrap().i64().unwrap().get(0).unwrap();

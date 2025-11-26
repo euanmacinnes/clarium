@@ -464,14 +464,14 @@ pub fn by_or_groupby(store: &SharedStore, df: DataFrame, q: &Query, ctx: &mut Da
             if let Some(f) = filter_expr { lf = lf.filter(f); }
         }
         // Resolve group-by columns using DataContext and build expressions
-        tracing::debug!(target: "timeline::groupby", "GROUPBY input: rows={} cols={:?}", df.height(), df.get_column_names());
+        tracing::debug!(target: "clarium::groupby", "GROUPBY input: rows={} cols={:?}", df.height(), df.get_column_names());
         if cfg!(debug_assertions) {
             // Log name -> dtype mapping to aid type mismatch investigations
             let mut dts: Vec<String> = Vec::new();
             for cname in df.get_column_names() {
                 if let Ok(c) = df.column(cname.as_str()) { dts.push(format!("{}:{:?}", cname, c.dtype())); }
             }
-            tracing::debug!(target: "timeline::groupby", "GROUPBY input dtypes: [{}]", dts.join(", "));
+            tracing::debug!(target: "clarium::groupby", "GROUPBY input dtypes: [{}]", dts.join(", "));
         }
         let resolved_group_cols: Vec<String> = group_cols
             .iter()
@@ -548,7 +548,7 @@ pub fn by_or_groupby(store: &SharedStore, df: DataFrame, q: &Query, ctx: &mut Da
                         .unwrap_or_else(|_| item.column.clone());
                     col(&qn)
                 };
-                tracing::debug!(target: "timeline::groupby", "GROUPBY agg build: func={:?} col='{}' alias={:?}", func, item.column, item.alias);
+                tracing::debug!(target: "clarium::groupby", "GROUPBY agg build: func={:?} col='{}' alias={:?}", func, item.column, item.alias);
                 let mut e = match func {
                     AggFunc::Avg => base.mean().alias(format!("AVG({})", item.column)),
                     AggFunc::Max => base.max().alias(format!("MAX({})", item.column)),
@@ -618,9 +618,9 @@ pub fn by_or_groupby(store: &SharedStore, df: DataFrame, q: &Query, ctx: &mut Da
         // Always include group time bounds
         agg_cols.push(col(&time_col).min().alias("_start_time"));
         agg_cols.push(col(&time_col).max().alias("_end_time"));
-        tracing::debug!(target: "timeline::groupby", "GROUPBY executing: gb_keys={:?}", resolved_group_cols);
+        tracing::debug!(target: "clarium::groupby", "GROUPBY executing: gb_keys={:?}", resolved_group_cols);
         let mut out = lf.group_by(gb_exprs).agg(agg_cols).collect()?;
-        tracing::debug!(target: "timeline::groupby", "GROUPBY raw out: rows={} cols={:?}", out.height(), out.get_column_names());
+        tracing::debug!(target: "clarium::groupby", "GROUPBY raw out: rows={} cols={:?}", out.height(), out.get_column_names());
         debug!("[GROUPBY COUNT] After aggregation, checking schema for COUNT columns");
         if cfg!(debug_assertions) {
             let mut dts: Vec<String> = Vec::new();
@@ -633,7 +633,7 @@ pub fn by_or_groupby(store: &SharedStore, df: DataFrame, q: &Query, ctx: &mut Da
                     }
                 }
             }
-            tracing::debug!(target: "timeline::groupby", "GROUPBY raw out dtypes: [{}]", dts.join(", "));
+            tracing::debug!(target: "clarium::groupby", "GROUPBY raw out dtypes: [{}]", dts.join(", "));
         }
         // After aggregation, rename group-by key columns to their unqualified suffixes
         // Support both dotted (db.schema.table.col) and path-like (db/schema/table.col) qualifications.
@@ -690,13 +690,13 @@ pub fn by_or_groupby(store: &SharedStore, df: DataFrame, q: &Query, ctx: &mut Da
             let refs: Vec<&str> = sort_refs.iter().map(|s| s.as_str()).collect();
             out.sort(refs, polars::prelude::SortMultipleOptions::default())?
         } else { out };
-        tracing::debug!(target: "timeline::groupby", "GROUPBY out (post-rename/sort) rows={} cols={:?}", out.height(), out.get_column_names());
+        tracing::debug!(target: "clarium::groupby", "GROUPBY out (post-rename/sort) rows={} cols={:?}", out.height(), out.get_column_names());
         if cfg!(debug_assertions) {
             let mut dts: Vec<String> = Vec::new();
             for cname in out.get_column_names() {
                 if let Ok(c) = out.column(cname.as_str()) { dts.push(format!("{}:{:?}", cname, c.dtype())); }
             }
-            tracing::debug!(target: "timeline::groupby", "GROUPBY out dtypes: [{}]", dts.join(", "));
+            tracing::debug!(target: "clarium::groupby", "GROUPBY out dtypes: [{}]", dts.join(", "));
         }
         // Evaluate aggregate UDF plans, if any
         if !udf_plans.is_empty() {

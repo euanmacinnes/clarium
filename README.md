@@ -16,6 +16,30 @@ Quick start
     - cargo run --release --bin timeline_server -- --http-port 8080 --db-folder dbs
     - $env:TIMELINE_HTTP_PORT=8080; $env:TIMELINE_PG_PORT=6432; $env:TIMELINE_DB_FOLDER='dbs'; cargo run --release --features pgwire --bin timeline_server -- --pgwire
 
+Python tests (SQLAlchemy)
+
+- The repository includes simple Python tests that connect to the pgwire endpoint via SQLAlchemy, inspect schemas/tables, optionally create a table, insert rows, and run queries.
+- Requirements are listed in tests\python\requirements.txt.
+- Default connection URL is postgresql+psycopg://localhost:5433/timeline, overridable via CLARIUM_SQLA_URL.
+- How to run:
+  1. Create and activate a virtual environment, then install deps and run pytest:
+     - python -m venv .venv
+     - .venv\Scripts\Activate.ps1
+     - pip install -r tests\python\requirements.txt
+     - # Override the URL if needed (example for a custom port):
+     - $env:CLARIUM_SQLA_URL = "postgresql+psycopg://localhost:6432/timeline"
+     - pytest -q tests/python
+  3. Notes:
+     - Auto-start: If a server is not already listening on the URL’s host/port, pytest will auto-start `timeline_server` via `cargo run --release --features pgwire --bin timeline_server -- --pgwire`, wait until the pgwire port is ready, and then run tests. It will attempt to stop the server when the test session finishes.
+     - Opt-out: set `CLARIUM_SKIP_AUTOSTART=1` to disable auto-start (use this if you prefer to run the server yourself).
+     - Overrides (optional):
+       - `CLARIUM_CARGO` — path to cargo (default `cargo`)
+       - `CLARIUM_SERVER_BIN` — server bin name (default `timeline_server`)
+       - `CLARIUM_ARGS` — extra CLI args appended after `--pgwire`
+       - `CLARIUM_STARTUP_TIMEOUT` — seconds to wait for readiness (default 45)
+     - If CREATE TABLE isn’t supported by your build/path, the DDL test will be marked xfail and the rest will still run.
+     - On a fresh store, a demo table public.demo may exist; tests will query it when present.
+
 First run behavior
 
 - On a completely empty store, the server creates a demo table at timeline/public/demo.time with 1 week of per‑second data, a sine wave cycling every 2 hours.

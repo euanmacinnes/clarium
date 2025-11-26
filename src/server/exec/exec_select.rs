@@ -47,13 +47,13 @@ pub(crate) fn run_select_with_context(store: &SharedStore, q: &crate::query::Que
         ctx.parent_sources.extend(parent.sources.iter().cloned());
     }
     
-    debug!(target: "timeline::exec", "run_select (staged): base_table_present={} joins_present={} by_window_ms={:?} group_by_cols={:?} rolling_window_ms={:?} select_len={} where_present={} order_by_present={:?} limit={:?} into_table_present={}",
+    debug!(target: "clarium::exec", "run_select (staged): base_table_present={} joins_present={} by_window_ms={:?} group_by_cols={:?} rolling_window_ms={:?} select_len={} where_present={} order_by_present={:?} limit={:?} into_table_present={}",
             q.base_table.is_some(), q.joins.is_some(), q.by_window_ms, q.group_by_cols, q.rolling_window_ms, q.select.len(), q.where_clause.is_some(), q.order_by.as_ref().map(|v| !v.is_empty()), q.limit, q.into_table.is_some());
 
     // Execute CTEs (Common Table Expressions) if present
     if let Some(ctes) = &q.with_ctes {
         for cte in ctes {
-            debug!(target: "timeline::exec", "Executing CTE: {}", cte.name);
+            debug!(target: "clarium::exec", "Executing CTE: {}", cte.name);
             // Recursively execute each CTE query, passing current ctx so nested CTEs can reference earlier CTEs
             let cte_df = run_select_with_context(store, &cte.query, Some(&ctx))?;
             // Store the result in the context for later reference
@@ -92,5 +92,5 @@ fn derive_defaults_from_ident(ident: &str) -> (String, String) {
     // Try dotted db.schema.table
     let parts: Vec<&str> = ident.split('.').collect();
     if parts.len() >= 3 { return (parts[0].to_string(), parts[1].to_string()); }
-    ("timeline".into(), "public".into())
+    ("clarium".into(), "public".into())
 }

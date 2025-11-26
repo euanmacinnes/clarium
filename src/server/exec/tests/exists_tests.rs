@@ -13,8 +13,8 @@ fn test_exists_basic() {
     let shared = SharedStore::new(tmp.path()).unwrap();
     
     // Create two tables: orders and customers
-    let orders_db = "timeline/public/orders";
-    let customers_db = "timeline/public/customers";
+    let orders_db = "clarium/public/orders";
+    let customers_db = "clarium/public/customers";
     
     store.create_table(orders_db).unwrap();
     store.create_table(customers_db).unwrap();
@@ -53,8 +53,8 @@ fn test_not_exists() {
     let store = Store::new(tmp.path()).unwrap();
     let shared = SharedStore::new(tmp.path()).unwrap();
     
-    let orders_db = "timeline/public/orders";
-    let customers_db = "timeline/public/customers";
+    let orders_db = "clarium/public/orders";
+    let customers_db = "clarium/public/customers";
     
     store.create_table(orders_db).unwrap();
     store.create_table(customers_db).unwrap();
@@ -92,7 +92,7 @@ fn test_exists_time_series() {
     let tmp = tempfile::tempdir().unwrap();
     let store = Store::new(tmp.path()).unwrap();
     let shared = SharedStore::new(tmp.path()).unwrap();
-    let db = "timeline/public/jobs.time";
+    let db = "clarium/public/jobs.time";
     
     let base: i64 = 1_600_000_000_000;
     let mut recs: Vec<Record> = Vec::new();
@@ -126,8 +126,8 @@ fn test_all_operator() {
     let store = Store::new(tmp.path()).unwrap();
     let shared = SharedStore::new(tmp.path()).unwrap();
     
-    let values_db = "timeline/public/values";
-    let thresholds_db = "timeline/public/thresholds";
+    let values_db = "clarium/public/values";
+    let thresholds_db = "clarium/public/thresholds";
     
     store.create_table(values_db).unwrap();
     store.create_table(thresholds_db).unwrap();
@@ -165,8 +165,8 @@ fn test_any_operator() {
     let store = Store::new(tmp.path()).unwrap();
     let shared = SharedStore::new(tmp.path()).unwrap();
     
-    let scores_db = "timeline/public/scores";
-    let targets_db = "timeline/public/targets";
+    let scores_db = "clarium/public/scores";
+    let targets_db = "clarium/public/targets";
     
     store.create_table(scores_db).unwrap();
     store.create_table(targets_db).unwrap();
@@ -204,8 +204,8 @@ fn test_all_with_equality() {
     let store = Store::new(tmp.path()).unwrap();
     let shared = SharedStore::new(tmp.path()).unwrap();
     
-    let items_db = "timeline/public/items";
-    let compare_db = "timeline/public/compare";
+    let items_db = "clarium/public/items";
+    let compare_db = "clarium/public/compare";
     
     store.create_table(items_db).unwrap();
     store.create_table(compare_db).unwrap();
@@ -243,8 +243,8 @@ fn test_any_with_inequality() {
     let store = Store::new(tmp.path()).unwrap();
     let shared = SharedStore::new(tmp.path()).unwrap();
     
-    let products_db = "timeline/public/products";
-    let prices_db = "timeline/public/prices";
+    let products_db = "clarium/public/products";
+    let prices_db = "clarium/public/prices";
     
     store.create_table(products_db).unwrap();
     store.create_table(prices_db).unwrap();
@@ -281,7 +281,7 @@ fn test_exists_job_queue_pattern() {
     let tmp = tempfile::tempdir().unwrap();
     let store = Store::new(tmp.path()).unwrap();
     let shared = SharedStore::new(tmp.path()).unwrap();
-    let db = "timeline/public/jobs.time";
+    let db = "clarium/public/jobs.time";
     
     let base: i64 = 1_700_000_000_000;
     let mut recs: Vec<Record> = Vec::new();
@@ -317,7 +317,7 @@ fn test_exists_multiple_conditions() {
     let tmp = tempfile::tempdir().unwrap();
     let store = Store::new(tmp.path()).unwrap();
     let shared = SharedStore::new(tmp.path()).unwrap();
-    let db = "timeline/public/events.time";
+    let db = "clarium/public/events.time";
     
     let base: i64 = 1_800_000_000_000;
     let mut recs: Vec<Record> = Vec::new();
@@ -352,8 +352,8 @@ fn test_all_less_than() {
     let store = Store::new(tmp.path()).unwrap();
     let shared = SharedStore::new(tmp.path()).unwrap();
     
-    let candidates_db = "timeline/public/candidates";
-    let limits_db = "timeline/public/limits";
+    let candidates_db = "clarium/public/candidates";
+    let limits_db = "clarium/public/limits";
     
     store.create_table(candidates_db).unwrap();
     store.create_table(limits_db).unwrap();
@@ -391,8 +391,8 @@ fn test_any_not_equal() {
     let store = Store::new(tmp.path()).unwrap();
     let shared = SharedStore::new(tmp.path()).unwrap();
     
-    let items_db = "timeline/public/items";
-    let excluded_db = "timeline/public/excluded";
+    let items_db = "clarium/public/items";
+    let excluded_db = "clarium/public/excluded";
     
     store.create_table(items_db).unwrap();
     store.create_table(excluded_db).unwrap();
@@ -430,8 +430,8 @@ fn test_exists_in_cte() {
     let store = Store::new(tmp.path()).unwrap();
     let shared = SharedStore::new(tmp.path()).unwrap();
     
-    let orders_db = "timeline/public/orders";
-    let customers_db = "timeline/public/customers";
+    let orders_db = "clarium/public/orders";
+    let customers_db = "clarium/public/customers";
     
     store.create_table(orders_db).unwrap();
     store.create_table(customers_db).unwrap();
@@ -471,8 +471,8 @@ fn test_exists_and_all_combined() {
     let store = Store::new(tmp.path()).unwrap();
     let shared = SharedStore::new(tmp.path()).unwrap();
     
-    let products_db = "timeline/public/products";
-    let prices_db = "timeline/public/prices";
+    let products_db = "clarium/public/products";
+    let prices_db = "clarium/public/prices";
     
     store.create_table(products_db).unwrap();
     store.create_table(prices_db).unwrap();

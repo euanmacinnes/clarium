@@ -1,7 +1,7 @@
 //!
-//! Timeline server binary
+//! clarium server binary
 //! ----------------------
-//! Command-line entry point for starting the Timeline HTTP server and optional
+//! Command-line entry point for starting the clarium HTTP server and optional
 //! pgwire endpoint. Supports configuration via CLI flags and environment variables.
 
 use anyhow::Result;
@@ -73,12 +73,11 @@ fn has_flag(args: &[String], flag: &str) -> bool {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    println!(r"___________.__               .__  .__
-\__    ___/|__| _____   ____ |  | |__| ____   ____
-  |    |   |  |/     \_/ __ \|  | |  |/    \_/ __ \
-  |    |   |  |  Y Y  \  ___/|  |_|  |   |  \  ___/
-  |____|   |__|__|_|  /\___  >____/__|___|  /\___  >
-                    \/     \/             \/     \/ ");
+    println!(r"   ________           _               
+  / ____/ /___ ______(_)_  ______ ___ 
+ / /   / / __ `/ ___/ / / / / __ `__ \
+/ /___/ / /_/ / /  / / /_/ / / / / / /
+\____/_/\__,_/_/  /_/\__,_/_/ /_/ /_/  ");
 
     // Initialize tracing subscriber with env filter if provided
     let _ = tracing_subscriber::fmt()
@@ -88,7 +87,7 @@ async fn main() -> Result<()> {
     let args: Vec<String> = env::args().collect();
 
     if has_flag(&args, "--help") || has_flag(&args, "-h") {
-        println!("Timeline Server\n\nUSAGE:\n  timeline_server [--http-port N] [--pg-port N] [--db-folder PATH] [--pgwire|--no-pgwire]\n\nOPTIONS:\n  --http-port N       HTTP API port (env: TIMELINE_HTTP_PORT, default 7878)\n  --pg-port N         pgwire port (env: TIMELINE_PG_PORT, default 5433)\n  --db-folder PATH    Database root folder (env: TIMELINE_DB_FOLDER, default dbs/timeline)\n  --pgwire [bool]     Enable pgwire (env: TIMELINE_PGWIRE). Presence enables; or pass true/false.\n  --no-pgwire        Disable pgwire explicitly.\n");
+        println!("clarium Server\n\nUSAGE:\n  clarium_server [--http-port N] [--pg-port N] [--db-folder PATH] [--pgwire|--no-pgwire]\n\nOPTIONS:\n  --http-port N       HTTP API port (env: clarium_HTTP_PORT, default 7878)\n  --pg-port N         pgwire port (env: clarium_PG_PORT, default 5433)\n  --db-folder PATH    Database root folder (env: clarium_DB_FOLDER, default dbs/clarium)\n  --pgwire [bool]     Enable pgwire (env: clarium_PGWIRE). Presence enables; or pass true/false.\n  --no-pgwire        Disable pgwire explicitly.\n");
         return Ok(());
     }
 
@@ -98,10 +97,10 @@ async fn main() -> Result<()> {
     let default_root: &str = "dbs";
 
     // Environment variables
-    let env_http = parse_port_env("TIMELINE_HTTP_PORT");
-    let env_pg = parse_port_env("TIMELINE_PG_PORT");
-    let env_root = std::env::var("TIMELINE_DB_FOLDER").ok();
-    let env_pgwire = parse_bool_env("TIMELINE_PGWIRE");
+    let env_http = parse_port_env("clarium_HTTP_PORT");
+    let env_pg = parse_port_env("clarium_PG_PORT");
+    let env_root = std::env::var("clarium_DB_FOLDER").ok();
+    let env_pgwire = parse_bool_env("clarium_PGWIRE");
 
     // CLI arguments override environment
     let arg_http = parse_port_arg(&args, "--http-port");
@@ -133,18 +132,18 @@ async fn main() -> Result<()> {
         let pg_opt = if enable_pgwire { Some(pg_port) } else { None };
         if enable_pgwire {
             println!(
-                "Timeline starting using ports: http={}, pgwire={}, db_root={}",
+                "clarium starting using ports: http={}, pgwire={}, db_root={}",
                 http_port, pg_port, db_root
             );
             tracing::info!("Using ports: http={}, pgwire={}, db_root={}", http_port, pg_port, db_root);
         } else {
             println!(
-                "Timeline starting with pgwire DISABLED: http={}, db_root={}",
+                "clarium starting with pgwire DISABLED: http={}, db_root={}",
                 http_port, db_root
             );
             tracing::info!("pgwire disabled; Using port: http={}, db_root={}", http_port, db_root);
         }
-        return timeline::server::run_with_ports(http_port, pg_opt, &db_root).await;
+        return clarium::server::run_with_ports(http_port, pg_opt, &db_root).await;
     }
 
     #[cfg(not(feature = "pgwire"))]
@@ -153,9 +152,9 @@ async fn main() -> Result<()> {
             println!("WARNING: --pgwire requested but the binary was built without 'pgwire' feature; pgwire will be disabled.");
             tracing::warn!("pgwire requested but not compiled in; continuing without pgwire");
         }
-        println!("Timeline starting using ports: http={}, db_root={}", http_port, db_root);
+        println!("clarium starting using ports: http={}, db_root={}", http_port, db_root);
         tracing::info!("Using port: http={}, db_root={}", http_port, db_root);
         // Pass None for pgwire (disabled)
-        return timeline::server::run_with_ports(http_port, None, &db_root).await;
+        return clarium::server::run_with_ports(http_port, None, &db_root).await;
     }
 }

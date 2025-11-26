@@ -15,7 +15,7 @@ fn stage_from_where_then_project_time_table_simple() {
     let tmp = tempfile::tempdir().unwrap();
     let store = Store::new(tmp.path()).unwrap();
     let shared = SharedStore::new(tmp.path()).unwrap();
-    let db = "timeline/public/raw_stage.time";
+    let db = "clarium/public/raw_stage.time";
     let base: i64 = 1_800_000_000_000;
     let mut recs: Vec<Record> = Vec::new();
     for i in 0..3 {
@@ -30,7 +30,7 @@ fn stage_from_where_then_project_time_table_simple() {
     let q = match query::parse(&qtxt).unwrap() { Command::Select(q) => q, _ => unreachable!() };
 
     // DataContext with defaults derived from db path
-    let (def_db, def_schema) = ("timeline".to_string(), "public".to_string());
+    let (def_db, def_schema) = ("clarium".to_string(), "public".to_string());
     let mut ctx = DataContext::with_defaults(def_db, def_schema);
 
     // FROM/WHERE stage
@@ -59,7 +59,7 @@ fn stage_from_where_then_project_regular_table_simple() {
     let tmp = tempfile::tempdir().unwrap();
     let store = Store::new(tmp.path()).unwrap();
     let shared = SharedStore::new(tmp.path()).unwrap();
-    let db = "timeline/public/people"; // no .time suffix
+    let db = "clarium/public/people"; // no .time suffix
     store.create_table(db).unwrap();
     let ids = Series::new("id".into(), vec![1i64, 2, 3]);
     let names = Series::new("name".into(), vec!["alice", "bob", "carol"]);
@@ -69,7 +69,7 @@ fn stage_from_where_then_project_regular_table_simple() {
     let qtxt = format!("SELECT id, name FROM {}", db);
     let q = match query::parse(&qtxt).unwrap() { Command::Select(q) => q, _ => unreachable!() };
 
-    let (def_db, def_schema) = ("timeline".to_string(), "public".to_string());
+    let (def_db, def_schema) = ("clarium".to_string(), "public".to_string());
     let mut ctx = DataContext::with_defaults(def_db, def_schema);
 
     let df_from = stage_from_where(&shared, &q, &mut ctx).expect("from_where should succeed");
@@ -97,7 +97,7 @@ fn stage_from_where_with_udf_predicate() {
     let tmp = tempfile::tempdir().unwrap();
     let store = Store::new(tmp.path()).unwrap();
     let shared = SharedStore::new(tmp.path()).unwrap();
-    let db = "timeline/public/udf_where.time";
+    let db = "clarium/public/udf_where.time";
     let base: i64 = 1_900_000_000_000;
     let mut recs: Vec<Record> = Vec::new();
     for (i, v) in [-1i64, 0, 1].into_iter().enumerate() {
@@ -111,7 +111,7 @@ fn stage_from_where_with_udf_predicate() {
     let qtxt = format!("SELECT _time, v FROM {} WHERE is_pos(v)", db);
     let q = match query::parse(&qtxt).unwrap() { Command::Select(q) => q, _ => unreachable!() };
 
-    let (def_db, def_schema) = ("timeline".to_string(), "public".to_string());
+    let (def_db, def_schema) = ("clarium".to_string(), "public".to_string());
     let mut ctx = DataContext::with_defaults(def_db, def_schema);
     // Capture registry snapshot for this query context
     let reg = crate::scripts::get_script_registry().expect("registry should be initialized");
@@ -141,7 +141,7 @@ fn stage_project_select_with_udf_in_select() {
     let tmp = tempfile::tempdir().unwrap();
     let store = Store::new(tmp.path()).unwrap();
     let shared = SharedStore::new(tmp.path()).unwrap();
-    let db = "timeline/public/udf_select.time";
+    let db = "clarium/public/udf_select.time";
     let base: i64 = 1_900_100_000_000;
     let mut recs: Vec<Record> = Vec::new();
     for i in 0..3 {
@@ -155,7 +155,7 @@ fn stage_project_select_with_udf_in_select() {
     let qtxt = format!("SELECT dbl(v) AS y FROM {}", db);
     let q = match query::parse(&qtxt).unwrap() { Command::Select(q) => q, _ => unreachable!() };
 
-    let (def_db, def_schema) = ("timeline".to_string(), "public".to_string());
+    let (def_db, def_schema) = ("clarium".to_string(), "public".to_string());
     let mut ctx = DataContext::with_defaults(def_db, def_schema);
     // Capture registry snapshot for this query context
     let reg = crate::scripts::get_script_registry().expect("registry should be initialized");
@@ -183,7 +183,7 @@ fn raw_group_by_multi_cols_with_select_projection_by_stage() {
     let tmp = tempfile::tempdir().unwrap();
     let store = Store::new(tmp.path()).unwrap();
     let shared = SharedStore::new(tmp.path()).unwrap();
-    let db = "timeline/public/db_group_multi_raw.time";
+    let db = "clarium/public/db_group_multi_raw.time";
     let base: i64 = 1_700_003_000_000;
     let rows = vec![
         (0, "A", "R1", 1.0),
@@ -203,7 +203,7 @@ fn raw_group_by_multi_cols_with_select_projection_by_stage() {
 
     let qtext = format!("SELECT device, region, SUM(v) FROM {} GROUP BY device, region", db);
     let q = match query::parse(&qtext).unwrap() { Command::Select(q) => q, _ => unreachable!() };
-    let mut ctx = DataContext::with_defaults("timeline".to_string(), "public".to_string());
+    let mut ctx = DataContext::with_defaults("clarium".to_string(), "public".to_string());
 
     // FROM stage
     let df_from = stage_from_where(&shared, &q, &mut ctx).expect("from_where ok");
@@ -235,7 +235,7 @@ fn raw_group_by_multi_cols_with_select_projection_full() {
     let tmp = tempfile::tempdir().unwrap();
     let store = Store::new(tmp.path()).unwrap();
     let shared = SharedStore::new(tmp.path()).unwrap();
-    let db = "timeline/public/db_group_multi_raw2.time";
+    let db = "clarium/public/db_group_multi_raw2.time";
     let base: i64 = 1_700_003_000_000;
     let rows = vec![
         (0, "A", "R1", 1.0),
@@ -255,7 +255,7 @@ fn raw_group_by_multi_cols_with_select_projection_full() {
 
     let qtext = format!("SELECT device, region, SUM(v) FROM {} GROUP BY device, region", db);
     let q = match query::parse(&qtext).unwrap() { Command::Select(q) => q, _ => unreachable!() };
-    let mut ctx = DataContext::with_defaults("timeline".to_string(), "public".to_string());
+    let mut ctx = DataContext::with_defaults("clarium".to_string(), "public".to_string());
 
     let df_from = stage_from_where(&shared, &q, &mut ctx).expect("from_where ok");
     let df_by = stage_by_or_groupby(&shared, df_from, &q, &mut ctx).expect("by_or_groupby ok");
@@ -286,7 +286,7 @@ fn raw_stage_complex_by_slice_direct() {
     let tmp = tempfile::tempdir().unwrap();
     let store = Store::new(tmp.path()).unwrap();
     // Main data table across 10 minutes at 1s cadence
-    let main = "timeline/public/ci_main_raw.time";
+    let main = "clarium/public/ci_main_raw.time";
     let t0: i64 = 1_906_000_000_000;
     let mut recs: Vec<Record> = Vec::new();
     for i in 0..600 {
@@ -304,7 +304,7 @@ fn raw_stage_complex_by_slice_direct() {
     store.write_records(main, &recs).unwrap();
 
     // Slice tables
-    let s1 = "timeline/public/ci_maint_raw.time";
+    let s1 = "clarium/public/ci_maint_raw.time";
     let mut s1recs: Vec<Record> = Vec::new();
     {
         let mut m = serde_json::Map::new();
@@ -315,7 +315,7 @@ fn raw_stage_complex_by_slice_direct() {
     }
     store.write_records(s1, &s1recs).unwrap();
 
-    let s2 = "timeline/public/ci_down_raw.time";
+    let s2 = "clarium/public/ci_down_raw.time";
     let mut s2recs: Vec<Record> = Vec::new();
     for (start_s, end_s, reason) in [(60, 200, "power"), (300, 360, "net")] {
         let mut m = serde_json::Map::new();
@@ -341,7 +341,7 @@ fn raw_stage_complex_by_slice_direct() {
     let q = match query::parse(&qtxt).unwrap() { Command::Select(q) => q, _ => unreachable!() };
 
     // Stage: FROM/WHERE
-    let mut ctx = DataContext::with_defaults("timeline".to_string(), "public".to_string());
+    let mut ctx = DataContext::with_defaults("clarium".to_string(), "public".to_string());
     let df_from = stage_from_where(&shared, &q, &mut ctx).expect("from_where ok");
     tprintln!("raw_stage_complex_by_slice_direct: FROM rows={}", df_from.height());
     // Exact expectations: base table has 600 rows (10 minutes at 1s)
@@ -400,7 +400,7 @@ fn raw_stage_complex_by_slice_direct() {
 fn raw_stage_nested_by_slice_direct() {
     let tmp = tempfile::tempdir().unwrap();
     let store = Store::new(tmp.path()).unwrap();
-    let main = "timeline/public/ci_main2_raw.time";
+    let main = "clarium/public/ci_main2_raw.time";
     let t0: i64 = 1_906_100_000_000;
     let mut recs: Vec<Record> = Vec::new();
     for i in 0..360 { // 6 minutes
@@ -411,8 +411,8 @@ fn raw_stage_nested_by_slice_direct() {
     }
     store.write_records(main, &recs).unwrap();
 
-    let a = "timeline/public/ci_a_raw.time"; // [0,180s]
-    let b = "timeline/public/ci_b_raw.time"; // [120,360s]
+    let a = "clarium/public/ci_a_raw.time"; // [0,180s]
+    let b = "clarium/public/ci_b_raw.time"; // [120,360s]
     let mut arecs: Vec<Record> = Vec::new();
     let mut brecs: Vec<Record> = Vec::new();
     arecs.push(Record { _time: t0, sensors: serde_json::Map::from_iter(vec![
@@ -439,7 +439,7 @@ fn raw_stage_nested_by_slice_direct() {
     );
     let q = match query::parse(&qtxt).unwrap() { Command::Select(q) => q, _ => unreachable!() };
 
-    let mut ctx = DataContext::with_defaults("timeline".to_string(), "public".to_string());
+    let mut ctx = DataContext::with_defaults("clarium".to_string(), "public".to_string());
 
     // FROM/WHERE
     let df_from = stage_from_where(&shared, &q, &mut ctx).expect("from_where ok");
@@ -496,7 +496,7 @@ fn raw_stage_order_limit_and_having_after_by() {
     let tmp = tempfile::tempdir().unwrap();
     let store = Store::new(tmp.path()).unwrap();
     let shared = SharedStore::new(tmp.path()).unwrap();
-    let main = "timeline/public/ci_main2.time";
+    let main = "clarium/public/ci_main2.time";
     let t0: i64 = 1_906_100_000_000;
     let mut recs: Vec<Record> = Vec::new();
     for i in 0..120 { // 2 minutes
@@ -508,8 +508,8 @@ fn raw_stage_order_limit_and_having_after_by() {
     store.write_records(main, &recs).unwrap();
 
     // Slices tables with labels
-    let a = "timeline/public/ci_a.time"; // [0,60s]
-    let b = "timeline/public/ci_b.time"; // [30,120s]
+    let a = "clarium/public/ci_a.time"; // [0,60s]
+    let b = "clarium/public/ci_b.time"; // [30,120s]
     let mut arecs: Vec<Record> = Vec::new();
     let mut brecs: Vec<Record> = Vec::new();
     arecs.push(Record { _time: t0, sensors: serde_json::Map::from_iter(vec![
@@ -532,7 +532,7 @@ fn raw_stage_order_limit_and_having_after_by() {
     );
     let q = match query::parse(&qtxt).unwrap() { Command::Select(q) => q, _ => unreachable!() };
 
-    let mut ctx = DataContext::with_defaults("timeline".to_string(), "public".to_string());
+    let mut ctx = DataContext::with_defaults("clarium".to_string(), "public".to_string());
 
     // Stage: FROM/WHERE
     let df_from = stage_from_where(&shared, &q, &mut ctx).expect("from_where ok");
@@ -611,7 +611,7 @@ fn raw_test_aggregate_udf_group_by_single_and_multi() {
         // Query 1: single-return aggregate
         let q1txt = format!("SELECT k, sum_plus(v) AS sp FROM {} GROUP BY k ORDER BY k", db);
         let q1 = match query::parse(&q1txt).unwrap() { Command::Select(q) => q, _ => unreachable!() };
-        let mut ctx1 = DataContext::with_defaults("timeline".to_string(), "public".to_string());
+        let mut ctx1 = DataContext::with_defaults("clarium".to_string(), "public".to_string());
 
         // Stage FROM
         let df1_from = stage_from_where(&shared, &q1, &mut ctx1).expect("q1 from_where ok");
@@ -637,7 +637,7 @@ fn raw_test_aggregate_udf_group_by_single_and_multi() {
         // Query 2: multi-return aggregate with HAVING and ORDER
         let q2txt = format!("SELECT k, minmax(v) AS mm FROM {} GROUP BY k ORDER BY k", db);
         let q2 = match query::parse(&q2txt).unwrap() { Command::Select(q) => q, _ => unreachable!() };
-        let mut ctx2 = DataContext::with_defaults("timeline".to_string(), "public".to_string());
+        let mut ctx2 = DataContext::with_defaults("clarium".to_string(), "public".to_string());
         let df2_from = stage_from_where(&shared, &q2, &mut ctx2).expect("q2 from_where ok");
         tprintln!("Q2 FROM rows={} cols={:?}", df2_from.height(), df2_from.get_column_names());
         let df2_by = stage_by_or_groupby(&shared, df2_from.clone(), &q2, &mut ctx2).expect("q2 by_or_groupby ok");
@@ -652,7 +652,7 @@ fn raw_test_aggregate_udf_group_by_single_and_multi() {
         // Query 3: HAVING on multi-return aggregate
         let q3txt = format!("SELECT k, minmax(v) AS mm FROM {} GROUP BY k HAVING mm_0 > 2 ORDER BY k", db);
         let q3 = match query::parse(&q3txt).unwrap() { Command::Select(q) => q, _ => unreachable!() };
-        let mut ctx3 = DataContext::with_defaults("timeline".to_string(), "public".to_string());
+        let mut ctx3 = DataContext::with_defaults("clarium".to_string(), "public".to_string());
         let df3_from = stage_from_where(&shared, &q3, &mut ctx3).expect("q3 from_where ok");
         let df3_by = stage_by_or_groupby(&shared, df3_from.clone(), &q3, &mut ctx3).expect("q3 by_or_groupby ok");
         tprintln!("Q3 BY rows={} cols={:?}", df3_by.height(), df3_by.get_column_names());

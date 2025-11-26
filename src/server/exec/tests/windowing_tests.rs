@@ -10,7 +10,7 @@ fn test_row_number_basic() {
     let tmp = tempfile::tempdir().unwrap();
     let store = Store::new(tmp.path()).unwrap();
     let shared = SharedStore::new(tmp.path()).unwrap();
-    let db = "timeline/public/scores.time";
+    let db = "clarium/public/scores.time";
     
     let base: i64 = 1_600_000_000_000;
     let mut recs: Vec<Record> = Vec::new();
@@ -47,7 +47,7 @@ fn test_row_number_order_asc() {
     let tmp = tempfile::tempdir().unwrap();
     let store = Store::new(tmp.path()).unwrap();
     let shared = SharedStore::new(tmp.path()).unwrap();
-    let db = "timeline/public/items.time";
+    let db = "clarium/public/items.time";
     
     let base: i64 = 1_650_000_000_000;
     let mut recs: Vec<Record> = Vec::new();
@@ -79,7 +79,7 @@ fn test_row_number_partition_by() {
     let tmp = tempfile::tempdir().unwrap();
     let store = Store::new(tmp.path()).unwrap();
     let shared = SharedStore::new(tmp.path()).unwrap();
-    let db = "timeline/public/jobs.time";
+    let db = "clarium/public/jobs.time";
     
     let base: i64 = 1_700_000_000_000;
     let mut recs: Vec<Record> = Vec::new();
@@ -124,7 +124,7 @@ fn test_row_number_partition_by_multiple() {
     let tmp = tempfile::tempdir().unwrap();
     let store = Store::new(tmp.path()).unwrap();
     let shared = SharedStore::new(tmp.path()).unwrap();
-    let db = "timeline/public/events.time";
+    let db = "clarium/public/events.time";
     
     let base: i64 = 1_750_000_000_000;
     let mut recs: Vec<Record> = Vec::new();
@@ -158,7 +158,7 @@ fn test_row_number_with_cte() {
     let tmp = tempfile::tempdir().unwrap();
     let store = Store::new(tmp.path()).unwrap();
     let shared = SharedStore::new(tmp.path()).unwrap();
-    let db = "timeline/public/tasks.time";
+    let db = "clarium/public/tasks.time";
     
     let base: i64 = 1_800_000_000_000;
     let mut recs: Vec<Record> = Vec::new();
@@ -192,7 +192,7 @@ fn test_job_search_pattern() {
     let tmp = tempfile::tempdir().unwrap();
     let store = Store::new(tmp.path()).unwrap();
     let shared = SharedStore::new(tmp.path()).unwrap();
-    let db = "timeline/public/jobs.time";
+    let db = "clarium/public/jobs.time";
     
     let base: i64 = 1_850_000_000_000;
     let mut recs: Vec<Record> = Vec::new();
@@ -229,7 +229,7 @@ fn test_row_number_order_by_multiple() {
     let tmp = tempfile::tempdir().unwrap();
     let store = Store::new(tmp.path()).unwrap();
     let shared = SharedStore::new(tmp.path()).unwrap();
-    let db = "timeline/public/records.time";
+    let db = "clarium/public/records.time";
     
     let base: i64 = 1_900_000_000_000;
     let mut recs: Vec<Record> = Vec::new();
@@ -262,7 +262,7 @@ fn test_cte_with_windowing_job_search() {
     let tmp = tempfile::tempdir().unwrap();
     let store = Store::new(tmp.path()).unwrap();
     let shared = SharedStore::new(tmp.path()).unwrap();
-    let db = "timeline/public/jobs.time";
+    let db = "clarium/public/jobs.time";
     
     let base: i64 = 2_000_000_000_000;
     let mut recs: Vec<Record> = Vec::new();
@@ -304,7 +304,7 @@ fn test_row_number_order_desc() {
     let tmp = tempfile::tempdir().unwrap();
     let store = Store::new(tmp.path()).unwrap();
     let shared = SharedStore::new(tmp.path()).unwrap();
-    let db = "timeline/public/sales.time";
+    let db = "clarium/public/sales.time";
     
     let base: i64 = 2_050_000_000_000;
     let mut recs: Vec<Record> = Vec::new();
@@ -338,7 +338,7 @@ fn test_row_number_partition_with_nulls() {
     let tmp = tempfile::tempdir().unwrap();
     let store = Store::new(tmp.path()).unwrap();
     let shared = SharedStore::new(tmp.path()).unwrap();
-    let db = "timeline/public/tasks.time";
+    let db = "clarium/public/tasks.time";
     
     let base: i64 = 2_100_000_000_000;
     let mut recs: Vec<Record> = Vec::new();
@@ -371,7 +371,7 @@ fn test_extract_with_windowing() {
     let tmp = tempfile::tempdir().unwrap();
     let store = Store::new(tmp.path()).unwrap();
     let shared = SharedStore::new(tmp.path()).unwrap();
-    let db = "timeline/public/events.time";
+    let db = "clarium/public/events.time";
     
     let base: i64 = 2_150_000_000_000;
     let mut recs: Vec<Record> = Vec::new();

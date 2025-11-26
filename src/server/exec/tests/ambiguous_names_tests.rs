@@ -17,8 +17,8 @@ fn test_join_with_aliases_and_column_resolution() {
     let tmp = tempfile::tempdir().unwrap();
     let store = Store::new(tmp.path()).unwrap();
     let base: i64 = 1_700_020_000_000;
-    let left = "timeline/public/left_t.time";
-    let right = "timeline/public/right_t.time";
+    let left = "clarium/public/left_t.time";
+    let right = "clarium/public/right_t.time";
     // write a few points with identical timestamps
     for i in 0..3i64 {
         let mut lm = serde_json::Map::new(); lm.insert("v".into(), json!((i + 1) as f64));
@@ -28,7 +28,7 @@ fn test_join_with_aliases_and_column_resolution() {
     }
     let shared = SharedStore::new(tmp.path()).unwrap();
 
-    let qtext = "SELECT a.v AS av, b.v AS bv FROM timeline.public.left_t.time a INNER JOIN timeline.public.right_t.time b ON a._time = b._time";
+    let qtext = "SELECT a.v AS av, b.v AS bv FROM clarium.public.left_t.time a INNER JOIN clarium.public.right_t.time b ON a._time = b._time";
     let q = match query::parse(qtext).unwrap() { Command::Select(q) => q, _ => unreachable!() };
     let df = run_select(&shared, &q).unwrap();
     let cols = df.get_column_names();
@@ -53,7 +53,7 @@ fn test_join_unqualified_ambiguous_column_errors() {
     let shared = SharedStore::new(tmp.path()).unwrap();
 
     // SELECT v without alias should be ambiguous in a join of two tables that both have column 'v'
-    let qtext = "SELECT v FROM timeline.public.j1.time a INNER JOIN timeline.public.j2.time b ON a._time = b._time";
+    let qtext = "SELECT v FROM clarium.public.j1.time a INNER JOIN clarium.public.j2.time b ON a._time = b._time";
     let q = match query::parse(qtext).unwrap() { Command::Select(q) => q, _ => unreachable!() };
     let err = run_select(&shared, &q).err();
     assert!(err.is_some(), "expected ambiguity error when selecting unqualified column in JOIN");

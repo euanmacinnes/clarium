@@ -25,14 +25,14 @@ use self::exec_slice::{run_slice};
 use self::where_subquery::{where_contains_subquery, eval_where_mask};
 
 pub async fn execute_query(store: &SharedStore, text: &str) -> Result<Value> {
-    debug!(target: "timeline::exec", "execute_query: text='{}'", text);
+    debug!(target: "clarium::exec", "execute_query: text='{}'", text);
     let cmd = query::parse(text)?;
     match cmd {
         Command::Slice(plan) => {
             // Create DataContext with registry snapshot for SLICE query
             let registry_snapshot = crate::scripts::get_script_registry()
                 .and_then(|r| r.snapshot().ok());
-            let mut ctx = crate::server::data_context::DataContext::with_defaults("timeline", "public");
+            let mut ctx = crate::server::data_context::DataContext::with_defaults("clarium", "public");
             if let Some(reg) = registry_snapshot {
                 ctx.script_registry = Some(reg);
             }
@@ -387,7 +387,7 @@ pub async fn execute_query(store: &SharedStore, text: &str) -> Result<Value> {
                 // Create DataContext with registry snapshot for WHERE clause evaluation
                 let registry_snapshot = crate::scripts::get_script_registry()
                     .and_then(|r| r.snapshot().ok());
-                let mut ctx = crate::server::data_context::DataContext::with_defaults("timeline", "public");
+                let mut ctx = crate::server::data_context::DataContext::with_defaults("clarium", "public");
                 if let Some(reg) = registry_snapshot {
                     ctx.script_registry = Some(reg);
                 }
@@ -416,7 +416,7 @@ pub async fn execute_query(store: &SharedStore, text: &str) -> Result<Value> {
                 // Create DataContext with registry snapshot for WHERE clause evaluation
                 let registry_snapshot = crate::scripts::get_script_registry()
                     .and_then(|r| r.snapshot().ok());
-                let mut ctx = crate::server::data_context::DataContext::with_defaults("timeline", "public");
+                let mut ctx = crate::server::data_context::DataContext::with_defaults("clarium", "public");
                 if let Some(reg) = registry_snapshot {
                     ctx.script_registry = Some(reg);
                 }
@@ -677,16 +677,16 @@ pub async fn execute_query(store: &SharedStore, text: &str) -> Result<Value> {
         }
         Command::CreateTable { table, primary_key, partitions } => {
             // Regular table: no .time suffix; initialize schema.json (tableType=regular)
-            debug!(target: "timeline::exec", "CreateTable: begin table='{}' pk={:?} partitions={:?}", table, primary_key, partitions);
+            debug!(target: "clarium::exec", "CreateTable: begin table='{}' pk={:?} partitions={:?}", table, primary_key, partitions);
             let guard = store.0.lock();
             if table.ends_with(".time") { anyhow::bail!("CREATE TABLE cannot target a .time table"); }
             guard.create_table(&table)?;
-            debug!(target: "timeline::exec", "CreateTable: directory/schema ensured for table='{}'", table);
+            debug!(target: "clarium::exec", "CreateTable: directory/schema ensured for table='{}'", table);
             if primary_key.is_some() || partitions.is_some() {
                 guard.set_table_metadata(&table, primary_key, partitions)?;
-                debug!(target: "timeline::exec", "CreateTable: metadata saved for table='{}'", table);
+                debug!(target: "clarium::exec", "CreateTable: metadata saved for table='{}'", table);
             }
-            debug!(target: "timeline::exec", "CreateTable: success table='{}'", table);
+            debug!(target: "clarium::exec", "CreateTable: success table='{}'", table);
             Ok(serde_json::json!({"status":"ok"}))
         }
         Command::DropTable { table, if_exists } => {
@@ -915,7 +915,7 @@ pub async fn execute_query2(store: &SharedStore, text: &str) -> Result<serde_jso
             // Create DataContext with registry snapshot for SLICE query
             let registry_snapshot = crate::scripts::get_script_registry()
                 .and_then(|r| r.snapshot().ok());
-            let mut ctx = crate::server::data_context::DataContext::with_defaults("timeline", "public");
+            let mut ctx = crate::server::data_context::DataContext::with_defaults("clarium", "public");
             if let Some(reg) = registry_snapshot {
                 ctx.script_registry = Some(reg);
             }
@@ -1047,7 +1047,7 @@ pub async fn execute_query_with_defaults(store: &SharedStore, text: &str, defaul
 pub fn do_create_table(store: &SharedStore, q: &str) -> Result<()> {
     use anyhow::anyhow;
     // Parse: CREATE TABLE [IF NOT EXISTS] <db>/<schema>/<table> (col type, ...)
-    debug!(target: "timeline::exec", "do_create_table: begin q='{}'", q);
+    debug!(target: "clarium::exec", "do_create_table: begin q='{}'", q);
     let mut s = q.trim();
     let up = s.to_uppercase();
     if !up.starts_with("CREATE TABLE ") { return Err(anyhow!("unsupported CREATE TABLE")); }
@@ -1105,7 +1105,7 @@ pub fn do_create_table(store: &SharedStore, q: &str) -> Result<()> {
     let db_path = if ident_norm.contains('/') { ident_norm.to_string() } else { ident_norm.replace('.', "/") };
     let root = store.root_path();
     let dir = std::path::Path::new(&root).join(db_path.replace('/', std::path::MAIN_SEPARATOR.to_string().as_str()));
-    debug!(target: "timeline::exec", "do_create_table: dir='{}' (db_path='{}')", dir.display(), db_path);
+    debug!(target: "clarium::exec", "do_create_table: dir='{}' (db_path='{}')", dir.display(), db_path);
     std::fs::create_dir_all(&dir).with_context(|| format!("create table dir {}", dir.display()))?;
     let mut map = serde_json::Map::new();
     for (k, t) in schema_entries.into_iter() { map.insert(k, serde_json::Value::String(t)); }
@@ -1115,7 +1115,7 @@ pub fn do_create_table(store: &SharedStore, q: &str) -> Result<()> {
     }
     let sj = dir.join("schema.json");
     std::fs::write(&sj, serde_json::to_string_pretty(&serde_json::Value::Object(map))?)?;
-    debug!(target: "timeline::exec", "do_create_table: wrote schema.json at '{}'", sj.display());
+    debug!(target: "clarium::exec", "do_create_table: wrote schema.json at '{}'", sj.display());
     Ok(())
 }
 

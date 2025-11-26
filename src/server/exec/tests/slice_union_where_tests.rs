@@ -8,8 +8,8 @@ use serde_json::json;
 fn union_rhs_where_filters_before_union() {
     let tmp = tempfile::tempdir().unwrap();
     let store = Store::new(tmp.path()).unwrap();
-    let a = "timeline/public/su_a.time";
-    let b = "timeline/public/su_b.time";
+    let a = "clarium/public/su_a.time";
+    let b = "clarium/public/su_b.time";
     let base: i64 = 1_860_000_000_000;
     // a: [0,10s]
     {
@@ -39,7 +39,7 @@ fn union_rhs_where_filters_before_union() {
     // UNION rows from b where reason='power' -> union [0,10] with [5,15] => [0,15]
     let q = format!("SLICE USING {} UNION {} WHERE reason = 'power'", a, b);
     let p = match query::parse(&q).unwrap() { Command::Slice(p) => p, _ => unreachable!() };
-    let ctx = DataContext::with_defaults("timeline", "public");
+    let ctx = DataContext::with_defaults("clarium", "public");
     let df = run_slice(&shared, &p, &ctx).unwrap();
     assert_eq!(df.height(), 1);
     let st = df.column("_start_date").unwrap().i64().unwrap().get(0).unwrap();

@@ -9,7 +9,7 @@ fn manual_single_row_auto_labels() {
     let shared = SharedStore::new(tmp.path()).unwrap();
     let q = "SLICE USING (2025-01-01T00:00:00Z, 2025-01-01T01:00:00Z, 'A', 'B')";
     let plan = match query::parse(q).unwrap() { Command::Slice(p) => p, _ => unreachable!() };
-    let ctx = DataContext::with_defaults("timeline", "public");
+    let ctx = DataContext::with_defaults("clarium", "public");
     let df = run_slice(&shared, &plan, &ctx).unwrap();
     assert_eq!(df.height(), 1);
     let cols = df.get_column_names();
@@ -27,7 +27,7 @@ fn manual_multi_rows_with_alias() {
     let shared = SharedStore::new(tmp.path()).unwrap();
     let q = "SLICE USING ((2025-01-01T00:00:00Z, 2025-01-01T00:10:00Z, name:='X'), (2025-01-01T00:15:00Z, 2025-01-01T00:20:00Z, name:='Y'))";
     let plan = match query::parse(q).unwrap() { Command::Slice(p) => p, _ => unreachable!() };
-    let ctx = DataContext::with_defaults("timeline", "public");
+    let ctx = DataContext::with_defaults("clarium", "public");
     let df = run_slice(&shared, &plan, &ctx).unwrap();
     assert_eq!(df.height(), 2);
     let cols = df.get_column_names();
@@ -43,7 +43,7 @@ fn manual_union_merge_and_labels() {
     let shared = SharedStore::new(tmp.path()).unwrap();
     let q = "SLICE USING (0, 10000, l1:='LHS') UNION (5000, 15000, l1:='RHS')";
     let plan = match query::parse(q).unwrap() { Command::Slice(p) => p, _ => unreachable!() };
-    let ctx = DataContext::with_defaults("timeline", "public");
+    let ctx = DataContext::with_defaults("clarium", "public");
     let df = run_slice(&shared, &plan, &ctx).unwrap();
     // Expect single merged interval and label from LHS per union semantics
     assert_eq!(df.height(), 1);

@@ -64,7 +64,7 @@ impl Default for DataContext {
 }
 
 impl DataContext {
-    pub fn new() -> Self { Self::with_defaults("timeline", "public") }
+    pub fn new() -> Self { Self::with_defaults("clarium", "public") }
 
     /// Register materialized columns for a stage from a DataFrame
     pub fn register_df_columns_for_stage(&mut self, stage: SelectStage, df: &DataFrame) {
@@ -217,7 +217,7 @@ impl DataContext {
     /// Resolve a column name against a DataFrame, considering aliases present in the context.
     /// Supports: fully-qualified alias ("a.col"), unqualified ("col"), and exact matches.
     pub fn resolve_column(&self, df: &DataFrame, name: &str) -> Result<String> {
-        debug!(target: "timeline::exec", "DataContext::resolve_column: '{}' cols={:?}", name, df.get_column_names());
+        debug!(target: "clarium::exec", "DataContext::resolve_column: '{}' cols={:?}", name, df.get_column_names());
         let cols = df.get_column_names();
         let def_db = self.current_database.as_deref();
         let def_schema = self.current_schema.as_deref();
@@ -415,27 +415,27 @@ impl DataContext {
             TableRef::Table { name, alias } => {
                 // Check CTEs first - they take precedence over everything
                 if let Some(cte_df) = self.cte_tables.get(name) {
-                    tracing::debug!(target: "timeline::exec", "load_source_df: CTE hit name='{}' alias={:?}", name, alias);
+                    tracing::debug!(target: "clarium::exec", "load_source_df: CTE hit name='{}' alias={:?}", name, alias);
                     return Self::prefix_columns(cte_df.clone(), t);
                 }
                 // Try system tables using the raw name, so system schemas like information_schema.* work
                 if let Some(sys) = crate::system::system_table_df(name, store) {
-                    tracing::debug!(target: "timeline::exec", "load_source_df: system table hit name='{}' alias={:?}", name, alias);
+                    tracing::debug!(target: "clarium::exec", "load_source_df: system table hit name='{}' alias={:?}", name, alias);
                     return Self::prefix_columns(sys, t);
                 }
                 // Resolve to a canonical path for regular tables or KV
                 let effective = self.resolve_table_ident(name);
-                tracing::debug!(target: "timeline::exec", "load_source_df: resolving name='{}' -> effective='{}' alias={:?}", name, effective, alias);
+                tracing::debug!(target: "clarium::exec", "load_source_df: resolving name='{}' -> effective='{}' alias={:?}", name, effective, alias);
                 let df = if effective.contains(".store.") {
                     // KV addressing
                     let out = Self::read_df_or_kv(store, &effective)?;
-                    tracing::debug!(target: "timeline::exec", "load_source_df: KV df cols={:?} rows={}", out.get_column_names(), out.height());
+                    tracing::debug!(target: "clarium::exec", "load_source_df: KV df cols={:?} rows={}", out.get_column_names(), out.height());
                     out
                 } else {
                     let guard = store.0.lock();
                     match guard.read_df(&effective) {
                         Ok(out) => {
-                            tracing::debug!(target: "timeline::exec", "load_source_df: read_df('{}') -> cols={:?} rows={}", effective, out.get_column_names(), out.height());
+                            tracing::debug!(target: "clarium::exec", "load_source_df: read_df('{}') -> cols={:?} rows={}", effective, out.get_column_names(), out.height());
                             out
                         }
                         Err(e) => {
@@ -444,7 +444,7 @@ impl DataContext {
                                 let candidate = format!("{}.time", effective);
                                 match guard.read_df(&candidate) {
                                     Ok(out2) => {
-                                        tracing::debug!(target: "timeline::exec", "load_source_df: fallback read_df('{}') -> cols={:?} rows={}", candidate, out2.get_column_names(), out2.height());
+                                        tracing::debug!(target: "clarium::exec", "load_source_df: fallback read_df('{}') -> cols={:?} rows={}", candidate, out2.get_column_names(), out2.height());
                                         out2
                                     }
                                     Err(_) => return Err(e),
@@ -457,14 +457,14 @@ impl DataContext {
                 };
                 let pref = alias.as_deref().unwrap_or(name.as_str());
                 let prefixed = Self::prefix_columns(df, t)?;
-                tracing::debug!(target: "timeline::exec", "load_source_df: prefixed with '{}' -> cols={:?}", pref, prefixed.get_column_names());
+                tracing::debug!(target: "clarium::exec", "load_source_df: prefixed with '{}' -> cols={:?}", pref, prefixed.get_column_names());
                 Ok(prefixed)
             }
             TableRef::Subquery { query, alias } => {
                 // Execute the subquery using run_select_with_context to allow nested correlation
-                tracing::debug!(target: "timeline::exec", "load_source_df: executing subquery with alias '{}'", alias);
+                tracing::debug!(target: "clarium::exec", "load_source_df: executing subquery with alias '{}'", alias);
                 let subquery_df = crate::server::exec::exec_select::run_select_with_context(store, query, Some(self))?;
-                tracing::debug!(target: "timeline::exec", "load_source_df: subquery result cols={:?} rows={}", subquery_df.get_column_names(), subquery_df.height());
+                tracing::debug!(target: "clarium::exec", "load_source_df: subquery result cols={:?} rows={}", subquery_df.get_column_names(), subquery_df.height());
                 // Prefix columns with the subquery alias
                 Self::prefix_columns(subquery_df, t)
             }

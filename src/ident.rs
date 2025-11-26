@@ -5,7 +5,7 @@
 
 use std::path::{Path, PathBuf};
 
-pub const DEFAULT_DB: &str = "timeline";
+pub const DEFAULT_DB: &str = "clarium";
 pub const DEFAULT_SCHEMA: &str = "public";
 
 #[derive(Debug, Clone)]

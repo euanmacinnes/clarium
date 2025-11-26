@@ -1,7 +1,7 @@
 //!
-//! Timeline storage module
+//! clarium storage module
 //! -----------------------
-//! This module implements the on-disk store for Timeline using a simple three-level
+//! This module implements the on-disk store for clarium using a simple three-level
 //! directory layout: `database/schema/table.time`. Each table directory contains
 //! one or more Parquet chunks named `data-<min>-<max>-<ts>.parquet` and a schema.json
 //! that records the logical column types for all non-_time fields. The special
@@ -26,19 +26,19 @@ use polars::prelude::*;
 use polars::prelude::StatisticsOptions;
 use tracing::debug;
 
-/// Core on-disk storage handle for a Timeline table directory tree.
+/// Core on-disk storage handle for a clarium table directory tree.
 ///
 /// Store exposes methods to create/delete logical databases (table directories),
 /// append records with schema inference, and rewrite a table from a DataFrame.
 /// It operates under a configured root folder and resolves logical paths like
-/// "timeline/public/demo.time" into real directories.
+/// "clarium/public/demo.time" into real directories.
 #[derive(Clone)]
 pub struct Store {
     /// Root folder for all databases/schemas/tables.
     root: PathBuf,
 }
 
-/// A single logical row to ingest into a Timeline table.
+/// A single logical row to ingest into a clarium table.
 ///
 /// Fields other than `_time` are flattened under `sensors` and may be numeric
 /// or string. During ingestion, types are inferred per-column and may be widened
@@ -66,34 +66,34 @@ impl Store {
 
     /// Create an empty logical database (table directory) and initialize schema.json.
     ///
-    /// The `table` parameter is a logical path like "timeline/public/mytable.time".
+    /// The `table` parameter is a logical path like "clarium/public/mytable.time".
     pub fn create_table(&self, table: &str) -> Result<()> {
         let dir = self.db_dir(table);
-        debug!(target: "timeline::storage", "create_table: begin table='{}' dir='{}'", table, dir.display());
+        debug!(target: "clarium::storage", "create_table: begin table='{}' dir='{}'", table, dir.display());
         fs::create_dir_all(&dir)?;
-        debug!(target: "timeline::storage", "create_table: directory ensured for table='{}'", table);
+        debug!(target: "clarium::storage", "create_table: directory ensured for table='{}'", table);
         // Initialize empty schema.json and set tableType for non-time tables
         use std::collections::{HashMap, HashSet};
         let schema: HashMap<String, DataType> = HashMap::new();
         let locks: HashSet<String> = HashSet::new();
         // Seed metadata if needed
         let schema_path = self.schema_path(table);
-        debug!(target: "timeline::storage", "create_table: schema path='{}' exists={} table='{}'", schema_path.display(), schema_path.exists(), table);
+        debug!(target: "clarium::storage", "create_table: schema path='{}' exists={} table='{}'", schema_path.display(), schema_path.exists(), table);
         if !schema_path.exists() {
             let mut meta = serde_json::Map::new();
             if !table.ends_with(".time") { meta.insert("tableType".into(), serde_json::json!("regular")); }
             fs::write(&schema_path, serde_json::to_string_pretty(&serde_json::Value::Object(meta))?)?;
-            debug!(target: "timeline::storage", "create_table: wrote initial schema.json for table='{}'", table);
+            debug!(target: "clarium::storage", "create_table: wrote initial schema.json for table='{}'", table);
         }
         self.save_schema_with_locks(table, &schema, &locks)?;
-        debug!(target: "timeline::storage", "create_table: completed table='{}'", table);
+        debug!(target: "clarium::storage", "create_table: completed table='{}'", table);
         Ok(())
     }
 
     /// Delete a logical table (table directory) and all its files if it exists.
     pub fn delete_table(&self, table: &str) -> Result<()> {
         let dir = self.db_dir(table);
-        debug!(target: "timeline::storage", "delete_table: deleting table='{}'", dir.display());
+        debug!(target: "clarium::storage", "delete_table: deleting table='{}'", dir.display());
         if dir.exists() {
             fs::remove_dir_all(&dir).ok();
         }
@@ -119,7 +119,7 @@ impl Store {
             }
         }
 
-        debug!(target: "timeline::storage", "rewrite_table: rewriting table='{}'", dir.display());
+        debug!(target: "clarium::storage", "rewrite_table: rewriting table='{}'", dir.display());
 
         // Remove all parquet files
         if dir.exists() {
@@ -182,7 +182,7 @@ impl Store {
     fn db_dir(&self, table: &str) -> PathBuf {
         // Delegate to central identifier module for consistent resolution
         // Detect if this is a time-series table and ensure `.time` suffix on the last segment
-        let d = crate::ident::QueryDefaults::from_options(Some("timeline"), Some("public"));
+        let d = crate::ident::QueryDefaults::from_options(Some("clarium"), Some("public"));
         // Heuristic: if the identifier explicitly contains ".time" anywhere, treat as time table
         let is_time = table.contains(".time");
         let qualified = if is_time {
@@ -200,7 +200,7 @@ impl Store {
     /// Append a batch of records to the logical table, inferring/widening schema as needed
     /// and writing them as a new parquet chunk. Rows are sorted by `_time` before persisting.
     pub fn write_records(&self, table: &str, records: &[Record]) -> Result<()> {
-        debug!(target: "timeline::storage", "write_records: begin table='{}' records={} dir='{}'", table, records.len(), self.db_dir(table).display());
+        debug!(target: "clarium::storage", "write_records: begin table='{}' records={} dir='{}'", table, records.len(), self.db_dir(table).display());
         use std::collections::HashMap;
         use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -1102,7 +1102,7 @@ mod tests {
     fn test_kv_store_ttl_and_reset() {
         let tmp = tempfile::tempdir().unwrap();
         let shared = SharedStore::new(tmp.path()).unwrap();
-        let kv = shared.kv_store("timeline", "cache1");
+        let kv = shared.kv_store("clarium", "cache1");
         // set with ttl 100ms, reset on access true
         kv.set("a", KvValue::Int(1), Some(Duration::from_millis(100)), Some(true));
         // immediate get returns value and resets ttl

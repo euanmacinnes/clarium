@@ -1,5 +1,5 @@
-use timeline::server::exec::{execute_query, execute_query2};
-use timeline::storage::{SharedStore, Record};
+use clarium::server::exec::{execute_query, execute_query2};
+use clarium::storage::{SharedStore, Record};
 use serde_json::json;
 use std::time::Instant;
 

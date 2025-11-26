@@ -10,7 +10,7 @@ fn test_cte_basic() {
     let tmp = tempfile::tempdir().unwrap();
     let store = Store::new(tmp.path()).unwrap();
     let shared = SharedStore::new(tmp.path()).unwrap();
-    let db = "timeline/public/jobs.time";
+    let db = "clarium/public/jobs.time";
     
     // Create sample data with status and queue columns
     let base: i64 = 1_600_000_000_000;
@@ -52,7 +52,7 @@ fn test_cte_multiple() {
     let tmp = tempfile::tempdir().unwrap();
     let store = Store::new(tmp.path()).unwrap();
     let shared = SharedStore::new(tmp.path()).unwrap();
-    let db = "timeline/public/orders.time";
+    let db = "clarium/public/orders.time";
     
     let base: i64 = 1_700_000_000_000;
     let mut recs: Vec<Record> = Vec::new();
@@ -91,7 +91,7 @@ fn test_cte_with_subquery_pattern() {
     let tmp = tempfile::tempdir().unwrap();
     let store = Store::new(tmp.path()).unwrap();
     let shared = SharedStore::new(tmp.path()).unwrap();
-    let db = "timeline/public/values.time";
+    let db = "clarium/public/values.time";
     
     let base: i64 = 1_650_000_000_000;
     let mut recs: Vec<Record> = Vec::new();
@@ -128,7 +128,7 @@ fn test_cte_with_aggregation() {
     let tmp = tempfile::tempdir().unwrap();
     let store = Store::new(tmp.path()).unwrap();
     let shared = SharedStore::new(tmp.path()).unwrap();
-    let db = "timeline/public/sales.time";
+    let db = "clarium/public/sales.time";
     
     let base: i64 = 1_750_000_000_000;
     let mut recs: Vec<Record> = Vec::new();
@@ -166,8 +166,8 @@ fn test_cte_with_join() {
     let shared = SharedStore::new(tmp.path()).unwrap();
     
     // Create two tables
-    let orders_db = "timeline/public/orders";
-    let customers_db = "timeline/public/customers";
+    let orders_db = "clarium/public/orders";
+    let customers_db = "clarium/public/customers";
     
     store.create_table(orders_db).unwrap();
     store.create_table(customers_db).unwrap();
@@ -210,7 +210,7 @@ fn test_cte_with_case_expression() {
     let tmp = tempfile::tempdir().unwrap();
     let store = Store::new(tmp.path()).unwrap();
     let shared = SharedStore::new(tmp.path()).unwrap();
-    let db = "timeline/public/grades.time";
+    let db = "clarium/public/grades.time";
     
     let base: i64 = 1_800_000_000_000;
     let mut recs: Vec<Record> = Vec::new();
@@ -245,7 +245,7 @@ fn test_cte_with_order_limit() {
     let tmp = tempfile::tempdir().unwrap();
     let store = Store::new(tmp.path()).unwrap();
     let shared = SharedStore::new(tmp.path()).unwrap();
-    let db = "timeline/public/rankings.time";
+    let db = "clarium/public/rankings.time";
     
     let base: i64 = 1_850_000_000_000;
     let mut recs: Vec<Record> = Vec::new();
@@ -279,7 +279,7 @@ fn test_cte_nested_reference() {
     let tmp = tempfile::tempdir().unwrap();
     let store = Store::new(tmp.path()).unwrap();
     let shared = SharedStore::new(tmp.path()).unwrap();
-    let db = "timeline/public/items.time";
+    let db = "clarium/public/items.time";
     
     let base: i64 = 1_900_000_000_000;
     let mut recs: Vec<Record> = Vec::new();

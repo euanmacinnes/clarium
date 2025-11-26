@@ -74,7 +74,7 @@ fn execute_full_pg_type_query_with_qualified_wildcard() {
     let df = run_select(&shared, &q).expect("full DBeaver pg_type query should execute without 't.*' column-not-found error");
 
     // We should get some rows (at least built-in types synthesized in pg_type)
-    assert!(df.height() >= 0);
+    assert!(df.height() >= 1);
 
     // Validate that columns coming from t.* are expanded to base names (no 't.' prefix),
     // while explicitly selected qualified columns keep their qualifiers.

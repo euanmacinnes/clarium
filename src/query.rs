@@ -1159,12 +1159,12 @@ fn parse_select(s: &str) -> Result<Query> {
     }
 
     let from_pos = find_keyword_ci(query_sql, "FROM");
-    debug!(target: "timeline::parser", "parse SELECT: FROM found?={} (sql starts with='{}...')", from_pos.is_some(), &query_sql[..query_sql.len().min(80)]);
+    debug!(target: "clarium::parser", "parse SELECT: FROM found?={} (sql starts with='{}...')", from_pos.is_some(), &query_sql[..query_sql.len().min(80)]);
 
     // Sourceless SELECT (e.g., SELECT 1) when no FROM clause is present
     if from_pos.is_none() {
         let sel_fields = query_sql[7..].trim();
-        debug!(target: "timeline::parser", "sourceless SELECT detected; fields='{}'", sel_fields);
+        debug!(target: "clarium::parser", "sourceless SELECT detected; fields='{}'", sel_fields);
         let select = parse_select_list(sel_fields)?;
         return Ok(Query {
             select,
@@ -1535,7 +1535,7 @@ pub fn parse_where_expr(s: &str) -> Result<WhereExpr> {
 
     fn is_ident_start(c: char) -> bool { c.is_ascii_alphabetic() || c == '_' || c == '"' }
     // Allow broader identifier parts to support our table naming scheme where
-    // fully-qualified names may include path-like separators (e.g., timeline/public/orders).
+    // fully-qualified names may include path-like separators (e.g., clarium/public/orders).
     // We also allow backslash because some contexts may provide it on Windows paths.
     fn is_ident_part(c: char) -> bool {
         c.is_ascii_alphanumeric()
@@ -1543,7 +1543,7 @@ pub fn parse_where_expr(s: &str) -> Result<WhereExpr> {
             || c == '.'
             || c == '"'
             || c == '*'
-            || c == '/'  // support schema/table separator used by timeline
+            || c == '/'  // support schema/table separator used by clarium
             || c == '\\' // allow backslash in identifiers to avoid lexer aborts
     }
 

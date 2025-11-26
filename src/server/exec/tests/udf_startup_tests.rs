@@ -1,6 +1,6 @@
 //! Tests that permanent UDFs (nullif, format_type, pg_catalog.pg_get_expr) are loaded at startup from the global scripts folder
 
-use crate::scripts::{ScriptRegistry, init_script_registry, get_script_registry, load_global_default_scripts};
+use crate::scripts::{ScriptRegistry, init_script_registry, load_global_default_scripts};
 use crate::server::exec::run_select;
 use crate::storage::{Store, SharedStore};
 
@@ -116,12 +116,12 @@ fn test_pg_get_partkeydef_execution() {
     // Verify function is registered
     assert!(reg.has_function("pg_get_partkeydef"), "expected 'pg_get_partkeydef' to be loaded");
 
-    // Test 1: Basic call should return NULL (Timeline doesn't support PostgreSQL partitioned tables)
+    // Test 1: Basic call should return NULL (clarium doesn't support PostgreSQL partitioned tables)
     let sql1 = "SELECT pg_catalog.pg_get_partkeydef(12345) as partkey";
     let q1 = match crate::query::parse(sql1).unwrap() { crate::query::Command::Select(q) => q, _ => unreachable!() };
     let df1 = run_select(&shared, &q1).expect("pg_catalog.pg_get_partkeydef should execute");
     let partkey_col = df1.column("partkey").unwrap().cast(&polars::prelude::DataType::String).unwrap();
-    assert!(partkey_col.str().unwrap().get(0).is_none(), "pg_get_partkeydef should return NULL for Timeline tables");
+    assert!(partkey_col.str().unwrap().get(0).is_none(), "pg_get_partkeydef should return NULL for clarium tables");
 
     // Test 2: Unqualified version
     let sql2 = "SELECT pg_get_partkeydef(0) as partkey";
@@ -147,12 +147,12 @@ fn test_pg_total_relation_size_execution() {
     assert!(reg.has_function("pg_total_relation_size"), "expected 'pg_total_relation_size' to be loaded");
     assert!(reg.has_function("pg_catalog.pg_total_relation_size"), "expected 'pg_catalog.pg_total_relation_size' to be loaded");
 
-    // Test 1: Basic call should return 0 (Timeline stub implementation)
+    // Test 1: Basic call should return 0 (clarium stub implementation)
     let sql1 = "SELECT pg_catalog.pg_total_relation_size(12345) as total_size";
     let q1 = match crate::query::parse(sql1).unwrap() { crate::query::Command::Select(q) => q, _ => unreachable!() };
     let df1 = run_select(&shared, &q1).expect("pg_catalog.pg_total_relation_size should execute");
     let size_col = df1.column("total_size").unwrap();
-    assert_eq!(size_col.i64().unwrap().get(0).unwrap(), 0, "pg_total_relation_size should return 0 for Timeline tables");
+    assert_eq!(size_col.i64().unwrap().get(0).unwrap(), 0, "pg_total_relation_size should return 0 for clarium tables");
 
     // Test 2: Unqualified version
     let sql2 = "SELECT pg_total_relation_size(0) as total_size";

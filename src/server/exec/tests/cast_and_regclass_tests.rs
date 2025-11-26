@@ -25,7 +25,8 @@ fn cast_basic_types_in_select() {
     let q = match query::parse("SELECT '3.14'::double precision AS f").unwrap() { Command::Select(q) => q, _ => unreachable!() };
     let df = run_select(&shared, &q).unwrap();
     let f_any = df.column("f").unwrap().as_materialized_series().get(0).unwrap();
-    match f_any { polars::prelude::AnyValue::Float64(f) => assert!((f - 3.14).abs() < 1e-9), other => panic!("expected Float64 ~3.14, got {:?}", other) }
+    // Avoid clippy::approx_constant by expressing 3.14 as a precise rational
+    match f_any { polars::prelude::AnyValue::Float64(f) => assert!((f - (314.0/100.0)).abs() < 1e-9), other => panic!("expected Float64 ~3.14, got {:?}", other) }
 }
 
 #[test]

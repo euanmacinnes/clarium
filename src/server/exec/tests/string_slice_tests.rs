@@ -17,7 +17,7 @@ fn sval(df: &DataFrame, col: &str, idx: usize) -> Option<String> {
 fn string_slice_integer_indices() {
     let tmp = tempfile::tempdir().unwrap();
     let store = Store::new(tmp.path()).unwrap();
-    let db = "timeline/public/strings1.time";
+    let db = "clarium/public/strings1.time";
     let base: i64 = 1_900_000_000_000;
     let recs = vec![
         { let mut m = serde_json::Map::new(); m.insert("s".into(), json!("abcdefg")); Record{ _time: base, sensors: m }},
@@ -49,7 +49,7 @@ fn string_slice_integer_indices() {
 fn string_slice_with_step_and_patterns() {
     let tmp = tempfile::tempdir().unwrap();
     let store = Store::new(tmp.path()).unwrap();
-    let db = "timeline/public/strings2.time";
+    let db = "clarium/public/strings2.time";
     let base: i64 = 1_900_000_100_000;
     let recs = vec![
         { let mut m = serde_json::Map::new(); m.insert("s".into(), json!("foo_bar_baz")); Record{ _time: base, sensors: m }},
@@ -77,7 +77,7 @@ fn string_slice_with_step_and_patterns() {
 fn string_slice_stop_literal_inclusive_and_exclusive() {
     let tmp = tempfile::tempdir().unwrap();
     let store = Store::new(tmp.path()).unwrap();
-    let db = "timeline/public/strings3.time";
+    let db = "clarium/public/strings3.time";
     let base: i64 = 1_900_000_200_000;
     let recs = vec![
         { let mut m = serde_json::Map::new(); m.insert("s".into(), json!("foo_bar_baz")); Record{ _time: base, sensors: m }},

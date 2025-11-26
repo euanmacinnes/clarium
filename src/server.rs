@@ -1,14 +1,14 @@
 //!
-//! Timeline HTTP/WS server
+//! clarium HTTP/WS server
 //! -----------------------
-//! This module defines the Axum-based HTTP API and WebSocket interface for Timeline.
+//! This module defines the Axum-based HTTP API and WebSocket interface for clarium.
 //! It also optionally launches a pgwire endpoint when compiled with the `pgwire` feature.
 //!
 //! Responsibilities:
 //! - Session management with a simple cookie + CSRF token model.
 //! - Login/logout endpoints backed by the `security` module.
 //! - Data write and query endpoints delegating to the query engine.
-//! - Per-session defaults for current database and schema (default: timeline/public).
+//! - Per-session defaults for current database and schema (default: clarium/public).
 //! - WebSocket endpoint for interactive queries.
 //! - First-run demo dataset creation and startup inventory logs.
 
@@ -30,7 +30,7 @@ use serde_json::json;
 use polars::prelude::*;
 use crate::scripts::{ScriptRegistry, scripts_dir_for, load_all_scripts_for_schema, load_global_default_scripts};
 
-const SESSION_COOKIE: &str = "timeline_session";
+const SESSION_COOKIE: &str = "clarium_session";
 
 /// Shared server state injected into all handlers.
 ///
@@ -51,7 +51,7 @@ pub struct AppState {
     pub session_defaults: std::sync::Arc<RwLock<HashMap<String, (String, String)>>>,
 }
 
-/// Start the Timeline HTTP server (and optional pgwire) bound to the given ports.
+/// Start the clarium HTTP server (and optional pgwire) bound to the given ports.
 ///
 /// This sets up the store, ensures an admin user exists, creates a demo dataset on
 /// first run (when the store is empty), prints installed databases/schemas, and
@@ -63,11 +63,11 @@ fn log_startup_folders(db_root: &str) {
     let user = std::env::var("USER").or_else(|_| std::env::var("USERNAME")).ok();
     let home = std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE")).ok();
     let work_dir = std::env::var("PWD").ok();
-    let db_env = std::env::var("TIMELINE_DB_FOLDER").ok();
+    let db_env = std::env::var("clarium_DB_FOLDER").ok();
 
     info!(
         target: "startup",
-        "Timeline starting. Folder configuration: cwd={:?}, exe={:?}, user={:?}, home={:?}, work_dir_env={:?}, db_root_param={:?}, TIMELINE_DB_FOLDER_env={:?}",
+        "clarium starting. Folder configuration: cwd={:?}, exe={:?}, user={:?}, home={:?}, work_dir_env={:?}, db_root_param={:?}, clarium_DB_FOLDER_env={:?}",
         cwd, exe, user, home, work_dir, db_root, db_env
     );
 
@@ -170,7 +170,7 @@ pub async fn run_with_ports(http_port: u16, pg_port: Option<u16>, db_root: &str)
     }
 
     let app = Router::new()
-        .route("/", get(|| async { "timeline ok" }))
+        .route("/", get(|| async { "clarium ok" }))
         .route("/login", post(login))
         .route("/logout", post(logout))
         .route("/csrf", get(get_csrf))
@@ -274,7 +274,7 @@ fn print_installed_db_and_schemas(db_root: &str) {
 }
 
 /// Generate a one-week, per-second sine-wave dataset and write it to
-/// timeline/public/demo.time. Used on first run when the store is empty.
+/// clarium/public/demo.time. Used on first run when the store is empty.
 fn create_demo_dataset(store: &SharedStore) -> anyhow::Result<()> {
     println!("Empty startup detected, creating demo dataset");
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -350,8 +350,8 @@ fn create_demo_dataset(store: &SharedStore) -> anyhow::Result<()> {
 
     println!("Demo sine wave created, saving...");
 
-    // Write to default database/schema/table: timeline/public/demo.time
-    let demo = "timeline/public/demo.time";
+    // Write to default database/schema/table: clarium/public/demo.time
+    let demo = "clarium/public/demo.time";
     let guard = store.0.lock();
     guard.write_records(demo, &recs)?;
 
@@ -359,8 +359,8 @@ fn create_demo_dataset(store: &SharedStore) -> anyhow::Result<()> {
 
 
     // Create positive_events and negative_events regular tables
-    let pos_table = "timeline/public/demo_positive_events";
-    let neg_table = "timeline/public/demo_negative_events";
+    let pos_table = "clarium/public/demo_positive_events";
+    let neg_table = "clarium/public/demo_negative_events";
     // Ensure directories exist and schema.json initialized as regular
     guard.create_table(pos_table)?;
     guard.create_table(neg_table)?;
@@ -394,9 +394,9 @@ fn create_demo_dataset(store: &SharedStore) -> anyhow::Result<()> {
         ])?;
     }
 
-    println!("Created timeline/public/demo.time");
-    println!("Created timeline/public/demo_positive_events");
-    println!("Created timeline/public/demo_negative_events");
+    println!("Created clarium/public/demo.time");
+    println!("Created clarium/public/demo_positive_events");
+    println!("Created clarium/public/demo_negative_events");
 
     Ok(())
 }
@@ -485,7 +485,7 @@ async fn login(State(state): State<AppState>, Json(payload): Json<LoginPayload>)
             // initialize session defaults (database, schema)
             {
                 let mut dmap = state.session_defaults.write().await;
-                dmap.insert(sid.clone(), ("timeline".to_string(), "public".to_string()));
+                dmap.insert(sid.clone(), ("clarium".to_string(), "public".to_string()));
             }
             let mut headers = HeaderMap::new();
             headers.insert("Set-Cookie", set_session_cookie(&sid));
@@ -647,8 +647,8 @@ async fn query_handler(
         let sid_opt = get_sid_from_headers(&headers);
         if let Some(sid) = sid_opt {
             let dmap = state.session_defaults.read().await;
-            if let Some((db, sc)) = dmap.get(&sid) { (db.clone(), sc.clone()) } else { ("timeline".to_string(), "public".to_string()) }
-        } else { ("timeline".to_string(), "public".to_string()) }
+            if let Some((db, sc)) = dmap.get(&sid) { (db.clone(), sc.clone()) } else { ("clarium".to_string(), "public".to_string()) }
+        } else { ("clarium".to_string(), "public".to_string()) }
     };
     let defaults = crate::ident::QueryDefaults { current_database: cur_db, current_schema: cur_schema };
     match crate::server::exec::execute_query_with_defaults(&state.store, &payload.query, &defaults).await {
@@ -691,8 +691,8 @@ async fn ws_handler(State(state): State<AppState>, headers: HeaderMap, ws: WebSo
                             let sid_opt = get_sid_from_headers(&headers);
                             if let Some(sid) = sid_opt {
                                 let dmap = state.session_defaults.read().await;
-                                if let Some((db, sc)) = dmap.get(&sid) { (db.clone(), sc.clone()) } else { ("timeline".to_string(), "public".to_string()) }
-                            } else { ("timeline".to_string(), "public".to_string()) }
+                                if let Some((db, sc)) = dmap.get(&sid) { (db.clone(), sc.clone()) } else { ("clarium".to_string(), "public".to_string()) }
+                            } else { ("clarium".to_string(), "public".to_string()) }
                         };
                         let defaults = crate::ident::QueryDefaults { current_database: cur_db, current_schema: cur_schema };
                         match crate::server::exec::execute_query_with_defaults(&state.store, &text, &defaults).await {
@@ -727,7 +727,7 @@ async fn use_database(State(state): State<AppState>, headers: HeaderMap, Json(pa
         return (StatusCode::UNAUTHORIZED, Json(serde_json::json!({"status":"unauthorized"})));
     };
     let mut dmap = state.session_defaults.write().await;
-    let entry = dmap.entry(sid).or_insert(("timeline".to_string(), "user".to_string()));
+    let entry = dmap.entry(sid).or_insert(("clarium".to_string(), "user".to_string()));
     if !payload.name.trim().is_empty() { entry.0 = payload.name.trim().to_string(); }
     (StatusCode::OK, Json(serde_json::json!(UseResult{ status: "ok" })))
 }
@@ -743,7 +743,7 @@ async fn use_schema(State(state): State<AppState>, headers: HeaderMap, Json(payl
         return (StatusCode::UNAUTHORIZED, Json(serde_json::json!({"status":"unauthorized"})));
     };
     let mut dmap = state.session_defaults.write().await;
-    let entry = dmap.entry(sid).or_insert(("timeline".to_string(), "user".to_string()));
+    let entry = dmap.entry(sid).or_insert(("clarium".to_string(), "user".to_string()));
     if !payload.name.trim().is_empty() { entry.1 = payload.name.trim().to_string(); }
     (StatusCode::OK, Json(serde_json::json!(UseResult{ status: "ok" })))
 }

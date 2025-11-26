@@ -7,7 +7,7 @@ use crate::server::data_context::{DataContext, SelectStage};
 use crate::query::{Query, WhereExpr, ArithExpr, ArithTerm, JoinType};
 use crate::storage::SharedStore;
 use crate::server::exec::exec_common::{build_where_expr};
-use crate::server::exec::where_subquery::{where_contains_subquery, eval_where_mask};
+use crate::server::exec::where_subquery::{eval_where_mask};
 use crate::tprintln;
 
 fn extract_simple_equi_with_remainder(on: &WhereExpr) -> Option<((String, String), Option<WhereExpr>)> {
@@ -161,11 +161,11 @@ pub fn from_where(store: &SharedStore, q: &Query, ctx: &mut DataContext) -> Resu
                         left_key, right_key, left_preview, right_preview
                     ));
                 };
-                tracing::debug!(target: "timeline::exec", "JOIN: left cols before={:?}, right cols before={:?}", df.get_column_names(), right_df.get_column_names());
-                tracing::debug!(target: "timeline::exec", "JOIN: left_key='{}', right_key='{}'", lk, rk);
+                tracing::debug!(target: "clarium::exec", "JOIN: left cols before={:?}, right cols before={:?}", df.get_column_names(), right_df.get_column_names());
+                tracing::debug!(target: "clarium::exec", "JOIN: left_key='{}', right_key='{}'", lk, rk);
                 let how = join_how(&jc.join_type);
                 let mut joined = df.join(&right_df, vec![lk.as_str()], vec![rk.as_str()], how.into(), None)?;
-                tracing::debug!(target: "timeline::exec", "JOIN: result cols={:?}", joined.get_column_names());
+                tracing::debug!(target: "clarium::exec", "JOIN: result cols={:?}", joined.get_column_names());
                 // Apply remainder predicate as filter if present
                 if let Some(rem) = remainder_opt {
                     let qualified_rem = qualify_where_ctx(&joined, ctx, &rem, "JOIN ON")?;
@@ -299,23 +299,23 @@ pub fn from_where(store: &SharedStore, q: &Query, ctx: &mut DataContext) -> Resu
                         
                         let unmatched_df = DataFrame::new(unmatched_cols)?;
                         // Diagnostics: compare schemas/dtypes before vstack which may fail if dtypes differ
-                        tracing::debug!(target: "timeline::exec", "JOIN unmatched build: left_unmatched rows={} right_cols_added={}", unmatched_left.height(), right_cols_len);
+                        tracing::debug!(target: "clarium::exec", "JOIN unmatched build: left_unmatched rows={} right_cols_added={}", unmatched_left.height(), right_cols_len);
                         if cfg!(debug_assertions) {
                             let mut md: Vec<String> = Vec::new();
                             for cname in matched.get_column_names() {
                                 if let Ok(c) = matched.column(cname.as_str()) { md.push(format!("{}:{:?}", cname, c.dtype())); }
                             }
-                            tracing::debug!(target: "timeline::exec", "JOIN matched dtypes: [{}]", md.join(", "));
+                            tracing::debug!(target: "clarium::exec", "JOIN matched dtypes: [{}]", md.join(", "));
                             let mut ud: Vec<String> = Vec::new();
                             for cname in unmatched_df.get_column_names() {
                                 if let Ok(c) = unmatched_df.column(cname.as_str()) { ud.push(format!("{}:{:?}", cname, c.dtype())); }
                             }
-                            tracing::debug!(target: "timeline::exec", "JOIN unmatched dtypes: [{}]", ud.join(", "));
+                            tracing::debug!(target: "clarium::exec", "JOIN unmatched dtypes: [{}]", ud.join(", "));
                             // Highlight first dtype mismatch by column name if present
                             for cname in matched.get_column_names() {
                                 if let (Ok(mc), Ok(uc)) = (matched.column(cname.as_str()), unmatched_df.column(cname.as_str())) {
                                     if mc.dtype() != uc.dtype() {
-                                        tracing::debug!(target: "timeline::exec", "JOIN vstack potential mismatch: column='{}' matched={:?} unmatched={:?}", cname, mc.dtype(), uc.dtype());
+                                        tracing::debug!(target: "clarium::exec", "JOIN vstack potential mismatch: column='{}' matched={:?} unmatched={:?}", cname, mc.dtype(), uc.dtype());
                                     }
                                 }
                             }

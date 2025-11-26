@@ -7,7 +7,7 @@ use crate::storage::{SharedStore, KvValue};
 
 // Helper: read a DataFrame from either a regular table path or a KV store address
 pub(crate) fn read_df_or_kv(store: &SharedStore, name: &str) -> anyhow::Result<DataFrame> {
-    debug!(target: "timeline::exec", "read_df_or_kv: name='{}'", name);
+    debug!(target: "clarium::exec", "read_df_or_kv: name='{}'", name);
     // Detect pattern: <database>.store.<store>.<key>
     if name.contains(".store.") {
         let parts: Vec<&str> = name.split('.').collect();
@@ -15,7 +15,7 @@ pub(crate) fn read_df_or_kv(store: &SharedStore, name: &str) -> anyhow::Result<D
             anyhow::bail!(format!("Invalid store address '{}'. Expected <database>.store.<store>.<key>", name));
         }
         if parts[1].to_lowercase() != "store" {
-            // e.g., allow schema like timeline.public? Not for KV. Enforce explicit 'store'
+            // e.g., allow schema like clarium.public? Not for KV. Enforce explicit 'store'
             anyhow::bail!(format!("Invalid store address '{}'. Expected literal 'store' segment", name));
         }
         let db = parts[0];
@@ -39,7 +39,7 @@ pub(crate) fn read_df_or_kv(store: &SharedStore, name: &str) -> anyhow::Result<D
                 // Fallback: if a time-series table exists with '.time' suffix, attempt to read that.
                 if !name.ends_with(".time") {
                     let alt = format!("{}.time", name);
-                    debug!(target: "timeline::exec", "read_df_or_kv fallback: trying '{}'", alt);
+                    debug!(target: "clarium::exec", "read_df_or_kv fallback: trying '{}'", alt);
                     match guard.read_df(&alt) {
                         Ok(df2) => Ok(df2),
                         Err(_) => Err(e),
