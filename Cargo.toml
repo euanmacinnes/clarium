@@ -1,5 +1,5 @@
 [package]
-name = "timeline"
+name = "clarium"
 version = "0.1.0"
 edition = "2021"
 description = "Minimal time-series store using Parquet with a simple SQL-like query language, HTTP and WebSocket APIs, with a postgres-wired interface"
