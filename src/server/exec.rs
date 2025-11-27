@@ -14,6 +14,7 @@ pub mod exec_calculate; // CALCULATE handling
 pub mod exec_keys;      // KV key operations
 pub mod exec_update;    // UPDATE handling
 pub mod exec_delete;    // DELETE COLUMNS handling
+pub mod exec_scripts;   // SCRIPT management (create/drop/rename/load)
 
 use anyhow::Result;
 use polars::prelude::*;
@@ -21,12 +22,10 @@ use crate::{query, query::Command};
 use crate::storage::{SharedStore, KvValue};
 use crate::ident::QueryDefaults;
 use crate::scripts::get_script_registry;
-use std::path::Path;
 use tracing::debug;
 // Bring frequently used helpers from submodules into scope
 use crate::server::exec::exec_select::run_select;
 use crate::server::exec::exec_slice::run_slice;
-use crate::scripts::scripts_dir_for;
 use crate::server::exec::where_subquery::{eval_where_mask, where_contains_subquery};
 use crate::server::exec::exec_common::build_where_expr;
 use std::ops::Not;
@@ -77,6 +76,13 @@ pub async fn execute_query(store: &SharedStore, text: &str) -> Result<serde_json
         }
         Command::Insert { table, columns, values } => {
             crate::server::exec::exec_insert::handle_insert(store, table, columns, values)
+        }
+        // Script management
+        Command::CreateScript { .. }
+        | Command::DropScript { .. }
+        | Command::RenameScript { .. }
+        | Command::LoadScript { .. } => {
+            self::exec_scripts::execute_scripts(store, cmd)
         }
         Command::Select(q) => {
             let (df, into) = crate::server::exec::exec_select::handle_select(store, &q)?;
@@ -240,89 +246,7 @@ pub async fn execute_query(store: &SharedStore, text: &str) -> Result<serde_json
         Command::DeleteColumns { database, columns, where_clause } => {
             crate::server::exec::exec_delete::handle_delete_columns(store, database, columns, where_clause)
         }
-        Command::CreateScript { path, code } => {
-            use std::fs;
-            let root = { let g = store.0.lock(); g.root_path().clone() };
-            let parts: Vec<&str> = path.split('/').collect();
-            if parts.len() != 3 { anyhow::bail!("SCRIPT path must be <db>/<schema>/<name>"); }
-            let dir = scripts_dir_for(std::path::Path::new(&root), parts[0], parts[1]);
-            fs::create_dir_all(&dir)?;
-            let mut fname = parts[2].to_string();
-            if !fname.ends_with(".lua") { fname.push_str(".lua"); }
-            let fpath = dir.join(&fname);
-            fs::write(&fpath, code.as_bytes())?;
-            if let Some(reg) = get_script_registry() {
-                let name_no_ext = parts[2].split('.').next().unwrap_or(parts[2]);
-                let text = code;
-                let _ = reg.load_script_text(name_no_ext, &text);
-            }
-            Ok(serde_json::json!({"status":"ok"}))
-        }
-        Command::DropScript { path } => {
-            use std::fs;
-            let root = { let g = store.0.lock(); g.root_path().clone() };
-            let parts: Vec<&str> = path.split('/').collect();
-            if parts.len() != 3 { anyhow::bail!("SCRIPT path must be <db>/<schema>/<name>"); }
-            let dir = scripts_dir_for(std::path::Path::new(&root), parts[0], parts[1]);
-            let mut fname = parts[2].to_string();
-            if !fname.ends_with(".lua") { fname.push_str(".lua"); }
-            let fpath = dir.join(&fname);
-            if fpath.exists() { fs::remove_file(&fpath)?; }
-            if let Some(reg) = get_script_registry() {
-                let name_no_ext = parts[2].split('.').next().unwrap_or(parts[2]);
-                reg.unload_function(name_no_ext);
-            }
-            Ok(serde_json::json!({"status":"ok"}))
-        }
-        Command::RenameScript { from, to } => {
-            use std::fs;
-            let root = { let g = store.0.lock(); g.root_path().clone() };
-            let fparts: Vec<&str> = from.split('/').collect();
-            if fparts.len() != 3 { anyhow::bail!("SCRIPT path must be <db>/<schema>/<name>"); }
-            let dir = scripts_dir_for(std::path::Path::new(&root), fparts[0], fparts[1]);
-            fs::create_dir_all(&dir)?;
-            let mut from_name = fparts[2].to_string(); if !from_name.ends_with(".lua") { from_name.push_str(".lua"); }
-            let mut to_name = {
-                let tparts: Vec<&str> = to.split('/').collect();
-                if tparts.len() == 1 { tparts[0].to_string() } else if tparts.len() == 3 { if tparts[0]!=fparts[0] || tparts[1]!=fparts[1] { anyhow::bail!("Cannot move scripts across schemas"); } tparts[2].to_string() } else { anyhow::bail!("Invalid RENAME SCRIPT target"); }
-            };
-            if !to_name.ends_with(".lua") { to_name.push_str(".lua"); }
-            let fp_from = dir.join(&from_name);
-            let fp_to = dir.join(&to_name);
-            fs::rename(&fp_from, &fp_to)?;
-            if let Some(reg) = get_script_registry() {
-                let oldn = fparts[2].split('.').next().unwrap_or(fparts[2]);
-                let newn = to_name.trim_end_matches(".lua");
-                let _ = reg.rename_function(oldn, newn);
-            }
-            Ok(serde_json::json!({"status":"ok"}))
-        }
-        Command::LoadScript { path } => {
-            use std::fs;
-            let root = { let g = store.0.lock(); g.root_path().clone() };
-            if let Some(p) = path {
-                let parts: Vec<&str> = p.split('/').collect();
-                if parts.len() != 3 { anyhow::bail!("SCRIPT path must be <db>/<schema>/<name>"); }
-                let dir = scripts_dir_for(std::path::Path::new(&root), parts[0], parts[1]);
-                let mut fname = parts[2].to_string(); if !fname.ends_with(".lua") { fname.push_str(".lua"); }
-                let fpath = dir.join(&fname);
-                let code = fs::read_to_string(&fpath)?;
-                if let Some(reg) = get_script_registry() { let name_no_ext = parts[2].split('.').next().unwrap_or(parts[2]); let _ = reg.load_script_text(name_no_ext, &code); }
-            } else {
-                // Load all scripts from all schemas
-                for dbent in fs::read_dir(&root)? {
-                    let dbent = dbent?; if !dbent.file_type()?.is_dir() { continue; }
-                    for schent in fs::read_dir(dbent.path())? { let schent = schent?; if !schent.file_type()?.is_dir() { continue; }
-                        let sdir = scripts_dir_for(std::path::Path::new(&root), &dbent.file_name().to_string_lossy(), &schent.file_name().to_string_lossy());
-                        if sdir.exists() {
-                            for sf in fs::read_dir(&sdir)? { let sf = sf?; let pth = sf.path(); if pth.extension().and_then(|e| e.to_str()).unwrap_or("").eq_ignore_ascii_case("lua") { let name = pth.file_stem().and_then(|s| s.to_str()).unwrap_or(""); let code = fs::read_to_string(&pth)?; if let Some(reg) = get_script_registry() { let _ = reg.load_script_text(name, &code); } }
-                            }
-                        }
-                    }
-                }
-            }
-            Ok(serde_json::json!({"status":"ok"}))
-        }
+        // script commands are delegated earlier to exec_scripts
         Command::SchemaShow { database } => {
             let guard = store.0.lock();
             // access private load function via public? Not available; so rebuild via filter_df expected? We'll implement via reading schema.json
@@ -496,293 +420,12 @@ pub async fn execute_query(store: &SharedStore, text: &str) -> Result<serde_json
 }
 
 
-
-
-
-
-
-
-fn qualify_identifier_with_defaults(ident: &str, db: &str, schema: &str) -> String {
-    let d = crate::ident::QueryDefaults::new(db.to_string(), schema.to_string());
-    crate::ident::qualify_time_ident(ident, &d)
-}
-
-fn qualify_identifier_regular_table_with_defaults(ident: &str, db: &str, schema: &str) -> String {
-    let d = crate::ident::QueryDefaults::new(db.to_string(), schema.to_string());
-    crate::ident::qualify_regular_ident(ident, &d)
-}
-
-pub fn normalize_query_with_defaults(q: &str, db: &str, schema: &str) -> String {
-    let up = q.to_uppercase();
-    // Normalize unqualified regular TABLE DDL to include current db/schema
-    if up.starts_with("DROP TABLE ") {
-        let prefix = "DROP TABLE";
-        let mut s = q[prefix.len()..].trim_start();
-        let s_up = s.to_uppercase();
-        // skip optional IF EXISTS
-        let mut if_exists = "";
-        if s_up.starts_with("IF EXISTS ") {
-            if_exists = " IF EXISTS";
-            s = &s["IF EXISTS ".len()..].trim_start();
-        }
-        if s.is_empty() { return q.to_string(); }
-        let qualified = qualify_identifier_regular_table_with_defaults(s, db, schema);
-        return format!("{}{} {}", prefix, if_exists, qualified);
-    }
-    if up.starts_with("RENAME TABLE ") {
-        let prefix = "RENAME TABLE";
-        let tail = &q[prefix.len()..];
-        let tail_up = tail.to_uppercase();
-        if let Some(i) = tail_up.find(" TO ") {
-            let left = tail[..i].trim();
-            let right = tail[i+4..].trim();
-            if left.is_empty() || right.is_empty() { return q.to_string(); }
-            let ql = qualify_identifier_regular_table_with_defaults(left, db, schema);
-            let qr = qualify_identifier_regular_table_with_defaults(right, db, schema);
-            return format!("{} {} TO {}", prefix, ql, qr);
-        }
-        return q.to_string();
-    }
-    // Qualify INSERT INTO targets using current db/schema
-    if up.starts_with("INSERT INTO ") {
-        // Preserve rest of statement, only replace target identifier
-        let after = &q["INSERT INTO ".len()..];
-        let mut ident = after.trim_start();
-        let mut rest = "";
-        // identifier ends at first whitespace or '(' whichever comes first
-        for (i, ch) in ident.char_indices() {
-            if ch.is_whitespace() || ch == '(' { rest = &ident[i..]; ident = &ident[..i]; break; }
-        }
-        if ident.is_empty() { return q.to_string(); }
-        
-        // Strip quotes from identifier
-        let mut ident_clean = ident;
-        if (ident.starts_with('"') && ident.ends_with('"')) || (ident.starts_with('\'') && ident.ends_with('\'')) {
-            if ident.len() >= 2 {
-                ident_clean = &ident[1..ident.len()-1];
-            }
-        }
-        
-        // Check if it's a time table based on suffix
-        let is_time_table = ident_clean.ends_with(".time");
-        let qualified = if is_time_table {
-            qualify_identifier_with_defaults(ident_clean, db, schema)
-        } else {
-            qualify_identifier_regular_table_with_defaults(ident_clean, db, schema)
-        };
-        return format!("INSERT INTO {}{}", qualified, rest);
-    }
-    // Do not rewrite SELECT or SLICE statements; column/table resolution is handled by Data Context at execution time
-    if up.starts_with("SELECT ") || up.starts_with("SLICE") { return q.to_string(); }
-    // Qualify CREATE TABLE targets using current db/schema (regular table)
-    if up.starts_with("CREATE TABLE ") {
-        let after = &q["CREATE TABLE ".len()..];
-        let mut s = after;
-        let s_up = s.to_uppercase();
-        // skip optional IF NOT EXISTS
-        let mut consumed = 0usize;
-        if s_up.starts_with("IF NOT EXISTS ") { consumed = "IF NOT EXISTS ".len(); s = &s[consumed..]; }
-        // Extract identifier up to '(' or whitespace
-        let mut ident = s.trim_start();
-        let mut rest = "";
-        for (i, ch) in ident.char_indices() {
-            if ch.is_whitespace() || ch == '(' { rest = &ident[i..]; ident = &ident[..i]; break; }
-        }
-        if ident.is_empty() { return q.to_string(); }
-        
-        // Strip quotes from identifier
-        let mut ident_clean = ident;
-        if (ident.starts_with('"') && ident.ends_with('"')) || (ident.starts_with('\'') && ident.ends_with('\'')) {
-            if ident.len() >= 2 {
-                ident_clean = &ident[1..ident.len()-1];
-            }
-        }
-        
-        let qualified = qualify_identifier_regular_table_with_defaults(ident_clean, db, schema);
-        let prefix = if consumed > 0 { format!("CREATE TABLE IF NOT EXISTS {}", qualified) } else { format!("CREATE TABLE {}", qualified) };
-        return format!("{}{}", prefix, rest);
-    }
-    if up.starts_with("DELETE ") {
-        if let Some(idx) = up.find(" FROM ") {
-            let (head, tail) = q.split_at(idx + 6);
-            let mut ident = tail.trim_start();
-            let mut rest = "";
-            for (i, ch) in ident.char_indices() {
-                if ch.is_whitespace() { rest = &ident[i..]; ident = &ident[..i]; break; }
-            }
-            if ident.is_empty() { return q.to_string(); }
-            
-            // Strip quotes from identifier
-            let mut ident_clean = ident;
-            if (ident.starts_with('"') && ident.ends_with('"')) || (ident.starts_with('\'') && ident.ends_with('\'')) {
-                if ident.len() >= 2 {
-                    ident_clean = &ident[1..ident.len()-1];
-                }
-            }
-            
-            let qualified = qualify_identifier_with_defaults(ident_clean, db, schema);
-            return format!("{}{}{}", head, qualified, rest);
-        }
-    }
-    if up.starts_with("UPDATE ") {
-        // UPDATE <ident> SET ...
-        let after = &q[7..];
-        let up_after = after.to_uppercase();
-        if let Some(i) = up_after.find(" SET ") {
-            let mut ident = after[..i].trim();
-            let rest = &after[i..];
-            // Strip quotes
-            if (ident.starts_with('"') && ident.ends_with('"')) || (ident.starts_with('\'') && ident.ends_with('\'')) {
-                if ident.len() >= 2 { ident = &ident[1..ident.len()-1]; }
-            }
-            let is_time = ident.ends_with(".time") || ident.to_lowercase().ends_with(".time");
-            let qualified = if is_time { qualify_identifier_with_defaults(ident, db, schema) } else { qualify_identifier_regular_table_with_defaults(ident, db, schema) };
-            return format!("UPDATE {}{}", qualified, rest);
-        }
-        return q.to_string();
-    }
-    if up.starts_with("CALCULATE ") {
-        if let Some(p) = up.find(" AS SELECT ") {
-            let (left, right) = q.split_at(p + 4);
-            let normalized = normalize_query_with_defaults(&right[1..], db, schema);
-            return format!("{} {}", left, normalized);
-        }
-    }
-    q.to_string()
-}
-
 // dataframe_to_tabular and execute_select_df are provided by exec_helpers and re-exported above.
-
-pub async fn execute_query2(store: &SharedStore, text: &str) -> Result<serde_json::Value> {
-    let cmd = query::parse(text)?;
-    match cmd {
-        Command::Slice(plan) => {
-            // Create DataContext with registry snapshot for SLICE query
-            let registry_snapshot = crate::scripts::get_script_registry()
-                .and_then(|r| r.snapshot().ok());
-            let mut ctx = crate::server::data_context::DataContext::with_defaults("clarium", "public");
-            if let Some(reg) = registry_snapshot {
-                ctx.script_registry = Some(reg);
-            }
-            let df = run_slice(store, &plan, &ctx)?;
-            Ok(dataframe_to_json(&df))
-        }
-        Command::Select(q) => {
-            let df = run_select(store, &q)?;
-            Ok(dataframe_to_json(&df))
-        }
-        // SHOW commands (global)
-        Command::ShowTransactionIsolation
-        | Command::ShowStandardConformingStrings
-        | Command::ShowServerVersion
-        | Command::ShowClientEncoding
-        | Command::ShowServerEncoding
-        | Command::ShowDateStyle
-        | Command::ShowIntegerDateTimes
-        | Command::ShowTimeZone
-        | Command::ShowSearchPath
-        | Command::ShowDefaultTransactionIsolation
-        | Command::ShowTransactionReadOnly
-        | Command::ShowApplicationName
-        | Command::ShowExtraFloatDigits
-        | Command::ShowAll
-        | Command::ShowSchemas
-        | Command::ShowTables
-        | Command::ShowObjects
-        | Command::ShowScripts => {
-            self::exec_show::execute_show(store, cmd).await
-        }
-        Command::CreateScript { path, code } => {
-            use std::fs;
-            let root = { let g = store.0.lock(); g.root_path().clone() };
-            // Expect path in form db/schema/name[.lua]
-            let parts: Vec<&str> = path.split('/').collect();
-            if parts.len() != 3 { anyhow::bail!("SCRIPT path must be <db>/<schema>/<name>"); }
-            let dir = scripts_dir_for(Path::new(&root), parts[0], parts[1]);
-            fs::create_dir_all(&dir)?;
-            let mut fname = parts[2].to_string();
-            if !fname.ends_with(".lua") { fname.push_str(".lua"); }
-            let fpath = dir.join(&fname);
-            fs::write(&fpath, code.as_bytes())?;
-            if let Some(reg) = get_script_registry() {
-                let name_no_ext = parts[2].split('.').next().unwrap_or(parts[2]);
-                let text = code;
-                let _ = reg.load_script_text(name_no_ext, &text);
-            }
-            Ok(serde_json::json!({"status":"ok"}))
-        }
-        Command::DropScript { path } => {
-            use std::fs;
-            let root = { let g = store.0.lock(); g.root_path().clone() };
-            let parts: Vec<&str> = path.split('/').collect();
-            if parts.len() != 3 { anyhow::bail!("SCRIPT path must be <db>/<schema>/<name>"); }
-            let dir = scripts_dir_for(Path::new(&root), parts[0], parts[1]);
-            let mut fname = parts[2].to_string();
-            if !fname.ends_with(".lua") { fname.push_str(".lua"); }
-            let fpath = dir.join(&fname);
-            if fpath.exists() { fs::remove_file(&fpath)?; }
-            if let Some(reg) = get_script_registry() {
-                let name_no_ext = parts[2].split('.').next().unwrap_or(parts[2]);
-                reg.unload_function(name_no_ext);
-            }
-            Ok(serde_json::json!({"status":"ok"}))
-        }
-        Command::RenameScript { from, to } => {
-            use std::fs;
-            let root = { let g = store.0.lock(); g.root_path().clone() };
-            let fparts: Vec<&str> = from.split('/').collect();
-            if fparts.len() != 3 { anyhow::bail!("SCRIPT path must be <db>/<schema>/<name>"); }
-            let dir = scripts_dir_for(Path::new(&root), fparts[0], fparts[1]);
-            fs::create_dir_all(&dir)?;
-            let mut from_name = fparts[2].to_string(); if !from_name.ends_with(".lua") { from_name.push_str(".lua"); }
-            let mut to_name = {
-                let tparts: Vec<&str> = to.split('/').collect();
-                if tparts.len() == 1 { tparts[0].to_string() } else if tparts.len() == 3 { if tparts[0]!=fparts[0] || tparts[1]!=fparts[1] { anyhow::bail!("Cannot move scripts across schemas"); } tparts[2].to_string() } else { anyhow::bail!("Invalid RENAME SCRIPT target"); }
-            };
-            if !to_name.ends_with(".lua") { to_name.push_str(".lua"); }
-            let fp_from = dir.join(&from_name);
-            let fp_to = dir.join(&to_name);
-            fs::rename(&fp_from, &fp_to)?;
-            if let Some(reg) = get_script_registry() {
-                let oldn = fparts[2].split('.').next().unwrap_or(fparts[2]);
-                let newn = to_name.trim_end_matches(".lua");
-                let _ = reg.rename_function(oldn, newn);
-            }
-            Ok(serde_json::json!({"status":"ok"}))
-        }
-        Command::LoadScript { path } => {
-            use std::fs;
-            let root = { let g = store.0.lock(); g.root_path().clone() };
-            if let Some(p) = path {
-                let parts: Vec<&str> = p.split('/').collect();
-                if parts.len() != 3 { anyhow::bail!("SCRIPT path must be <db>/<schema>/<name>"); }
-                let dir = scripts_dir_for(Path::new(&root), parts[0], parts[1]);
-                let mut fname = parts[2].to_string(); if !fname.ends_with(".lua") { fname.push_str(".lua"); }
-                let fpath = dir.join(&fname);
-                let code = fs::read_to_string(&fpath)?;
-                if let Some(reg) = get_script_registry() { let name_no_ext = parts[2].split('.').next().unwrap_or(parts[2]); let _ = reg.load_script_text(name_no_ext, &code); }
-            } else {
-                // Load all scripts from all schemas
-                for dbent in fs::read_dir(&root)? {
-                    let dbent = dbent?; if !dbent.file_type()?.is_dir() { continue; }
-                    for schent in fs::read_dir(dbent.path())? { let schent = schent?; if !schent.file_type()?.is_dir() { continue; }
-                        let sdir = scripts_dir_for(Path::new(&root), &dbent.file_name().to_string_lossy(), &schent.file_name().to_string_lossy());
-                        if sdir.exists() {
-                            for sf in fs::read_dir(&sdir)? { let sf = sf?; let pth = sf.path(); if pth.extension().and_then(|e| e.to_str()).unwrap_or("").eq_ignore_ascii_case("lua") { let name = pth.file_stem().and_then(|s| s.to_str()).unwrap_or(""); let code = fs::read_to_string(&pth)?; if let Some(reg) = get_script_registry() { let _ = reg.load_script_text(name, &code); } } }
-                        }
-                    }
-                }
-            }
-            Ok(serde_json::json!({"status":"ok"}))
-        }
-        _ => execute_query(store, text).await,
-    }
-}
 
 // Convenience: normalize with defaults then execute
 pub async fn execute_query_with_defaults(store: &SharedStore, text: &str, defaults: &QueryDefaults) -> Result<serde_json::Value> {
     let effective = normalize_query_with_defaults(text, &defaults.current_database, &defaults.current_schema);
-    execute_query2(store, &effective).await
+    execute_query(store, &effective).await
 }
 
 #[cfg(test)]

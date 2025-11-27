@@ -1,4 +1,4 @@
-use clarium::server::exec::{execute_query, execute_query2};
+use clarium::server::exec::execute_query;
 use clarium::storage::{SharedStore, Record};
 use serde_json::json;
 use std::time::Instant;
@@ -71,7 +71,7 @@ async fn test_integration_monthly_minute_sine_create_query_delete() {
         db, base_ms, end_ms
     );
     let t_q1 = Instant::now();
-    let res1 = execute_query2(&shared, &q1).await.unwrap();
+    let res1 = execute_query(&shared, &q1).await.unwrap();
     let rows1 = res1.as_array().map(|a| a.len()).unwrap_or(0);
     assert_eq!(rows1, (total_days * minutes_per_day) as usize);
     tprintln!(
@@ -86,7 +86,7 @@ async fn test_integration_monthly_minute_sine_create_query_delete() {
         db, base_ms, end_ms
     );
     let t_q2 = Instant::now();
-    let res2 = execute_query2(&shared, &q2).await.unwrap();
+    let res2 = execute_query(&shared, &q2).await.unwrap();
     let rows2 = res2.as_array().unwrap();
     assert_eq!(rows2.len(), total_days as usize, "expected one row per day");
     for row in rows2 {
@@ -114,7 +114,7 @@ async fn test_integration_monthly_minute_sine_create_query_delete() {
 
     // Post-delete: a SELECT should return zero rows (or error). We tolerate either behavior.
     let t_post = Instant::now();
-    let sel_after_delete = execute_query2(&shared, &format!("SELECT COUNT(sine) FROM {} BY 1d", db)).await;
+    let sel_after_delete = execute_query(&shared, &format!("SELECT COUNT(sine) FROM {} BY 1d", db)).await;
     let post_ms = t_post.elapsed().as_millis();
     match sel_after_delete {
         Ok(val) => {

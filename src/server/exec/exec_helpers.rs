@@ -56,3 +56,153 @@ pub fn dataframe_to_tabular(df: &DataFrame) -> (Vec<String>, Vec<Vec<Option<Stri
 pub fn execute_select_df(store: &crate::storage::SharedStore, q: &crate::query::Query) -> Result<DataFrame> {
     crate::server::exec::exec_select::run_select(store, q)
 }
+
+
+pub fn qualify_identifier_with_defaults(ident: &str, db: &str, schema: &str) -> String {
+    let d = crate::ident::QueryDefaults::new(db.to_string(), schema.to_string());
+    crate::ident::qualify_time_ident(ident, &d)
+}
+
+pub fn qualify_identifier_regular_table_with_defaults(ident: &str, db: &str, schema: &str) -> String {
+    let d = crate::ident::QueryDefaults::new(db.to_string(), schema.to_string());
+    crate::ident::qualify_regular_ident(ident, &d)
+}
+
+pub fn normalize_query_with_defaults(q: &str, db: &str, schema: &str) -> String {
+    let up = q.to_uppercase();
+    // Normalize unqualified regular TABLE DDL to include current db/schema
+    if up.starts_with("DROP TABLE ") {
+        let prefix = "DROP TABLE";
+        let mut s = q[prefix.len()..].trim_start();
+        let s_up = s.to_uppercase();
+        // skip optional IF EXISTS
+        let mut if_exists = "";
+        if s_up.starts_with("IF EXISTS ") {
+            if_exists = " IF EXISTS";
+            s = &s["IF EXISTS ".len()..].trim_start();
+        }
+        if s.is_empty() { return q.to_string(); }
+        let qualified = qualify_identifier_regular_table_with_defaults(s, db, schema);
+        return format!("{}{} {}", prefix, if_exists, qualified);
+    }
+    if up.starts_with("RENAME TABLE ") {
+        let prefix = "RENAME TABLE";
+        let tail = &q[prefix.len()..];
+        let tail_up = tail.to_uppercase();
+        if let Some(i) = tail_up.find(" TO ") {
+            let left = tail[..i].trim();
+            let right = tail[i+4..].trim();
+            if left.is_empty() || right.is_empty() { return q.to_string(); }
+            let ql = qualify_identifier_regular_table_with_defaults(left, db, schema);
+            let qr = qualify_identifier_regular_table_with_defaults(right, db, schema);
+            return format!("{} {} TO {}", prefix, ql, qr);
+        }
+        return q.to_string();
+    }
+    // Qualify INSERT INTO targets using current db/schema
+    if up.starts_with("INSERT INTO ") {
+        // Preserve rest of statement, only replace target identifier
+        let after = &q["INSERT INTO ".len()..];
+        let mut ident = after.trim_start();
+        let mut rest = "";
+        // identifier ends at first whitespace or '(' whichever comes first
+        for (i, ch) in ident.char_indices() {
+            if ch.is_whitespace() || ch == '(' { rest = &ident[i..]; ident = &ident[..i]; break; }
+        }
+        if ident.is_empty() { return q.to_string(); }
+
+        // Strip quotes from identifier
+        let mut ident_clean = ident;
+        if (ident.starts_with('"') && ident.ends_with('"')) || (ident.starts_with('\'') && ident.ends_with('\'')) {
+            if ident.len() >= 2 {
+                ident_clean = &ident[1..ident.len()-1];
+            }
+        }
+
+        // Check if it's a time table based on suffix
+        let is_time_table = ident_clean.ends_with(".time");
+        let qualified = if is_time_table {
+            qualify_identifier_with_defaults(ident_clean, db, schema)
+        } else {
+            qualify_identifier_regular_table_with_defaults(ident_clean, db, schema)
+        };
+        return format!("INSERT INTO {}{}", qualified, rest);
+    }
+    // Do not rewrite SELECT or SLICE statements; column/table resolution is handled by Data Context at execution time
+    if up.starts_with("SELECT ") || up.starts_with("SLICE") { return q.to_string(); }
+    // Qualify CREATE TABLE targets using current db/schema (regular table)
+    if up.starts_with("CREATE TABLE ") {
+        let after = &q["CREATE TABLE ".len()..];
+        let mut s = after;
+        let s_up = s.to_uppercase();
+        // skip optional IF NOT EXISTS
+        let mut consumed = 0usize;
+        if s_up.starts_with("IF NOT EXISTS ") { consumed = "IF NOT EXISTS ".len(); s = &s[consumed..]; }
+        // Extract identifier up to '(' or whitespace
+        let mut ident = s.trim_start();
+        let mut rest = "";
+        for (i, ch) in ident.char_indices() {
+            if ch.is_whitespace() || ch == '(' { rest = &ident[i..]; ident = &ident[..i]; break; }
+        }
+        if ident.is_empty() { return q.to_string(); }
+
+        // Strip quotes from identifier
+        let mut ident_clean = ident;
+        if (ident.starts_with('"') && ident.ends_with('"')) || (ident.starts_with('\'') && ident.ends_with('\'')) {
+            if ident.len() >= 2 {
+                ident_clean = &ident[1..ident.len()-1];
+            }
+        }
+
+        let qualified = qualify_identifier_regular_table_with_defaults(ident_clean, db, schema);
+        let prefix = if consumed > 0 { format!("CREATE TABLE IF NOT EXISTS {}", qualified) } else { format!("CREATE TABLE {}", qualified) };
+        return format!("{}{}", prefix, rest);
+    }
+    if up.starts_with("DELETE ") {
+        if let Some(idx) = up.find(" FROM ") {
+            let (head, tail) = q.split_at(idx + 6);
+            let mut ident = tail.trim_start();
+            let mut rest = "";
+            for (i, ch) in ident.char_indices() {
+                if ch.is_whitespace() { rest = &ident[i..]; ident = &ident[..i]; break; }
+            }
+            if ident.is_empty() { return q.to_string(); }
+
+            // Strip quotes from identifier
+            let mut ident_clean = ident;
+            if (ident.starts_with('"') && ident.ends_with('"')) || (ident.starts_with('\'') && ident.ends_with('\'')) {
+                if ident.len() >= 2 {
+                    ident_clean = &ident[1..ident.len()-1];
+                }
+            }
+
+            let qualified = qualify_identifier_with_defaults(ident_clean, db, schema);
+            return format!("{}{}{}", head, qualified, rest);
+        }
+    }
+    if up.starts_with("UPDATE ") {
+        // UPDATE <ident> SET ...
+        let after = &q[7..];
+        let up_after = after.to_uppercase();
+        if let Some(i) = up_after.find(" SET ") {
+            let mut ident = after[..i].trim();
+            let rest = &after[i..];
+            // Strip quotes
+            if (ident.starts_with('"') && ident.ends_with('"')) || (ident.starts_with('\'') && ident.ends_with('\'')) {
+                if ident.len() >= 2 { ident = &ident[1..ident.len()-1]; }
+            }
+            let is_time = ident.ends_with(".time") || ident.to_lowercase().ends_with(".time");
+            let qualified = if is_time { qualify_identifier_with_defaults(ident, db, schema) } else { qualify_identifier_regular_table_with_defaults(ident, db, schema) };
+            return format!("UPDATE {}{}", qualified, rest);
+        }
+        return q.to_string();
+    }
+    if up.starts_with("CALCULATE ") {
+        if let Some(p) = up.find(" AS SELECT ") {
+            let (left, right) = q.split_at(p + 4);
+            let normalized = normalize_query_with_defaults(&right[1..], db, schema);
+            return format!("{} {}", left, normalized);
+        }
+    }
+    q.to_string()
+}

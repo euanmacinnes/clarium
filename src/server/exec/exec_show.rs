@@ -201,7 +201,7 @@ mod tests {
 
         // Act: execute SHOW SCRIPTS through the public API
         let rt = tokio::runtime::Runtime::new().unwrap();
-        let val = rt.block_on(crate::server::exec::execute_query2(&store, "SHOW SCRIPTS")).unwrap();
+        let val = rt.block_on(crate::server::exec::execute_query(&store, "SHOW SCRIPTS")).unwrap();
 
         // Assert: find both entries
         let arr = match val { serde_json::Value::Array(a) => a, _ => panic!("SHOW SCRIPTS did not return an array: {:?}", val) };
