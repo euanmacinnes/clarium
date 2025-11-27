@@ -64,6 +64,138 @@ pub async fn execute_query(store: &SharedStore, text: &str) -> Result<Value> {
         Command::UseDatabase { .. } | Command::UseSchema { .. } | Command::Set { .. } => {
             Ok(serde_json::json!({"status":"ok"}))
         }
+        Command::Insert { table, columns, values } => {
+            // INSERT INTO table (col1, col2, ...) VALUES (val1, val2, ...), ...
+            // Convert dot notation (schema.table) to slash notation (schema/table) for storage
+            // But preserve .time suffix for time tables
+            let table_path = if table.ends_with(".time") {
+                let base = &table[..table.len() - 5]; // Remove ".time"
+                format!("{}.time", base.replace('.', "/"))
+            } else {
+                table.replace('.', "/")
+            };
+            
+            let guard = store.0.lock();
+            
+            // Ensure table exists
+            guard.create_table(&table_path).ok();
+            
+            // Check if it's a time table
+            if table_path.ends_with(".time") {
+                // For time tables, we need _time column and build Records
+                // Find _time column index (could be named "ID", "_time", or similar based on column list)
+                let time_col_idx = columns.iter().position(|c| {
+                    let c_upper = c.to_uppercase();
+                    c_upper == "_TIME" || c_upper == "ID"
+                }).ok_or_else(|| anyhow::anyhow!("INSERT into time table requires _time or ID column"))?;
+                
+                let mut records: Vec<crate::storage::Record> = Vec::with_capacity(values.len());
+                
+                for row in &values {
+                    if row.len() != columns.len() {
+                        anyhow::bail!("INSERT value count mismatch: expected {} columns", columns.len());
+                    }
+                    
+                    // Extract _time value
+                    let time_val = match &row[time_col_idx] {
+                        query::ArithTerm::Number(n) => *n as i64,
+                        query::ArithTerm::Str(s) => s.parse::<i64>()?,
+                        query::ArithTerm::Null => anyhow::bail!("_time cannot be NULL in time table"),
+                        _ => anyhow::bail!("Invalid _time value"),
+                    };
+                    
+                    // Build sensor map from other columns
+                    let mut sensors = serde_json::Map::new();
+                    for (i, col_name) in columns.iter().enumerate() {
+                        if i == time_col_idx {
+                            continue; // Skip _time column
+                        }
+                        
+                        let val = match &row[i] {
+                            query::ArithTerm::Number(n) => serde_json::json!(n),
+                            query::ArithTerm::Str(s) => serde_json::json!(s),
+                            query::ArithTerm::Null => serde_json::Value::Null,
+                            _ => serde_json::Value::Null,
+                        };
+                        
+                        sensors.insert(col_name.clone(), val);
+                    }
+                    
+                    records.push(crate::storage::Record { _time: time_val, sensors });
+                }
+                
+                guard.write_records(&table_path, &records)?;
+                Ok(serde_json::json!({"status":"ok", "inserted": records.len()}))
+            } else {
+                // Regular parquet table - build DataFrame and append
+                // Create series for each column
+                let mut series_vec: Vec<Series> = Vec::new();
+                
+                for (col_idx, col_name) in columns.iter().enumerate() {
+                    // Collect values for this column across all rows
+                    let mut col_values: Vec<query::ArithTerm> = Vec::with_capacity(values.len());
+                    for row in &values {
+                        if row.len() != columns.len() {
+                            anyhow::bail!("INSERT value count mismatch: expected {} columns", columns.len());
+                        }
+                        col_values.push(row[col_idx].clone());
+                    }
+                    
+                    // Determine column type and create series
+                    // Check first non-null value for type
+                    let mut all_null = true;
+                    let mut has_string = false;
+                    let mut has_float = false;
+                    
+                    for val in &col_values {
+                        match val {
+                            query::ArithTerm::Str(_) => { all_null = false; has_string = true; }
+                            query::ArithTerm::Number(_) => { all_null = false; has_float = true; }
+                            query::ArithTerm::Null => {}
+                            _ => {}
+                        }
+                    }
+                    
+                    let series = if all_null {
+                        Series::new_null(col_name.as_str().into(), col_values.len())
+                    } else if has_string {
+                        // String column
+                        let vals: Vec<Option<String>> = col_values.iter().map(|v| match v {
+                            query::ArithTerm::Str(s) => Some(s.clone()),
+                            query::ArithTerm::Number(n) => Some(n.to_string()),
+                            query::ArithTerm::Null => None,
+                            _ => None,
+                        }).collect();
+                        Series::new(col_name.as_str().into(), vals)
+                    } else if has_float {
+                        // Numeric column
+                        let vals: Vec<Option<f64>> = col_values.iter().map(|v| match v {
+                            query::ArithTerm::Number(n) => Some(*n),
+                            query::ArithTerm::Str(s) => s.parse::<f64>().ok(),
+                            query::ArithTerm::Null => None,
+                            _ => None,
+                        }).collect();
+                        Series::new(col_name.as_str().into(), vals)
+                    } else {
+                        Series::new_null(col_name.as_str().into(), col_values.len())
+                    };
+                    
+                    series_vec.push(series);
+                }
+                
+                let columns_vec: Vec<Column> = series_vec.into_iter().map(|s| s.into()).collect();
+                let new_df = DataFrame::new(columns_vec)?;
+                
+                // Append to existing table or create new
+                let combined = match guard.read_df(&table_path) {
+                    Ok(existing) => existing.vstack(&new_df)?,
+                    Err(_) => new_df.clone(),
+                };
+                
+                guard.rewrite_table_df(&table_path, combined)?;
+                Ok(serde_json::json!({"status":"ok", "inserted": new_df.height()}))
+            }
+        }
         Command::Select(q) => {
             let df = run_select(store, &q)?;
             // Handle SELECT ... INTO <table> [APPEND|REPLACE]
@@ -861,7 +993,7 @@ pub fn normalize_query_with_defaults(q: &str, db: &str, schema: &str) -> String 
         }
         return q.to_string();
     }
-    // Qualify INSERT INTO targets using current db/schema and require .time
+    // Qualify INSERT INTO targets using current db/schema
     if up.starts_with("INSERT INTO ") {
         // Preserve rest of statement, only replace target identifier
         let after = &q["INSERT INTO ".len()..];
@@ -872,8 +1004,22 @@ pub fn normalize_query_with_defaults(q: &str, db: &str, schema: &str) -> String 
             if ch.is_whitespace() || ch == '(' { rest = &ident[i..]; ident = &ident[..i]; break; }
         }
         if ident.is_empty() { return q.to_string(); }
-        let mut qualified = qualify_identifier_with_defaults(ident, db, schema);
-        if !qualified.ends_with(".time") { qualified.push_str(".time"); }
+        
+        // Strip quotes from identifier
+        let mut ident_clean = ident;
+        if (ident.starts_with('"') && ident.ends_with('"')) || (ident.starts_with('\'') && ident.ends_with('\'')) {
+            if ident.len() >= 2 {
+                ident_clean = &ident[1..ident.len()-1];
+            }
+        }
+        
+        // Check if it's a time table based on suffix
+        let is_time_table = ident_clean.ends_with(".time");
+        let qualified = if is_time_table {
+            qualify_identifier_with_defaults(ident_clean, db, schema)
+        } else {
+            qualify_identifier_regular_table_with_defaults(ident_clean, db, schema)
+        };
         return format!("INSERT INTO {}{}", qualified, rest);
     }
     // Do not rewrite SELECT or SLICE statements; column/table resolution is handled by Data Context at execution time
@@ -893,7 +1039,16 @@ pub fn normalize_query_with_defaults(q: &str, db: &str, schema: &str) -> String 
             if ch.is_whitespace() || ch == '(' { rest = &ident[i..]; ident = &ident[..i]; break; }
         }
         if ident.is_empty() { return q.to_string(); }
-        let qualified = qualify_identifier_regular_table_with_defaults(ident, db, schema);
+        
+        // Strip quotes from identifier
+        let mut ident_clean = ident;
+        if (ident.starts_with('"') && ident.ends_with('"')) || (ident.starts_with('\'') && ident.ends_with('\'')) {
+            if ident.len() >= 2 {
+                ident_clean = &ident[1..ident.len()-1];
+            }
+        }
+        
+        let qualified = qualify_identifier_regular_table_with_defaults(ident_clean, db, schema);
         let prefix = if consumed > 0 { format!("CREATE TABLE IF NOT EXISTS {}", qualified) } else { format!("CREATE TABLE {}", qualified) };
         return format!("{}{}", prefix, rest);
     }
@@ -906,7 +1061,16 @@ pub fn normalize_query_with_defaults(q: &str, db: &str, schema: &str) -> String 
                 if ch.is_whitespace() { rest = &ident[i..]; ident = &ident[..i]; break; }
             }
             if ident.is_empty() { return q.to_string(); }
-            let qualified = qualify_identifier_with_defaults(ident, db, schema);
+            
+            // Strip quotes from identifier
+            let mut ident_clean = ident;
+            if (ident.starts_with('"') && ident.ends_with('"')) || (ident.starts_with('\'') && ident.ends_with('\'')) {
+                if ident.len() >= 2 {
+                    ident_clean = &ident[1..ident.len()-1];
+                }
+            }
+            
+            let qualified = qualify_identifier_with_defaults(ident_clean, db, schema);
             return format!("{}{}{}", head, qualified, rest);
         }
     }

@@ -237,6 +237,7 @@ async fn run_seaorm_demo(dsn: &str) -> Result<()> {
         .values_panic(vec![Expr::val(3i64).into(), Expr::val(7.89_f64).into(), Expr::val("c").into(), Expr::val(1730000010000_i64).into()])
         .to_owned()
         .to_string(PostgresQueryBuilder);
+    println!("SeaORM: INSERT SQL: {}", insert_stmt);
     db.execute(Statement::from_string(DatabaseBackend::Postgres, insert_stmt)).await?;
     println!("SeaORM: insert done");
 

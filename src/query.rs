@@ -268,6 +268,7 @@ pub enum Command {
     ShowObjects,
     ShowScripts,
     Slice(SlicePlan),
+    Insert { table: String, columns: Vec<String>, values: Vec<Vec<ArithTerm>> },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -434,6 +435,9 @@ pub fn parse(input: &str) -> Result<Command> {
     }
     if sup.starts_with("SET ") {
         return parse_set(s);
+    }
+    if sup.starts_with("INSERT ") {
+        return parse_insert(s);
     }
     bail!("Unsupported command {} ", sup)
 }
@@ -1049,6 +1053,15 @@ fn parse_select(s: &str) -> Result<Query> {
         } else {
             // Regular table name
             let (base_name, mut j) = read_word(input, i);
+            
+            // Strip quotes from table name
+            let mut table_name = base_name.trim();
+            if (table_name.starts_with('"') && table_name.ends_with('"')) || (table_name.starts_with('\'') && table_name.ends_with('\'')) {
+                if table_name.len() >= 2 {
+                    table_name = &table_name[1..table_name.len()-1];
+                }
+            }
+            
             let mut base_alias: Option<String> = None;
             j = skip_ws(input, j);
             let rem_up = up[j..].to_string();
@@ -1064,7 +1077,7 @@ fn parse_select(s: &str) -> Result<Query> {
                     if !al.is_empty() { base_alias = Some(al); j = k1; }
                 }
             }
-            (TableRef::Table { name: base_name.trim().to_string(), alias: base_alias.filter(|a| !a.is_empty()) }, j)
+            (TableRef::Table { name: table_name.to_string(), alias: base_alias.filter(|a| !a.is_empty()) }, j)
         };
         
         let (base, mut j) = base;
@@ -4041,6 +4054,126 @@ fn parse_set(s: &str) -> Result<Command> {
         variable: variable.to_string(), 
         value: value_clean.to_string() 
     })
+}
+
+fn parse_insert(s: &str) -> Result<Command> {
+    // INSERT INTO table (col1, col2, ...) VALUES (val1, val2, ...), (val3, val4, ...), ...
+    let rest = s[6..].trim(); // after "INSERT"
+    let up = rest.to_uppercase();
+    
+    // Expect INTO
+    if !up.starts_with("INTO ") {
+        anyhow::bail!("INSERT syntax error: expected INTO");
+    }
+    let after_into = rest[5..].trim();
+    
+    // Find table name (everything before the opening paren or VALUES keyword)
+    let table_end = after_into.find('(').or_else(|| {
+        after_into.to_uppercase().find(" VALUES")
+    }).ok_or_else(|| anyhow::anyhow!("INSERT syntax error: expected column list or VALUES"))?;
+    
+    let mut table = after_into[..table_end].trim().to_string();
+    // Strip quotes from table name if present
+    if (table.starts_with('"') && table.ends_with('"')) || (table.starts_with('\'') && table.ends_with('\'')) {
+        if table.len() >= 2 {
+            table = table[1..table.len()-1].to_string();
+        }
+    }
+    if table.is_empty() {
+        anyhow::bail!("INSERT syntax error: missing table name");
+    }
+    
+    let remaining = after_into[table_end..].trim();
+    
+    // Parse column list
+    let (columns, values_start) = if remaining.starts_with('(') {
+        // Extract column list
+        let (cols_inner, cols_used) = extract_paren_block(remaining)
+            .ok_or_else(|| anyhow::anyhow!("INSERT syntax error: incomplete column list"))?;
+        
+        let cols: Vec<String> = split_csv_ignoring_quotes(cols_inner)
+            .into_iter()
+            .map(|c| c.trim().trim_matches('"').to_string())
+            .collect();
+        
+        let after_cols = remaining[cols_used..].trim();
+        (cols, after_cols)
+    } else {
+        // No column list, we'll infer later or error
+        (Vec::new(), remaining)
+    };
+    
+    // Expect VALUES keyword
+    let values_up = values_start.to_uppercase();
+    if !values_up.starts_with("VALUES ") {
+        anyhow::bail!("INSERT syntax error: expected VALUES clause");
+    }
+    let after_values = values_start[7..].trim();
+    
+    // Parse value tuples: (v1, v2, ...), (v3, v4, ...), ...
+    let mut values: Vec<Vec<ArithTerm>> = Vec::new();
+    let mut remaining_vals = after_values;
+    
+    loop {
+        let remaining_trim = remaining_vals.trim();
+        if remaining_trim.is_empty() {
+            break;
+        }
+        
+        // Extract one value tuple
+        if !remaining_trim.starts_with('(') {
+            anyhow::bail!("INSERT syntax error: expected '(' for value tuple");
+        }
+        
+        let (vals_inner, vals_used) = extract_paren_block(remaining_trim)
+            .ok_or_else(|| anyhow::anyhow!("INSERT syntax error: incomplete value tuple"))?;
+        
+        // Parse individual values as ArithTerm
+        let val_strings = split_csv_ignoring_quotes(vals_inner);
+        let mut row_values: Vec<ArithTerm> = Vec::new();
+        
+        for val_str in val_strings {
+            let val_trim = val_str.trim();
+            if val_trim.is_empty() {
+                continue;
+            }
+            
+            // Parse as ArithTerm
+            let term = if val_trim.eq_ignore_ascii_case("NULL") {
+                ArithTerm::Null
+            } else if val_trim.starts_with('\'') && val_trim.ends_with('\'') && val_trim.len() >= 2 {
+                // String literal
+                ArithTerm::Str(val_trim[1..val_trim.len()-1].to_string())
+            } else if let Ok(num) = val_trim.parse::<f64>() {
+                // Numeric literal
+                ArithTerm::Number(num)
+            } else {
+                // Try to parse as string without quotes
+                ArithTerm::Str(val_trim.to_string())
+            };
+            
+            row_values.push(term);
+        }
+        
+        values.push(row_values);
+        
+        // Move past this tuple
+        remaining_vals = &remaining_trim[vals_used..].trim();
+        
+        // Check for comma separator
+        if remaining_vals.starts_with(',') {
+            remaining_vals = &remaining_vals[1..];
+        } else {
+            // No more tuples
+            break;
+        }
+    }
+    
+    if values.is_empty() {
+        anyhow::bail!("INSERT syntax error: no values provided");
+    }
+    
+    Ok(Command::Insert { table, columns, values })
 }
 
 fn extract_paren_block(s: &str) -> Option<(&str, usize)> {

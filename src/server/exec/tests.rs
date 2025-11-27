@@ -96,6 +96,7 @@ mod group_by_tests;
 mod having_tests;
 mod having_tests2;
 mod intermittent_failure_test;
+mod insert_tests;
 mod join_inner_tests;
 mod join_outer_tests;
 mod like_tests;

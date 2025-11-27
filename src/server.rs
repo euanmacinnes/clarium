@@ -615,6 +615,15 @@ fn to_ck_and_db(cmd: &query::Command) -> (security::CommandKind, Option<String>)
         | query::Command::ShowScripts => (security::CommandKind::Other, None),
         query::Command::SelectUnion { .. } => (security::CommandKind::Select, None),
         query::Command::Slice(_) => (security::CommandKind::Select, None),
+        query::Command::Insert { table, .. } => {
+            // Extract database from table path (format: db/schema/table or just table)
+            let db_name = if table.contains('/') {
+                table.split('/').next().map(|s| s.to_string())
+            } else {
+                None
+            };
+            (security::CommandKind::Other, db_name)
+        }
     }
 }
 
