@@ -10,15 +10,32 @@ use polars::prelude::*;
 
 /// Convert a DataFrame into a serde_json::Value for HTTP/pgwire simple protocol.
 pub fn dataframe_to_json(df: &DataFrame) -> serde_json::Value {
-    let (cols, data) = dataframe_to_tabular(df);
+    // Emit native JSON numbers/bools/strings/nulls to satisfy engine tests
+    let cols: Vec<String> = df.get_column_names().into_iter().map(|s| s.to_string()).collect();
     let mut out: Vec<serde_json::Value> = Vec::with_capacity(df.height());
-    for row in data {
+    for row_idx in 0..df.height() {
         let mut map = serde_json::Map::new();
-        for (i, c) in cols.iter().enumerate() {
-            match &row[i] {
-                Some(v) => { map.insert(c.clone(), serde_json::Value::String(v.clone())); }
-                None => { map.insert(c.clone(), serde_json::Value::Null); }
-            }
+        for c in &cols {
+            let s = df.column(c.as_str()).unwrap();
+            let av = s.get(row_idx);
+            let jv = match av {
+                Ok(AnyValue::Int64(v)) => serde_json::Value::Number(serde_json::Number::from(v)),
+                Ok(AnyValue::Int32(v)) => serde_json::Value::Number(serde_json::Number::from(v as i64)),
+                Ok(AnyValue::UInt32(v)) => serde_json::Value::Number(serde_json::Number::from(v as u64)),
+                Ok(AnyValue::UInt64(v)) => {
+                    // serde_json Numbers cannot represent full u64 safely; fall back to string if overflow
+                    if let Some(n) = serde_json::Number::from_f64(v as f64) { serde_json::Value::Number(n) } else { serde_json::Value::String(v.to_string()) }
+                }
+                Ok(AnyValue::Float64(v)) => {
+                    if let Some(n) = serde_json::Number::from_f64(v) { serde_json::Value::Number(n) } else { serde_json::Value::Null }
+                }
+                Ok(AnyValue::Boolean(b)) => serde_json::Value::Bool(b),
+                Ok(AnyValue::String(v)) => serde_json::Value::String(v.to_string()),
+                Ok(AnyValue::StringOwned(v)) => serde_json::Value::String(v.to_string()),
+                Ok(AnyValue::Null) => serde_json::Value::Null,
+                _ => serde_json::Value::Null,
+            };
+            map.insert(c.clone(), jv);
         }
         out.push(serde_json::Value::Object(map));
     }
@@ -99,7 +116,7 @@ pub fn normalize_query_with_defaults(q: &str, db: &str, schema: &str) -> String 
         }
         return q.to_string();
     }
-    // Qualify INSERT INTO targets using current db/schema
+    // Qualify INSERT INTO targets using current db/schema.
     if up.starts_with("INSERT INTO ") {
         // Preserve rest of statement, only replace target identifier
         let after = &q["INSERT INTO ".len()..];
@@ -119,9 +136,8 @@ pub fn normalize_query_with_defaults(q: &str, db: &str, schema: &str) -> String 
             }
         }
 
-        // Check if it's a time table based on suffix
-        let is_time_table = ident_clean.ends_with(".time");
-        let qualified = if is_time_table {
+        // Support both normal and .time tables: choose qualifier based on suffix
+        let qualified = if ident_clean.to_lowercase().ends_with(".time") {
             qualify_identifier_with_defaults(ident_clean, db, schema)
         } else {
             qualify_identifier_regular_table_with_defaults(ident_clean, db, schema)
@@ -180,6 +196,7 @@ pub fn normalize_query_with_defaults(q: &str, db: &str, schema: &str) -> String 
             return format!("{}{}{}", head, qualified, rest);
         }
     }
+    // Qualify UPDATE targets using current db/schema.
     if up.starts_with("UPDATE ") {
         // UPDATE <ident> SET ...
         let after = &q[7..];
@@ -191,8 +208,11 @@ pub fn normalize_query_with_defaults(q: &str, db: &str, schema: &str) -> String 
             if (ident.starts_with('"') && ident.ends_with('"')) || (ident.starts_with('\'') && ident.ends_with('\'')) {
                 if ident.len() >= 2 { ident = &ident[1..ident.len()-1]; }
             }
-            let is_time = ident.ends_with(".time") || ident.to_lowercase().ends_with(".time");
-            let qualified = if is_time { qualify_identifier_with_defaults(ident, db, schema) } else { qualify_identifier_regular_table_with_defaults(ident, db, schema) };
+            let qualified = if ident.to_lowercase().ends_with(".time") {
+                qualify_identifier_with_defaults(ident, db, schema)
+            } else {
+                qualify_identifier_regular_table_with_defaults(ident, db, schema)
+            };
             return format!("UPDATE {}{}", qualified, rest);
         }
         return q.to_string();

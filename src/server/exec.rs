@@ -32,7 +32,7 @@ use std::ops::Not;
 use crate::server::exec::exec_helpers::dataframe_to_json;
 use crate::server::exec::df_utils::read_df_or_kv;
 // Re-export common helpers so external callers can keep using crate::server::exec::*
-pub use crate::server::exec::exec_helpers::{execute_select_df, dataframe_to_tabular};
+pub use crate::server::exec::exec_helpers::{execute_select_df, dataframe_to_tabular, normalize_query_with_defaults};
 pub use crate::server::exec::exec_create::do_create_table;
 
 pub async fn execute_query(store: &SharedStore, text: &str) -> Result<serde_json::Value> {
@@ -424,7 +424,11 @@ pub async fn execute_query(store: &SharedStore, text: &str) -> Result<serde_json
 
 // Convenience: normalize with defaults then execute
 pub async fn execute_query_with_defaults(store: &SharedStore, text: &str, defaults: &QueryDefaults) -> Result<serde_json::Value> {
-    let effective = normalize_query_with_defaults(text, &defaults.current_database, &defaults.current_schema);
+    let effective = crate::server::exec::exec_helpers::normalize_query_with_defaults(
+        text,
+        &defaults.current_database,
+        &defaults.current_schema,
+    );
     execute_query(store, &effective).await
 }
 

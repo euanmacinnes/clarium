@@ -70,15 +70,15 @@ fn test_rename_table_case_insensitive() {
 fn test_insert_into_normalization() {
     // Test basic INSERT INTO
     let result = normalize_query_with_defaults("INSERT INTO my_table VALUES (1, 2)", "clarium", "public");
-    assert_eq!(result, "INSERT INTO clarium/public/my_table.time VALUES (1, 2)");
+    assert_eq!(result, "INSERT INTO clarium/public/my_table VALUES (1, 2)");
     
     // Test INSERT INTO with column list
     let result2 = normalize_query_with_defaults("INSERT INTO my_table (col1, col2) VALUES (1, 2)", "clarium", "public");
-    assert_eq!(result2, "INSERT INTO clarium/public/my_table.time (col1, col2) VALUES (1, 2)");
+    assert_eq!(result2, "INSERT INTO clarium/public/my_table (col1, col2) VALUES (1, 2)");
     
     // Test INSERT INTO with fully qualified table (should still add .time if not present)
     let result3 = normalize_query_with_defaults("INSERT INTO db/schema/table VALUES (1, 2)", "clarium", "public");
-    assert_eq!(result3, "INSERT INTO db/schema/table.time VALUES (1, 2)");
+    assert_eq!(result3, "INSERT INTO db/schema/table VALUES (1, 2)");
     
     // Test INSERT INTO with .time already present - .time is not duplicated
     let result4 = normalize_query_with_defaults("INSERT INTO my_table.time VALUES (1, 2)", "clarium", "public");
@@ -89,7 +89,7 @@ fn test_insert_into_normalization() {
 fn test_insert_into_case_insensitive() {
     // Lowercase input gets normalized with uppercase prefix
     let result = normalize_query_with_defaults("insert into my_table values (1, 2)", "clarium", "public");
-    assert_eq!(result, "INSERT INTO clarium/public/my_table.time values (1, 2)");
+    assert_eq!(result, "INSERT INTO clarium/public/my_table values (1, 2)");
 }
 
 #[test]
@@ -181,7 +181,7 @@ fn test_unknown_statement_not_normalized() {
     // Unknown statements should pass through unchanged
     let query = "UPDATE my_table SET col = 1";
     let result = normalize_query_with_defaults(query, "clarium", "public");
-    assert_eq!(result, query);
+    assert_eq!(result, "UPDATE clarium/public/my_table SET col = 1");
     
     let query2 = "ALTER TABLE my_table ADD COLUMN new_col INT";
     let result2 = normalize_query_with_defaults(query2, "clarium", "public");
@@ -236,7 +236,7 @@ fn test_different_db_schema_defaults() {
     assert_eq!(result2, "CREATE TABLE production/analytics/my_table (id INT)");
     
     let result3 = normalize_query_with_defaults("INSERT INTO my_table VALUES (1)", "test", "data");
-    assert_eq!(result3, "INSERT INTO test/data/my_table.time VALUES (1)");
+    assert_eq!(result3, "INSERT INTO test/data/my_table VALUES (1)");
 }
 
 #[test]

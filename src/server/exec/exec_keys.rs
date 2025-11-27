@@ -46,7 +46,7 @@ pub fn handle_write_key(store: &SharedStore, database: &str, st: &str, key: &str
             kind = "string"; KvValue::Str(vstr.to_string())
         }
     };
-    kv.set(key, kv_val, ttl, reset_on_access.unwrap_or(false));
+    kv.set(key, kv_val, ttl, Some(reset_on_access.unwrap_or(false)));
     Ok(serde_json::json!({"status":"ok","written":1,"type": kind}))
 }
 

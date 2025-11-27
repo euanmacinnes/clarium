@@ -30,9 +30,8 @@ pub fn handle_update(store: &SharedStore, table: String, assignments: Vec<(Strin
         }
     } else {
         // All true
-        let mut v: Vec<bool> = Vec::with_capacity(n);
-        v.resize(n, true);
-        BooleanChunked::from_vec("__m__", v)
+        let v: Vec<bool> = vec![true; n];
+        BooleanChunked::from_slice("__m__".into(), &v)
     };
 
     // Apply assignments one by one

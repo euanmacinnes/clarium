@@ -67,19 +67,21 @@ pub fn handle_delete_columns(store: &SharedStore, database: String, mut columns:
                         Series::new(col.clone().into(), out)
                     }
                 };
-                df_all.replace_or_add(&new_series)?;
+                // replace_or_add now takes (name, &series)
+                df_all.replace_or_add(col.clone().into(), new_series)?;
             }
         }
         df_all
     } else {
         // Drop columns entirely
-        let mut keep_cols: Vec<Series> = Vec::new();
+        let mut keep_cols: Vec<Column> = Vec::new();
         for name in df_all.get_column_names() {
             if !columns.iter().any(|c| c.as_str() == name.as_str()) {
-                keep_cols.push(df_all.column(name.as_str())?.clone());
+                let c: Column = df_all.column(name.as_str())?.clone();
+                keep_cols.push(c);
             }
         }
-        DataFrame::new(keep_cols.into_iter().map(|s| s.into()).collect())?
+        DataFrame::new(keep_cols)?
     };
     let guard = store.0.lock();
     guard.rewrite_table_df(&database, new_df)?;
