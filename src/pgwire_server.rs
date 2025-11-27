@@ -402,12 +402,16 @@ async fn run_query_loop(socket: &mut tokio::net::TcpStream, store: &SharedStore,
             }
             b'H' => { // Flush
                 debug!(target: "pgwire", "conn_id={} handling Flush message", conn_id);
+                // Read and discard the message length (Flush has no additional payload)
+                let _len = match read_u32(socket).await { Ok(v) => v, Err(e) => { error!(target:"pgwire", "read_u32 for H failed: {}", e); break; } };
                 // Flush pending output; per protocol, no response is sent for Flush itself
                 if let Err(e) = socket.flush().await { error!("pgwire: flush error: {}", e); }
                 cycle_summary.push_str("H; ");
             }
             b'S' => { // Sync
                 debug!(target: "pgwire", "conn_id={} handling Sync message", conn_id);
+                // Read and discard the message length (Sync has no additional payload)
+                let _len = match read_u32(socket).await { Ok(v) => v, Err(e) => { error!(target:"pgwire", "read_u32 for S failed: {}", e); break; } };
                 state.in_error = false;
                 if let Err(e) = send_ready(socket).await { error!(target:"pgwire", "send_ready error: {}", e); break; }
                 cycle_summary.push_str("S ready; ");
@@ -430,6 +434,8 @@ async fn run_query_loop(socket: &mut tokio::net::TcpStream, store: &SharedStore,
             }
             b'X' => { 
                 debug!(target: "pgwire", "conn_id={} received Terminate message, closing connection", conn_id);
+                // Read and discard the message length (Terminate has no additional payload)
+                let _len = match read_u32(socket).await { Ok(v) => v, Err(e) => { error!(target:"pgwire", "read_u32 for X failed: {}", e); break; } };
                 debug!(target: "pgwire", "conn_id={} snapshot on exit: db='{}' schema='{}' stmts={} portals={} in_error={} last_msg={} last_err='{}'",
                     conn_id,
                     state.current_database,
@@ -1149,7 +1155,7 @@ async fn handle_execute(socket: &mut tokio::net::TcpStream, store: &SharedStore,
                 (Vec::new(), Vec::new())
             };
             if is_select_like && (!data.is_empty() || !cols.is_empty()) {
-                send_row_description(socket, &cols).await?;
+                // Note: RowDescription was already sent during Describe phase; only send DataRow here
                 for row in data.iter() { send_data_row(socket, row).await?; }
             }
             // Build a generic CommandComplete tag consistent with simple query
