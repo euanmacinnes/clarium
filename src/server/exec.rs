@@ -677,15 +677,57 @@ pub async fn execute_query(store: &SharedStore, text: &str) -> Result<Value> {
         }
         Command::CreateTable { table, primary_key, partitions } => {
             // Regular table: no .time suffix; initialize schema.json (tableType=regular)
+            // Add detailed debug/info so pgwire/SeaORM paths can verify actions taken.
+            use std::{fs, path::PathBuf};
             debug!(target: "clarium::exec", "CreateTable: begin table='{}' pk={:?} partitions={:?}", table, primary_key, partitions);
-            let guard = store.0.lock();
+
+            // Resolve filesystem paths for diagnostics (before creating)
+            let (_dir_path_before, exists_before) = {
+                let g = store.0.lock();
+                let root = g.root_path().clone();
+                let dir: PathBuf = root.join(table.replace('/', std::path::MAIN_SEPARATOR.to_string().as_str()));
+                let ex = dir.exists();
+                (dir, ex)
+            };
+            info!(target: "clarium::ddl", "CREATE TABLE requested table='{}' existed_before={}", table, exists_before);
+
             if table.ends_with(".time") { anyhow::bail!("CREATE TABLE cannot target a .time table"); }
-            guard.create_table(&table)?;
-            debug!(target: "clarium::exec", "CreateTable: directory/schema ensured for table='{}'", table);
-            if primary_key.is_some() || partitions.is_some() {
-                guard.set_table_metadata(&table, primary_key, partitions)?;
-                debug!(target: "clarium::exec", "CreateTable: metadata saved for table='{}'", table);
+
+            // Create the table directory and initial schema via store
+            {
+                let guard = store.0.lock();
+                guard.create_table(&table)?;
+                if primary_key.is_some() || partitions.is_some() {
+                    guard.set_table_metadata(&table, primary_key, partitions)?;
+                }
             }
+
+            // Post-create diagnostics
+            let (exists_after, schema_path, schema_summary) = {
+                let g = store.0.lock();
+                let root = g.root_path().clone();
+                let dir: PathBuf = root.join(table.replace('/', std::path::MAIN_SEPARATOR.to_string().as_str()));
+                let sp = dir.join("schema.json");
+                let mut summary = String::new();
+                if sp.exists() {
+                    if let Ok(text) = fs::read_to_string(&sp) {
+                        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) {
+                            if let Some(obj) = json.as_object() {
+                                let mut cols: Vec<String> = obj
+                                    .iter()
+                                    .filter_map(|(k, v)| { let ty = v.as_str().unwrap_or(""); if k != "PRIMARY" { Some(format!("{}:{}", k, ty)) } else { None } })
+                                    .collect();
+                                cols.sort();
+                                summary = format!("cols={} [{}]", cols.len(), cols.join(", "));
+                            }
+                        }
+                    }
+                }
+                (dir.exists(), sp, summary)
+            };
+
+            info!(target: "clarium::ddl", "CREATE TABLE finalized table='{}' existed_after={} schema='{}' {}",
+                table, exists_after, schema_path.display(), schema_summary);
             debug!(target: "clarium::exec", "CreateTable: success table='{}'", table);
             Ok(serde_json::json!({"status":"ok"}))
         }
@@ -1131,3 +1173,6 @@ fn split_col_def(s: &str) -> (String, String) {
 mod tests;
 
 
+
+// Tracing macros for diagnostics (debug is already imported earlier in this module)
+use tracing::{info, warn, error};

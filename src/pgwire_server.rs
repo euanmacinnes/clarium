@@ -8,7 +8,7 @@ use anyhow::{anyhow, Result, bail};
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tracing::{error, info, debug};
+use tracing::{error, info, debug, warn};
 
 use crate::{storage::{SharedStore, Record}, server::exec};
 use regex::Regex;
@@ -128,7 +128,7 @@ async fn handle_conn(socket: &mut tokio::net::TcpStream, store: SharedStore, con
                 .or_else(|| params.get("dbname").cloned())
                 .unwrap_or_else(|| "clarium".to_string());
             let mut state = ConnState { current_database: db, current_schema: "public".to_string(), statements: HashMap::new(), portals: HashMap::new(), in_error: false };
-            run_query_loop(socket, &store, &user, &mut state).await?;
+            run_query_loop(socket, &store, &user, &mut state, conn_id).await?;
             Ok(())
         } else {
             // Unknown 4-byte request; continue without auth (shouldn't happen)
@@ -161,7 +161,7 @@ async fn handle_conn(socket: &mut tokio::net::TcpStream, store: SharedStore, con
             .or_else(|| params.get("dbname").cloned())
             .unwrap_or_else(|| "clarium".to_string());
         let mut state = ConnState { current_database: db, current_schema: "public".to_string(), statements: HashMap::new(), portals: HashMap::new(), in_error: false };
-        run_query_loop(socket, &store, &user, &mut state).await?;
+        run_query_loop(socket, &store, &user, &mut state, conn_id).await?;
         Ok(())
     }
 }
@@ -269,79 +269,182 @@ async fn send_bind_complete(socket: &mut tokio::net::TcpStream) -> Result<()> {
     write_i32(socket, 4).await 
 }
 async fn send_close_complete(socket: &mut tokio::net::TcpStream) -> Result<()> { socket.write_all(b"3").await?; write_i32(socket, 4).await }
-async fn send_no_data(socket: &mut tokio::net::TcpStream) -> Result<()> { socket.write_all(b"n").await?; write_i32(socket, 4).await }
+async fn send_no_data(socket: &mut tokio::net::TcpStream) -> Result<()> {
+    debug!(target: "pgwire", "sending NoData (len=4)");
+    socket.write_all(b"n").await?; write_i32(socket, 4).await
+}
 async fn send_parameter_description(socket: &mut tokio::net::TcpStream, param_types: &[i32]) -> Result<()> {
+    debug!(target: "pgwire", "sending ParameterDescription ({} params)", param_types.len());
     socket.write_all(b"t").await?;
     let mut payload = Vec::new();
     let n = param_types.len() as i16;
     payload.extend_from_slice(&n.to_be_bytes());
     for oid in param_types { payload.extend_from_slice(&oid.to_be_bytes()); }
-    write_i32(socket, (payload.len() as i32) + 4).await?;
+    let total_len = (payload.len() as i32) + 4;
+    debug!(target: "pgwire", "ParameterDescription payload_len={} total_frame_len={}", payload.len(), total_len);
+    write_i32(socket, total_len).await?;
     socket.write_all(&payload).await?;
     Ok(())
 }
 
-async fn run_query_loop(socket: &mut tokio::net::TcpStream, store: &SharedStore, user: &str, state: &mut ConnState) -> Result<()> {
-    debug!(target: "pgwire", "entering query loop for user '{}' (db='{}', schema='{}')", user, state.current_database, state.current_schema);
+async fn run_query_loop(socket: &mut tokio::net::TcpStream, store: &SharedStore, user: &str, state: &mut ConnState, conn_id: u64) -> Result<()> {
+    debug!(target: "pgwire", "conn_id={} entering query loop for user '{}' (db='{}', schema='{}')", conn_id, user, state.current_database, state.current_schema);
+    // Accumulate a simple cycle summary between Sync boundaries to quickly verify message order.
+    // Emitted when Sync -> ReadyForQuery completes.
+    let mut cycle_summary = String::new();
+    // Track last handled message and last error text for exit snapshot
+    let mut last_msg: Option<u8> = None;
+    let mut last_err: Option<String> = None;
     loop {
         let mut tag = [0u8; 1];
-        if socket.read_exact(&mut tag).await.is_err() { 
-            debug!(target: "pgwire", "connection closed or read error, exiting query loop");
-            break; 
+        match socket.read_exact(&mut tag).await {
+            Ok(_) => {}
+            Err(e) => {
+                if !cycle_summary.is_empty() {
+                    debug!(target: "pgwire", "conn_id={} cycle(partial): {}", conn_id, cycle_summary.trim());
+                    cycle_summary.clear();
+                }
+                warn!(target: "pgwire", "conn_id={} read_exact(tag) failed: {} (os_error={:?}); exiting query loop", conn_id, e, e.raw_os_error());
+                debug!(target: "pgwire", "conn_id={} snapshot on exit: db='{}' schema='{}' stmts={} portals={} in_error={} last_msg={} last_err='{}'",
+                    conn_id,
+                    state.current_database,
+                    state.current_schema,
+                    state.statements.len(),
+                    state.portals.len(),
+                    state.in_error,
+                    last_msg.map(|b| (b as char).to_string()).unwrap_or_else(|| "-".into()),
+                    last_err.clone().unwrap_or_else(|| "".into())
+                );
+                break;
+            }
         }
-        debug!(target: "pgwire", "received message type byte={} (as char='{}')", tag[0], tag[0] as char);
+        debug!(target: "pgwire", "conn_id={} received message type byte={} (as char='{}')", conn_id, tag[0], tag[0] as char);
+        last_msg = Some(tag[0]);
         // Detect zero byte as potential connection closure (client side closed)
         if tag[0] == 0 {
-            debug!(target: "pgwire", "received zero byte (likely connection closing), exiting query loop");
+            if !cycle_summary.is_empty() {
+                debug!(target: "pgwire", "conn_id={} cycle(partial): {}", conn_id, cycle_summary.trim());
+                cycle_summary.clear();
+            }
+            debug!(target: "pgwire", "conn_id={} received zero byte (likely connection closing), exiting query loop", conn_id);
+            debug!(target: "pgwire", "conn_id={} snapshot on exit: db='{}' schema='{}' stmts={} portals={} in_error={} last_msg={} last_err='{}'",
+                conn_id,
+                state.current_database,
+                state.current_schema,
+                state.statements.len(),
+                state.portals.len(),
+                state.in_error,
+                last_msg.map(|b| (b as char).to_string()).unwrap_or_else(|| "-".into()),
+                last_err.clone().unwrap_or_else(|| "".into())
+            );
             break;
         }
         match tag[0] {
             b'Q' => {
-                debug!(target: "pgwire", "handling simple Query message");
-                let len = read_u32(socket).await?;
+                debug!(target: "pgwire", "conn_id={} handling simple Query message", conn_id);
+                let len = match read_u32(socket).await { Ok(v) => v, Err(e) => { error!(target:"pgwire", "read_u32 for Q failed: {}", e); break; } };
                 let mut qbuf = vec![0u8; (len - 4) as usize];
-                socket.read_exact(&mut qbuf).await?;
+                if let Err(e) = socket.read_exact(&mut qbuf).await { error!(target:"pgwire", "read_exact(query payload) failed: {}", e); break; }
                 if let Some(pos) = qbuf.iter().position(|&b| b == 0) { qbuf.truncate(pos); }
                 let query_str = String::from_utf8(qbuf).unwrap_or_default();
-                handle_query(socket, store, user, state, &query_str).await?;
+                if let Err(e) = handle_query(socket, store, user, state, &query_str).await {
+                    error!(target: "pgwire", "handle_query error: {}", e);
+                    let _ = send_error(socket, &format!("{}", e)).await; state.in_error = true;
+                    last_err = Some(e.to_string());
+                    cycle_summary.push_str("Q err; ");
+                } else {
+                    cycle_summary.push_str("Q ok; ");
+                }
             }
             b'P' => { // Parse
-                debug!(target: "pgwire", "handling Parse message");
-                handle_parse(socket, state).await?;
+                debug!(target: "pgwire", "conn_id={} handling Parse message", conn_id);
+                if let Err(e) = handle_parse(socket, state).await {
+                    error!(target: "pgwire", "handle_parse error: {}", e);
+                    let _ = send_error(socket, &format!("{}", e)).await; state.in_error = true;
+                    last_err = Some(e.to_string());
+                    cycle_summary.push_str("P err; ");
+                } else {
+                    cycle_summary.push_str("P ok; ");
+                }
             }
             b'B' => { // Bind
-                debug!(target: "pgwire", "handling Bind message");
-                handle_bind(socket, state).await?;
+                debug!(target: "pgwire", "conn_id={} handling Bind message", conn_id);
+                if let Err(e) = handle_bind(socket, state).await {
+                    error!(target: "pgwire", "handle_bind error: {}", e);
+                    let _ = send_error(socket, &format!("{}", e)).await; state.in_error = true;
+                    last_err = Some(e.to_string());
+                    cycle_summary.push_str("B err; ");
+                } else {
+                    cycle_summary.push_str("B ok; ");
+                }
             }
             b'D' => { // Describe
-                debug!(target: "pgwire", "handling Describe message");
-                handle_describe(socket, store, state).await?;
+                debug!(target: "pgwire", "conn_id={} handling Describe message", conn_id);
+                if let Err(e) = handle_describe(socket, store, state).await {
+                    error!(target: "pgwire", "handle_describe error: {}", e);
+                    let _ = send_error(socket, &format!("{}", e)).await; state.in_error = true;
+                    last_err = Some(e.to_string());
+                    cycle_summary.push_str("D err; ");
+                } else {
+                    cycle_summary.push_str("D ok; ");
+                }
             }
             b'E' => { // Execute
-                debug!(target: "pgwire", "handling Execute message");
-                handle_execute(socket, store, user, state).await?;
+                debug!(target: "pgwire", "conn_id={} handling Execute message", conn_id);
+                if let Err(e) = handle_execute(socket, store, user, state).await {
+                    error!(target: "pgwire", "handle_execute error: {}", e);
+                    let _ = send_error(socket, &format!("{}", e)).await; state.in_error = true;
+                    last_err = Some(e.to_string());
+                    cycle_summary.push_str("E err; ");
+                } else {
+                    cycle_summary.push_str("E ok; ");
+                }
             }
             b'H' => { // Flush
-                debug!(target: "pgwire", "handling Flush message");
+                debug!(target: "pgwire", "conn_id={} handling Flush message", conn_id);
                 // Flush pending output; per protocol, no response is sent for Flush itself
                 if let Err(e) = socket.flush().await { error!("pgwire: flush error: {}", e); }
+                cycle_summary.push_str("H; ");
             }
             b'S' => { // Sync
-                debug!(target: "pgwire", "handling Sync message");
+                debug!(target: "pgwire", "conn_id={} handling Sync message", conn_id);
                 state.in_error = false;
-                send_ready(socket).await?;
+                if let Err(e) = send_ready(socket).await { error!(target:"pgwire", "send_ready error: {}", e); break; }
+                cycle_summary.push_str("S ready; ");
+                // Emit the summary of this extended-protocol cycle
+                if !cycle_summary.is_empty() {
+                    debug!(target: "pgwire", "conn_id={} cycle: {}", conn_id, cycle_summary.trim());
+                    cycle_summary.clear();
+                }
             }
             b'C' => { // Close
-                debug!(target: "pgwire", "handling Close message");
-                handle_close(socket, state).await?;
+                debug!(target: "pgwire", "conn_id={} handling Close message", conn_id);
+                if let Err(e) = handle_close(socket, state).await {
+                    error!(target: "pgwire", "handle_close error: {}", e);
+                    let _ = send_error(socket, &format!("{}", e)).await; state.in_error = true;
+                    last_err = Some(e.to_string());
+                    cycle_summary.push_str("C err; ");
+                } else {
+                    cycle_summary.push_str("C ok; ");
+                }
             }
             b'X' => { 
-                debug!(target: "pgwire", "received Terminate message, closing connection");
+                debug!(target: "pgwire", "conn_id={} received Terminate message, closing connection", conn_id);
+                debug!(target: "pgwire", "conn_id={} snapshot on exit: db='{}' schema='{}' stmts={} portals={} in_error={} last_msg={} last_err='{}'",
+                    conn_id,
+                    state.current_database,
+                    state.current_schema,
+                    state.statements.len(),
+                    state.portals.len(),
+                    state.in_error,
+                    last_msg.map(|b| (b as char).to_string()).unwrap_or_else(|| "-".into()),
+                    last_err.clone().unwrap_or_else(|| "".into())
+                );
                 break; 
             }
             _ => { 
                 // Unknown message: send ErrorResponse and enter error state; client should follow with Sync
-                debug!(target: "pgwire", "unknown message type byte={} (as char='{}'), sending ErrorResponse and waiting for Sync", tag[0], tag[0] as char);
+                debug!(target: "pgwire", "conn_id={} unknown message type byte={} (as char='{}'), sending ErrorResponse and waiting for Sync", conn_id, tag[0], tag[0] as char);
                 if pgwire_trace_enabled() {
                     // Try to read the length to dump some bytes (non-destructive best-effort)
                     if let Ok(len) = read_u32(socket).await { 
@@ -353,10 +456,12 @@ async fn run_query_loop(socket: &mut tokio::net::TcpStream, store: &SharedStore,
                 }
                 send_error(socket, "unsupported message type").await?;
                 state.in_error = true;
+                last_err = Some("unsupported message type".to_string());
+                cycle_summary.push_str("? err; ");
             }
         }
     }
-    debug!(target: "pgwire", "exiting query loop for user '{}'", user);
+    debug!(target: "pgwire", "conn_id={} exiting query loop for user '{}'", conn_id, user);
     Ok(())
 }
 
@@ -365,7 +470,7 @@ async fn send_ready(socket: &mut tokio::net::TcpStream) -> Result<()> {
     socket.write_all(b"Z").await?;
     write_i32(socket, 5).await?; // len
     socket.write_all(b"I").await?; // idle
-    socket.flush().await?;
+    if let Err(e) = socket.flush().await { error!(target:"pgwire", "flush ReadyForQuery failed: {}", e); return Err(e.into()); }
     debug!(target: "pgwire", "ReadyForQuery flushed to client");
     Ok(())
 }
@@ -382,44 +487,56 @@ async fn write_parameter(socket: &mut tokio::net::TcpStream, k: &str, v: &str) -
 
 
 async fn handle_query(socket: &mut tokio::net::TcpStream, store: &SharedStore, _username: &str, state: &mut ConnState, q: &str) -> Result<()> {
-    // Simple Query cycle: execute one SQL string and always finish with ReadyForQuery.
-    // Keep pgwire thin: delegate all command handling to the common server exec.
-    let q_trim = q.trim().trim_end_matches(';').trim();
-    debug!("pgwire simple query: {}", q_trim);
-
-    // Normalize with session defaults (db/schema)
-    let q_effective = exec::normalize_query_with_defaults(q_trim, &state.current_database, &state.current_schema);
-
-    // Delegate execution to server exec; it handles SET/USE/CREATE/SELECT/SHOW/etc.
-    match exec::execute_query(store, &q_effective).await {
-        Ok(val) => {
-            let upper = q_trim.chars().take(16).collect::<String>().to_uppercase();
-            // Convert JSON to a simple table for pgwire transport
-            let (cols, data) = match &val {
-                serde_json::Value::Array(arr) => to_table(arr.clone())?,
-                serde_json::Value::Object(_) => to_table(vec![val.clone()])?,
-                _ => to_table(vec![val.clone()])?,
-            };
-            if !data.is_empty() || !cols.is_empty() {
-                send_row_description(socket, &cols).await?;
-                for row in data.iter() { send_data_row(socket, row).await?; }
+    // Simple Query cycle: may contain one or multiple semicolon-separated statements.
+    // For each statement: emit RowDescription/DataRow only for SELECT-like; always emit CommandComplete.
+    // After processing all statements in the message, emit a single ReadyForQuery.
+    let sql = q;
+    // A very small splitter that respects semicolons and trims whitespace; it does not handle complex cases
+    // like semicolons inside quoted strings (rare in client-generated SQL for our use). Good enough for now.
+    let parts: Vec<String> = sql
+        .split(';')
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+        .collect();
+    debug!("pgwire simple query: {} statement(s)", parts.len());
+    for (idx, stmt) in parts.iter().enumerate() {
+        let q_trim = stmt.trim();
+        debug!("pgwire simple query [{}]: {}", idx, q_trim);
+        let q_effective = exec::normalize_query_with_defaults(q_trim, &state.current_database, &state.current_schema);
+        match exec::execute_query(store, &q_effective).await {
+            Ok(val) => {
+                let upper = q_trim.chars().take(32).collect::<String>().to_uppercase();
+                let is_select_like = upper.starts_with("SELECT") || upper.starts_with("WITH ");
+                let (cols, data) = if is_select_like {
+                    match &val {
+                        serde_json::Value::Array(arr) => to_table(arr.clone())?,
+                        serde_json::Value::Object(_) => to_table(vec![val.clone()])?,
+                        _ => to_table(vec![val.clone()])?,
+                    }
+                } else { (Vec::new(), Vec::new()) };
+                if is_select_like && (!data.is_empty() || !cols.is_empty()) {
+                    send_row_description(socket, &cols).await?;
+                    for row in data.iter() { send_data_row(socket, row).await?; }
+                }
+                let tag = if upper.starts_with("SELECT") { format!("SELECT {}", data.len()) }
+                    else if upper.starts_with("CALCULATE") { let saved = match &val { serde_json::Value::Object(m) => m.get("saved").and_then(|v| v.as_u64()).unwrap_or(0), _ => 0 }; format!("CALCULATE {}", saved) }
+                    else if upper.starts_with("DELETE") { "DELETE".to_string() }
+                    else if upper.starts_with("SCHEMA") || upper.starts_with("DATABASE") { format!("OK {}", data.len()) }
+                    else if upper.starts_with("SET") { "SET".to_string() }
+                    else if upper.starts_with("CREATE TABLE") { "CREATE TABLE".to_string() }
+                    else if data.is_empty() { "OK".to_string() } else { format!("OK {}", data.len()) };
+                debug!("pgwire simple query [{}]: CommandComplete tag='{}'", idx, tag);
+                send_command_complete(socket, &tag).await?;
             }
-            // Build a generic CommandComplete tag. Specific semantics are decided by server exec outputs.
-            let tag = if upper.starts_with("SELECT") { format!("SELECT {}", data.len()) }
-                else if upper.starts_with("CALCULATE") { let saved = match &val { serde_json::Value::Object(m) => m.get("saved").and_then(|v| v.as_u64()).unwrap_or(0), _ => 0 }; format!("CALCULATE {}", saved) }
-                else if upper.starts_with("DELETE") { "DELETE".to_string() }
-                else if upper.starts_with("SCHEMA") || upper.starts_with("DATABASE") { format!("OK {}", data.len()) }
-                else if upper.starts_with("SET") { "SET".to_string() }
-                else if upper.starts_with("CREATE TABLE") { "CREATE TABLE".to_string() }
-                else if data.is_empty() { "OK".to_string() } else { format!("OK {}", data.len()) };
-            send_command_complete(socket, &tag).await?;
-        }
-        Err(e) => {
-            send_error(socket, &format!("{}", e)).await?;
-            state.in_error = true;
+            Err(e) => {
+                debug!("pgwire simple query [{}]: error: {}", idx, e);
+                send_error(socket, &format!("{}", e)).await?;
+                state.in_error = true;
+            }
         }
     }
-    // Always finish simple query with ReadyForQuery
+    // Finish the Simple Query message cycle
     send_ready(socket).await?;
     Ok(())
 }
@@ -464,6 +581,7 @@ fn to_table(rows: Vec<serde_json::Value>) -> Result<(Vec<String>, Vec<Vec<Option
 }
 
 async fn send_row_description(socket: &mut tokio::net::TcpStream, cols: &[String]) -> Result<()> {
+    debug!(target: "pgwire", "sending RowDescription ({} columns): {:?}", cols.len(), cols);
     socket.write_all(b"T").await?;
     // Build payload
     let mut payload = Vec::new();
@@ -478,7 +596,9 @@ async fn send_row_description(socket: &mut tokio::net::TcpStream, cols: &[String
         payload.extend_from_slice(&0i32.to_be_bytes()); // type modifier
         payload.extend_from_slice(&0i16.to_be_bytes()); // text format
     }
-    write_i32(socket, (payload.len() + 4) as i32).await?;
+    let total_len = (payload.len() + 4) as i32;
+    debug!(target: "pgwire", "RowDescription payload_len={} total_frame_len={}", payload.len(), total_len);
+    write_i32(socket, total_len).await?;
     socket.write_all(&payload).await?;
     Ok(())
 }
@@ -499,7 +619,9 @@ async fn send_data_row(socket: &mut tokio::net::TcpStream, row: &[Option<String>
             }
         }
     }
-    write_i32(socket, (payload.len() + 4) as i32).await?;
+    let total_len = (payload.len() + 4) as i32;
+    debug!(target: "pgwire", "DataRow payload_len={} total_frame_len={}", payload.len(), total_len);
+    write_i32(socket, total_len).await?;
     socket.write_all(&payload).await?;
     Ok(())
 }
@@ -508,7 +630,9 @@ async fn send_command_complete(socket: &mut tokio::net::TcpStream, tag: &str) ->
     socket.write_all(b"C").await?;
     let mut payload = Vec::new();
     payload.extend_from_slice(tag.as_bytes()); payload.push(0);
-    write_i32(socket, (payload.len() + 4) as i32).await?;
+    let total_len = (payload.len() + 4) as i32;
+    debug!(target: "pgwire", "CommandComplete tag='{}' payload_len={} total_frame_len={}", tag, payload.len(), total_len);
+    write_i32(socket, total_len).await?;
     socket.write_all(&payload).await?;
     Ok(())
 }
@@ -688,6 +812,35 @@ async fn handle_parse(socket: &mut tokio::net::TcpStream, state: &mut ConnState)
     let ntypes = read_i16_from(&buf, &mut i)? as usize;
     let mut param_types: Vec<i32> = Vec::with_capacity(ntypes);
     for _ in 0..ntypes { param_types.push(read_i32_from(&buf, &mut i)?); }
+    // If client did not provide parameter types, infer from $n placeholders and casts
+    if param_types.is_empty() {
+        let re_dollar = Regex::new(r"\$([1-9][0-9]*)").unwrap();
+        let mut max_idx = 0usize;
+        for cap in re_dollar.captures_iter(&sql) {
+            if let Some(m) = cap.get(1) {
+                if let Ok(idx) = m.as_str().parse::<usize>() { if idx > max_idx { max_idx = idx; } }
+            }
+        }
+        if max_idx > 0 {
+            // default to TEXT
+            param_types = vec![PG_TYPE_TEXT; max_idx];
+            // refine using explicit casts like $1::int8, $2::float8, etc.
+            let re_cast = Regex::new(r"\$([1-9][0-9]*)::([A-Za-z0-9_]+)").unwrap();
+            for cap in re_cast.captures_iter(&sql) {
+                let idx: usize = cap.get(1).and_then(|m| m.as_str().parse().ok()).unwrap_or(0);
+                let ty = cap.get(2).map(|m| m.as_str().to_ascii_lowercase()).unwrap_or_default();
+                let oid = match ty.as_str() {
+                    "int8" | "bigint" => 20,
+                    "float8" | "double" | "double precision" => 701,
+                    "text" | "varchar" | "character varying" => 25,
+                    "bool" | "boolean" => 16,
+                    _ => PG_TYPE_TEXT,
+                };
+                if idx > 0 && idx - 1 < param_types.len() { param_types[idx - 1] = oid; }
+            }
+            debug!("pgwire parse: inferred {} parameter(s) with types {:?}", max_idx, param_types);
+        }
+    }
     // store
     if stmt_name.is_empty() {
         state.statements.insert("".into(), PreparedStatement { name: "".into(), sql, param_types });
@@ -721,14 +874,86 @@ async fn handle_bind(socket: &mut tokio::net::TcpStream, state: &mut ConnState) 
     // parameter values
     let n_params = r_i16(&buf, &mut i)? as usize;
     let mut params: Vec<Option<String>> = Vec::with_capacity(n_params);
-    for _ in 0..n_params {
+
+    // Resolve the prepared statement for OID hints
+    let stmt = state.statements.get(&stmt_name).or_else(|| state.statements.get(""));
+    let stmt_param_types: Vec<i32> = stmt.map(|s| s.param_types.clone()).unwrap_or_default();
+
+    // Determine effective parameter formats per-parameter per protocol rules:
+    // - if n_formats == 0: all text (0)
+    // - if n_formats == 1: that single code applies to all parameters
+    // - if n_formats == n_params: use per-parameter codes
+    // - otherwise: protocol error
+    let effective_formats: Vec<i16> = if n_formats == 0 {
+        vec![0; n_params]
+    } else if n_formats == 1 {
+        vec![param_formats.get(0).cloned().unwrap_or(0); n_params]
+    } else if n_formats == n_params {
+        param_formats.clone()
+    } else {
+        send_error(socket, "invalid parameter formats").await?;
+        state.in_error = true;
+        return Ok(());
+    };
+
+    // Helper: decode a binary parameter into a text literal representation suitable for our engine
+    fn decode_binary_param(oid: i32, bytes: &[u8]) -> Option<String> {
+        match oid {
+            16 => { // bool
+                if bytes.len() == 1 { Some(if bytes[0] != 0 { "true".to_string() } else { "false".to_string() }) } else { None }
+            }
+            20 => { // int8
+                if bytes.len() == 8 { Some(i64::from_be_bytes(bytes.try_into().ok()?).to_string()) } else { None }
+            }
+            21 => { // int2
+                if bytes.len() == 2 { Some(i16::from_be_bytes(bytes.try_into().ok()?).to_string()) } else { None }
+            }
+            23 => { // int4
+                if bytes.len() == 4 { Some(i32::from_be_bytes(bytes.try_into().ok()?).to_string()) } else { None }
+            }
+            700 => { // float4
+                if bytes.len() == 4 { Some(f32::from_bits(u32::from_be_bytes(bytes.try_into().ok()?)).to_string()) } else { None }
+            }
+            701 => { // float8
+                if bytes.len() == 8 { Some(f64::from_bits(u64::from_be_bytes(bytes.try_into().ok()?)).to_string()) } else { None }
+            }
+            25 | 1043 | 1042 => { // text, varchar, bpchar — in practice binary is just raw string bytes
+                Some(String::from_utf8_lossy(bytes).into_owned())
+            }
+            _ => None,
+        }
+    }
+
+    for pidx in 0..n_params {
         let sz = r_i32(&buf, &mut i)?;
-        if sz < 0 { params.push(None); }
-        else {
-            let bytes = r_bytes(&buf, &mut i, sz as usize)?;
-            // Only text (format 0) supported; if any format=1, reject after reading all
-            let s = String::from_utf8_lossy(&bytes).into_owned();
-            params.push(Some(s));
+        if sz < 0 {
+            params.push(None);
+            continue;
+        }
+        let bytes = r_bytes(&buf, &mut i, sz as usize)?;
+        let fmt = effective_formats.get(pidx).cloned().unwrap_or(0);
+        if fmt == 0 {
+            // text parameter
+            params.push(Some(String::from_utf8_lossy(&bytes).into_owned()));
+        } else {
+            // binary parameter
+            let oid = stmt_param_types.get(pidx).cloned().unwrap_or(0);
+            // Try decode using OID first
+            let decoded = if oid != 0 { decode_binary_param(oid, &bytes) } else { None };
+            let val = if let Some(s) = decoded {
+                s
+            } else {
+                // Fallback heuristics when OID is unknown
+                let s_opt = match bytes.len() {
+                    8 => Some(i64::from_be_bytes(bytes.clone().try_into().unwrap()).to_string()),
+                    4 => Some(i32::from_be_bytes(bytes.clone().try_into().unwrap()).to_string()),
+                    2 => Some(i16::from_be_bytes([bytes[0], bytes[1]]).to_string()),
+                    1 => Some((bytes[0] != 0).to_string()),
+                    _ => None,
+                };
+                s_opt.unwrap_or_else(|| String::from_utf8_lossy(&bytes).into_owned())
+            };
+            params.push(Some(val));
         }
     }
 
@@ -736,13 +961,7 @@ async fn handle_bind(socket: &mut tokio::net::TcpStream, state: &mut ConnState) 
     let n_rfmts = r_i16(&buf, &mut i)? as usize;
     let mut result_formats: Vec<i16> = Vec::with_capacity(n_rfmts);
     for _ in 0..n_rfmts { result_formats.push(r_i16(&buf, &mut i)?); }
-
-    // Validate formats: only text=0 allowed
-    if param_formats.contains(&1) || result_formats.contains(&1) {
-        send_error(socket, "binary formats are not supported").await?;
-        state.in_error = true;
-        return Ok(());
-    }
+    // We currently only emit text results; honor requested format but we will still send text rows.
 
     // Store portal
     let p = Portal { name: portal_name.clone(), stmt_name, params, param_formats, result_formats };
@@ -828,23 +1047,26 @@ fn substitute_placeholders(sql: &str, params: &[Option<String>]) -> Result<Strin
 }
 
 async fn describe_row_description(socket: &mut tokio::net::TcpStream, store: &SharedStore, state: &ConnState, sql: &str) -> Result<()> {
-    // Attempt to get column names by executing with LIMIT 0
+    // Attempt to infer column names for SELECT-like statements by delegating to the server
+    // executor and deriving a table shape from the first row. For non-SELECT, return NoData.
     let q = sql.trim();
     let up = q.to_uppercase();
     if up.starts_with("SELECT") || up.starts_with("WITH ") {
-        // Prefer parsing and executing via DataFrame path to preserve column order
         let q_eff = exec::normalize_query_with_defaults(q, &state.current_database, &state.current_schema);
-        if let Ok(crate::query::Command::Select(qo)) = crate::query::parse(&q_eff) {
-            match exec::execute_select_df(store, &qo) {
-                Ok(df) => {
-                    let cols: Vec<String> = df.get_column_names().into_iter().map(|s| s.to_string()).collect();
-                    if cols.is_empty() { return send_no_data(socket).await; }
-                    return send_row_description(socket, &cols).await;
-                }
-                Err(_) => { return send_no_data(socket).await; }
+        match exec::execute_query(store, &q_eff).await {
+            Ok(val) => {
+                let (cols, _data) = match &val {
+                    serde_json::Value::Array(arr) => to_table(arr.clone())?,
+                    serde_json::Value::Object(_) => to_table(vec![val.clone()])?,
+                    _ => to_table(vec![val.clone()])?,
+                };
+                if cols.is_empty() { return send_no_data(socket).await; }
+                return send_row_description(socket, &cols).await;
             }
-        } else {
-            return send_no_data(socket).await;
+            Err(_e) => {
+                // On error, fall back to NoData to keep the protocol moving
+                return send_no_data(socket).await;
+            }
         }
     } else {
         send_no_data(socket).await
@@ -856,7 +1078,7 @@ async fn handle_describe(socket: &mut tokio::net::TcpStream, store: &SharedStore
     let mut tag = [0u8;1]; socket.read_exact(&mut tag).await?;
     let name = read_cstring(socket).await?;
     debug!("pgwire describe: type='{}', name='{}'", tag[0] as char, name);
-    match tag[0] {
+    let res = match tag[0] {
         b'S' => {
             // prepared statement
             if let Some(stmt) = state.statements.get(&name) {
@@ -886,7 +1108,10 @@ async fn handle_describe(socket: &mut tokio::net::TcpStream, store: &SharedStore
             } else { send_no_data(socket).await }
         }
         _ => send_no_data(socket).await,
-    }
+    };
+    // Ensure frames are pushed promptly for Describe
+    if let Err(e) = socket.flush().await { error!("pgwire: flush error after Describe: {}", e); }
+    res
 }
 
 async fn handle_execute(socket: &mut tokio::net::TcpStream, store: &SharedStore, _user: &str, state: &mut ConnState) -> Result<()> {
@@ -906,18 +1131,24 @@ async fn handle_execute(socket: &mut tokio::net::TcpStream, store: &SharedStore,
     let q_trim = substituted.trim().trim_end_matches(';').trim();
     debug!("pgwire execute (portal='{}'): {}", portal_name, q_trim);
     let q_effective = exec::normalize_query_with_defaults(q_trim, &state.current_database, &state.current_schema);
+    debug!(target: "pgwire", "execute effective SQL: {}", q_effective);
 
     // Delegate execution to common server executor
     match exec::execute_query(store, &q_effective).await {
         Ok(val) => {
-            let upper = q_trim.chars().take(16).collect::<String>().to_uppercase();
-            // Convert JSON result to a simple table for transport
-            let (cols, data) = match &val {
-                serde_json::Value::Array(arr) => to_table(arr.clone())?,
-                serde_json::Value::Object(_) => to_table(vec![val.clone()])?,
-                _ => to_table(vec![val.clone()])?,
+            let upper = q_trim.chars().take(32).collect::<String>().to_uppercase();
+            let is_select_like = upper.starts_with("SELECT") || upper.starts_with("WITH ");
+            // Only SELECT-like statements should return RowDescription/DataRow in extended Execute
+            let (cols, data) = if is_select_like {
+                match &val {
+                    serde_json::Value::Array(arr) => to_table(arr.clone())?,
+                    serde_json::Value::Object(_) => to_table(vec![val.clone()])?,
+                    _ => to_table(vec![val.clone()])?,
+                }
+            } else {
+                (Vec::new(), Vec::new())
             };
-            if !data.is_empty() || !cols.is_empty() {
+            if is_select_like && (!data.is_empty() || !cols.is_empty()) {
                 send_row_description(socket, &cols).await?;
                 for row in data.iter() { send_data_row(socket, row).await?; }
             }
@@ -929,7 +1160,10 @@ async fn handle_execute(socket: &mut tokio::net::TcpStream, store: &SharedStore,
                 else if upper.starts_with("SET") { "SET".to_string() }
                 else if upper.starts_with("CREATE TABLE") { "CREATE TABLE".to_string() }
                 else if data.is_empty() { "OK".to_string() } else { format!("OK {}", data.len()) };
+            debug!(target: "pgwire", "Execute CommandComplete tag='{}'", tag);
             send_command_complete(socket, &tag).await?;
+            // Proactively flush after Execute to ensure client receives frames before Sync
+            if let Err(e) = socket.flush().await { error!(target: "pgwire", "flush after Execute failed: {}", e); }
         }
         Err(e) => { send_error(socket, &format!("{}", e)).await?; state.in_error = true; }
     }

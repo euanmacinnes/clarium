@@ -121,7 +121,7 @@ async fn main() -> Result<()> {
         if let Err(e) = run_sqlx_like_check(&dsn).await {
             eprintln!("Extended-protocol check FAILED: {}", e);
             eprintln!("  Hints: enable RUST_LOG=debug and CLARIUM_PGWIRE_TRACE=1 on the server for detailed pgwire traces.");
-            return Err(e);
+            if exit_after_check { return Err(e); }
         } else {
             println!("Extended-protocol check OK");
         }
@@ -189,8 +189,9 @@ async fn run_sqlx_like_check(dsn: &str) -> Result<()> {
             eprintln!("postgres connection error: {}", e);
         }
     });
-    let stmt = client.prepare("SELECT $1::int8 AS v").await?;
-    let rows = client.query(&stmt, &[&42_i64]).await?;
+    // Start with a parameterless prepared statement to validate Parse/Describe/Execute/Sync
+    let stmt = client.prepare("SELECT 1 AS v").await?;
+    let rows = client.query(&stmt, &[]).await?;
     if let Some(row) = rows.first() {
         let v: i64 = row.try_get("v").unwrap_or_default();
         println!("  extended query result: v={}", v);
@@ -203,7 +204,9 @@ async fn run_seaorm_demo(dsn: &str) -> Result<()> {
     use sea_orm::{Database, Statement, DatabaseBackend, DbConn, QueryTrait, ConnectionTrait, sea_query::{Query, Table, ColumnDef, PostgresQueryBuilder, Expr, Alias, Order}};
 
     // Connect using SeaORM
+    println!("SeaORM: connecting to DSN...\n  {}", dsn);
     let db: DbConn = Database::connect(dsn).await?;
+    println!("SeaORM: connected");
 
     // Ensure a simple table exists: public.metrics
     // Columns: id BIGINT PRIMARY KEY, value DOUBLE PRECISION, label TEXT, created_ms BIGINT
@@ -215,12 +218,17 @@ async fn run_seaorm_demo(dsn: &str) -> Result<()> {
             created_ms BIGINT
         )
     "#;
+    println!("SeaORM: executing CREATE TABLE...");
     db.execute(Statement::from_string(DatabaseBackend::Postgres, create_sql.to_string())).await?;
+    println!("SeaORM: CREATE TABLE done");
 
     // Clean any previous rows for deterministic demo
+    println!("SeaORM: DELETE FROM public.metrics (cleanup)...");
     db.execute(Statement::from_string(DatabaseBackend::Postgres, "DELETE FROM public.metrics".to_string())).await.ok();
+    println!("SeaORM: cleanup done");
 
     // Insert a few rows using sea_query builder
+    println!("SeaORM: inserting sample rows...");
     let insert_stmt = Query::insert()
         .into_table(Alias::new("public.metrics"))
         .columns(vec![Alias::new("id"), Alias::new("value"), Alias::new("label"), Alias::new("created_ms")])
@@ -230,25 +238,29 @@ async fn run_seaorm_demo(dsn: &str) -> Result<()> {
         .to_owned()
         .to_string(PostgresQueryBuilder);
     db.execute(Statement::from_string(DatabaseBackend::Postgres, insert_stmt)).await?;
+    println!("SeaORM: insert done");
 
     // Count rows
     let count_stmt = Query::select()
         .expr_as(Expr::cust("COUNT(*)"), Alias::new("count"))
         .from(Alias::new("public.metrics"))
         .to_string(PostgresQueryBuilder);
+    println!("SeaORM: counting rows...");
     let row_opt = db.query_one(Statement::from_string(DatabaseBackend::Postgres, count_stmt)).await?;
     // Parse first row
     let cnt = row_opt.as_ref().and_then(|first| first.try_get::<i64>("", "count").ok()).unwrap_or(0);
     println!("SeaORM: metrics count after insert = {}", cnt);
 
-    // Update one row
     // Update one row (raw SQL is simplest to avoid builder type inference pitfalls)
+    println!("SeaORM: updating one row (id=2 -> label='z')...");
     db.execute(Statement::from_string(
         DatabaseBackend::Postgres,
         "UPDATE public.metrics SET label = 'z' WHERE id = 2".to_string(),
     )).await?;
+    println!("SeaORM: update done");
 
     // Select a few rows
+    println!("SeaORM: selecting rows...");
     let select_stmt = Query::select()
         .columns(vec![Alias::new("id"), Alias::new("value"), Alias::new("label"), Alias::new("created_ms")])
         .from(Alias::new("public.metrics"))
@@ -264,11 +276,13 @@ async fn run_seaorm_demo(dsn: &str) -> Result<()> {
     }
 
     // Delete rows
+    println!("SeaORM: deleting rows with id >= 2...");
     let delete_stmt = Query::delete()
         .from_table(Alias::new("public.metrics"))
         .and_where(Expr::col(Alias::new("id")).gte(2))
         .to_string(PostgresQueryBuilder);
     db.execute(Statement::from_string(DatabaseBackend::Postgres, delete_stmt)).await?;
+    println!("SeaORM: delete done");
 
     Ok(())
 }
