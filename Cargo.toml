@@ -40,6 +40,12 @@ path-absolutize = "3"
 
 # HTTP client for CLI interpreter connect mode
 reqwest = { version = "0.12", features = ["json", "cookies", "rustls-tls"] }
+tokio-tungstenite = { version = "0.23", default-features = false, features = ["connect", "rustls-tls-webpki-roots"] }
+tokio-postgres = { version = "0.7", features = ["runtime"] }
+urlencoding = "2"
+# Dev-only ORM testing (feature-gated)
+sea-orm = { version = "0.12", default-features = false, features = ["sqlx-postgres", "runtime-tokio-rustls"], optional = true }
+sea-query = { version = "0.30", optional = true }
 
 # Lua scripting engine for UDFs
 mlua = { version = "0.9", features = ["lua54", "vendored", "serialize"] }
@@ -54,6 +60,9 @@ codegen-units = 1
 pgwire = ["dep:pgwire"]
 # Build with pgwire enabled by default so the binary exposes pgwire unless disabled at runtime
 default = ["pgwire"]
+
+# Dev-only SeaORM runner in clarium_test_suite
+seaorm_dev = ["dep:sea-orm", "dep:sea-query"]
 
 [dev-dependencies]
 futures = "0.3.31"

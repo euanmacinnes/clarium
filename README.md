@@ -154,6 +154,28 @@ pgwire (optional PostgreSQL wire)
   - INSERT INTO clarium.public.metrics (_time, value, label) VALUES (extract(epoch from now())*1000, 1.23, 'a');
   - SELECT COUNT(*) FROM clarium.public.metrics;
 
+clarium_test_suite (server + pgwire connectivity helper)
+
+- A convenience binary that starts the clarium server (HTTP + pgwire) and optionally runs a quick connectivity check over postgres:// using tokio-postgres.
+- Default credentials are clarium/clarium; default database is clarium.
+- Usage examples:
+  - cargo run --bin clarium_test_suite -- --db-folder dbs --pg-port 5433 --http-port 7878
+  - cargo run --bin clarium_test_suite -- --check --exit-after-check
+  - cargo run --bin clarium_test_suite -- --pg-port 5440 --http-port 7888 --check --sql "SELECT COUNT(_time) FROM clarium/public/demo.time"
+- On startup it prints a DSN you can paste into psql/psycopg/SQLAlchemy, e.g.:
+  - postgres://clarium:clarium@127.0.0.1:5433/clarium?application_name=clarium_test_suite&sslmode=disable
+
+- Dev-only SeaORM demo:
+  - Feature-gated with `seaorm_dev` to keep ORM client code out of normal builds.
+  - Build and run a CRUD smoke test via SeaORM using the printed DSN:
+    - cargo run --bin clarium_test_suite --features seaorm_dev -- \
+      --seaorm-demo --exit-after-seaorm \
+      --db-folder dbs --pg-port 5433 --http-port 7878
+  - Flags:
+    - `--seaorm-demo`: run a small SeaORM flow (create table if not exists, insert, count, update, select, delete)
+    - `--exit-after-seaorm`: exit after the demo completes (handy for CI)
+  - Note: pgwire protocol coverage is evolving; if your client expects unsupported messages, this demo may fail until pgwire is extended accordingly.
+
 Container and deployment notes
 
 - Container base and runtime deps:

@@ -60,6 +60,13 @@ struct ConnState {
 
 async fn handle_conn(socket: &mut tokio::net::TcpStream, store: SharedStore) -> Result<()> {
     debug!("pgwire: new connection established");
+    // Trust mode for dev/test: when enabled via env, skip password auth entirely
+    fn pgwire_trust_enabled() -> bool {
+        std::env::var("CLARIUM_PGWIRE_TRUST").map(|v| {
+            let s = v.to_lowercase();
+            s == "1" || s == "true" || s == "yes" || s == "on"
+        }).unwrap_or(false)
+    }
     // Startup packet
     let len = read_u32(socket).await?;
     let mut buf = vec![0u8; (len - 4) as usize];
@@ -80,17 +87,21 @@ async fn handle_conn(socket: &mut tokio::net::TcpStream, store: SharedStore) -> 
             let user = params.get("user").cloned().unwrap_or_else(|| "".to_string());
             debug!("pgwire: startup params parsed, user='{}'", user);
             // Request cleartext password
-            request_password(socket).await?;
-            let password = read_password_message(socket).await?;
-            debug!("pgwire: password received, authenticating user '{}'", user);
-            let db_root = store.root_path();
-            let ok = crate::security::authenticate(db_root.to_string_lossy().as_ref(), &user, &password)?;
-            if !ok { 
-                debug!("pgwire: authentication failed for user '{}'", user);
-                send_error(socket, "authentication failed").await?; 
-                return Ok(()); 
+            if !pgwire_trust_enabled() {
+                request_password(socket).await?;
+                let password = read_password_message(socket).await?;
+                debug!("pgwire: password received, authenticating user '{}'", user);
+                let db_root = store.root_path();
+                let ok = crate::security::authenticate(db_root.to_string_lossy().as_ref(), &user, &password)?;
+                if !ok { 
+                    debug!("pgwire: authentication failed for user '{}'", user);
+                    send_error(socket, "authentication failed").await?; 
+                    return Ok(()); 
+                }
+                debug!("pgwire: authentication successful for user '{}'", user);
+            } else {
+                debug!("pgwire: TRUST mode enabled via CLARIUM_PGWIRE_TRUST; skipping password auth for user '{}'", user);
             }
-            debug!("pgwire: authentication successful for user '{}'", user);
             send_auth_ok_and_params(socket, &params).await?;
             // Initialize session state honoring dbname/database if provided
             let db = params.get("database").cloned()
@@ -109,17 +120,21 @@ async fn handle_conn(socket: &mut tokio::net::TcpStream, store: SharedStore) -> 
         let params = parse_startup_params(&buf);
         let user = params.get("user").cloned().unwrap_or_else(|| "".to_string());
         debug!("pgwire: normal startup (no SSL), user='{}'", user);
-        request_password(socket).await?;
-        let password = read_password_message(socket).await?;
-        debug!("pgwire: password received, authenticating user '{}'", user);
-        let db_root = store.root_path();
-        let ok = crate::security::authenticate(db_root.to_string_lossy().as_ref(), &user, &password)?;
-        if !ok { 
-            debug!("pgwire: authentication failed for user '{}'", user);
-            send_error(socket, "authentication failed").await?; 
-            return Ok(()); 
+        if !pgwire_trust_enabled() {
+            request_password(socket).await?;
+            let password = read_password_message(socket).await?;
+            debug!("pgwire: password received, authenticating user '{}'", user);
+            let db_root = store.root_path();
+            let ok = crate::security::authenticate(db_root.to_string_lossy().as_ref(), &user, &password)?;
+            if !ok { 
+                debug!("pgwire: authentication failed for user '{}'", user);
+                send_error(socket, "authentication failed").await?; 
+                return Ok(()); 
+            }
+            debug!("pgwire: authentication successful for user '{}'", user);
+        } else {
+            debug!("pgwire: TRUST mode enabled via CLARIUM_PGWIRE_TRUST; skipping password auth for user '{}'", user);
         }
-        debug!("pgwire: authentication successful for user '{}'", user);
         send_auth_ok_and_params(socket, &params).await?;
         // Initialize session state honoring dbname/database if provided
         let db = params.get("database").cloned()
