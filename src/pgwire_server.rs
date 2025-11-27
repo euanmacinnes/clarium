@@ -6,6 +6,7 @@
 
 use anyhow::{anyhow, Result, bail};
 use std::net::SocketAddr;
+use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tracing::{error, info, debug};
 
@@ -14,6 +15,20 @@ use regex::Regex;
 
 const PG_TYPE_TEXT: i32 = 25; // use text for all columns for simplicity
 
+static CONN_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
+
+fn pgwire_trace_enabled() -> bool {
+    std::env::var("CLARIUM_PGWIRE_TRACE").map(|v| {
+        let s = v.to_lowercase();
+        s == "1" || s == "true" || s == "yes" || s == "on"
+    }).unwrap_or(false)
+}
+
+fn hex_dump_prefix(data: &[u8], max: usize) -> String {
+    let take = data.len().min(max);
+    data.iter().take(take).map(|b| format!("{:02X}", b)).collect::<Vec<_>>().join(" ")
+}
+
 pub async fn start_pgwire(store: SharedStore, bind: &str) -> Result<()> {
     let addr: SocketAddr = bind.parse()?;
     let listener = tokio::net::TcpListener::bind(addr).await?;
@@ -21,9 +36,10 @@ pub async fn start_pgwire(store: SharedStore, bind: &str) -> Result<()> {
     loop {
         let (mut socket, peer) = listener.accept().await?;
         let store = store.clone();
+        let conn_id = CONN_ID_COUNTER.fetch_add(1, Ordering::Relaxed);
         tokio::spawn(async move {
-            if let Err(e) = handle_conn(&mut socket, store).await {
-                error!("pgwire connection {} error: {}", peer, e);
+            if let Err(e) = handle_conn(&mut socket, store, conn_id, &peer.to_string()).await {
+                error!(target: "pgwire", "conn_id={} peer={} error: {}", conn_id, peer, e);
                 let _ = socket.shutdown();
             }
         });
@@ -58,8 +74,8 @@ struct ConnState {
     in_error: bool,
 }
 
-async fn handle_conn(socket: &mut tokio::net::TcpStream, store: SharedStore) -> Result<()> {
-    debug!("pgwire: new connection established");
+async fn handle_conn(socket: &mut tokio::net::TcpStream, store: SharedStore, conn_id: u64, peer: &str) -> Result<()> {
+    debug!(target: "pgwire", "conn_id={} new connection established from {}", conn_id, peer);
     // Trust mode for dev/test: when enabled via env, skip password auth entirely
     fn pgwire_trust_enabled() -> bool {
         std::env::var("CLARIUM_PGWIRE_TRUST").map(|v| {
@@ -71,13 +87,17 @@ async fn handle_conn(socket: &mut tokio::net::TcpStream, store: SharedStore) -> 
     let len = read_u32(socket).await?;
     let mut buf = vec![0u8; (len - 4) as usize];
     socket.read_exact(&mut buf).await?;
-    debug!("pgwire: received startup packet, len={}", len);
+    if pgwire_trace_enabled() {
+        debug!(target: "pgwire", "conn_id={} startup packet len={}, first={} bytes: {}", conn_id, len, buf.len().min(32), hex_dump_prefix(&buf, 32));
+    } else {
+        debug!(target: "pgwire", "conn_id={} received startup packet, len={}", conn_id, len);
+    }
     // Check for SSLRequest (0x04D2162F) or GSSENC (0x04D2162A)
     if buf.len() == 4 {
         let code = u32::from_be_bytes([buf[0], buf[1], buf[2], buf[3]]);
         // Respond 'N' to refuse SSL/GSS, then expect new StartupMessage
         if code == 80877103 || code == 80877104 {
-            debug!("pgwire: SSL/GSSENC request detected (code={}), refusing with 'N'", code);
+            debug!(target: "pgwire", "conn_id={} SSL/GSSENC request detected (code={}), refusing with 'N'", conn_id, code);
             socket.write_all(b"N").await?;
             // Read actual startup
             let len2 = read_u32(socket).await?;
@@ -85,22 +105,22 @@ async fn handle_conn(socket: &mut tokio::net::TcpStream, store: SharedStore) -> 
             socket.read_exact(&mut buf2).await?;
             let params = parse_startup_params(&buf2);
             let user = params.get("user").cloned().unwrap_or_else(|| "".to_string());
-            debug!("pgwire: startup params parsed, user='{}'", user);
+            debug!(target: "pgwire", "conn_id={} startup params parsed, user='{}' (keys={:?})", conn_id, user, params.keys().collect::<Vec<_>>() );
             // Request cleartext password
             if !pgwire_trust_enabled() {
                 request_password(socket).await?;
                 let password = read_password_message(socket).await?;
-                debug!("pgwire: password received, authenticating user '{}'", user);
+                debug!(target: "pgwire", "conn_id={} password received, authenticating user '{}'", conn_id, user);
                 let db_root = store.root_path();
                 let ok = crate::security::authenticate(db_root.to_string_lossy().as_ref(), &user, &password)?;
                 if !ok { 
-                    debug!("pgwire: authentication failed for user '{}'", user);
+                    debug!(target: "pgwire", "conn_id={} authentication failed for user '{}'", conn_id, user);
                     send_error(socket, "authentication failed").await?; 
                     return Ok(()); 
                 }
-                debug!("pgwire: authentication successful for user '{}'", user);
+                debug!(target: "pgwire", "conn_id={} authentication successful for user '{}'", conn_id, user);
             } else {
-                debug!("pgwire: TRUST mode enabled via CLARIUM_PGWIRE_TRUST; skipping password auth for user '{}'", user);
+                debug!(target: "pgwire", "conn_id={} TRUST mode enabled via CLARIUM_PGWIRE_TRUST; skipping password auth for user '{}'", conn_id, user);
             }
             send_auth_ok_and_params(socket, &params).await?;
             // Initialize session state honoring dbname/database if provided
@@ -119,21 +139,21 @@ async fn handle_conn(socket: &mut tokio::net::TcpStream, store: SharedStore) -> 
         // Normal parameter list present
         let params = parse_startup_params(&buf);
         let user = params.get("user").cloned().unwrap_or_else(|| "".to_string());
-        debug!("pgwire: normal startup (no SSL), user='{}'", user);
+        debug!(target: "pgwire", "conn_id={} normal startup (no SSL), user='{}' (keys={:?})", conn_id, user, params.keys().collect::<Vec<_>>() );
         if !pgwire_trust_enabled() {
             request_password(socket).await?;
             let password = read_password_message(socket).await?;
-            debug!("pgwire: password received, authenticating user '{}'", user);
+            debug!(target: "pgwire", "conn_id={} password received, authenticating user '{}'", conn_id, user);
             let db_root = store.root_path();
             let ok = crate::security::authenticate(db_root.to_string_lossy().as_ref(), &user, &password)?;
             if !ok { 
-                debug!("pgwire: authentication failed for user '{}'", user);
+                debug!(target: "pgwire", "conn_id={} authentication failed for user '{}'", conn_id, user);
                 send_error(socket, "authentication failed").await?; 
                 return Ok(()); 
             }
-            debug!("pgwire: authentication successful for user '{}'", user);
+            debug!(target: "pgwire", "conn_id={} authentication successful for user '{}'", conn_id, user);
         } else {
-            debug!("pgwire: TRUST mode enabled via CLARIUM_PGWIRE_TRUST; skipping password auth for user '{}'", user);
+            debug!(target: "pgwire", "conn_id={} TRUST mode enabled via CLARIUM_PGWIRE_TRUST; skipping password auth for user '{}'", conn_id, user);
         }
         send_auth_ok_and_params(socket, &params).await?;
         // Initialize session state honoring dbname/database if provided
@@ -165,12 +185,12 @@ async fn send_auth_ok_and_params(socket: &mut tokio::net::TcpStream, startup_par
     // session_authorization and application_name from startup
     if let Some(user) = startup_params.get("user") {
         write_parameter(socket, "session_authorization", user).await?;
-        debug!("pgwire: sent ParameterStatus for session_authorization='{}'", user);
+        debug!(target: "pgwire", "sent ParameterStatus session_authorization='{}'", user);
     }
     // Echo back application_name if provided by client
     if let Some(app_name) = startup_params.get("application_name") {
         write_parameter(socket, "application_name", app_name).await?;
-        debug!("pgwire: sent ParameterStatus for application_name='{}'", app_name);
+        debug!(target: "pgwire", "sent ParameterStatus application_name='{}'", app_name);
     }
     // BackendKeyData (K) - process ID and secret key for cancellation requests
     // According to common server behavior, send this after ParameterStatus
@@ -178,7 +198,7 @@ async fn send_auth_ok_and_params(socket: &mut tokio::net::TcpStream, startup_par
     write_i32(socket, 12).await?; // length (4 + 4 + 4)
     write_i32(socket, std::process::id() as i32).await?; // process ID
     write_i32(socket, 12345).await?; // secret key (dummy value)
-    debug!("pgwire: sent BackendKeyData (pid={}, secret=12345)", std::process::id());
+    debug!(target: "pgwire", "sent BackendKeyData (pid={}, secret=12345)", std::process::id());
     // ReadyForQuery
     send_ready(socket).await
 }
@@ -262,22 +282,22 @@ async fn send_parameter_description(socket: &mut tokio::net::TcpStream, param_ty
 }
 
 async fn run_query_loop(socket: &mut tokio::net::TcpStream, store: &SharedStore, user: &str, state: &mut ConnState) -> Result<()> {
-    debug!("pgwire: entering query loop for user '{}'", user);
+    debug!(target: "pgwire", "entering query loop for user '{}' (db='{}', schema='{}')", user, state.current_database, state.current_schema);
     loop {
         let mut tag = [0u8; 1];
         if socket.read_exact(&mut tag).await.is_err() { 
-            debug!("pgwire: connection closed or read error, exiting query loop");
+            debug!(target: "pgwire", "connection closed or read error, exiting query loop");
             break; 
         }
-        debug!("pgwire: received message type byte={} (as char='{}')", tag[0], tag[0] as char);
+        debug!(target: "pgwire", "received message type byte={} (as char='{}')", tag[0], tag[0] as char);
         // Detect zero byte as potential connection closure (client side closed)
         if tag[0] == 0 {
-            debug!("pgwire: received zero byte (likely connection closing), exiting query loop");
+            debug!(target: "pgwire", "received zero byte (likely connection closing), exiting query loop");
             break;
         }
         match tag[0] {
             b'Q' => {
-                debug!("pgwire: handling simple Query message");
+                debug!(target: "pgwire", "handling simple Query message");
                 let len = read_u32(socket).await?;
                 let mut qbuf = vec![0u8; (len - 4) as usize];
                 socket.read_exact(&mut qbuf).await?;
@@ -286,58 +306,67 @@ async fn run_query_loop(socket: &mut tokio::net::TcpStream, store: &SharedStore,
                 handle_query(socket, store, user, state, &query_str).await?;
             }
             b'P' => { // Parse
-                debug!("pgwire: handling Parse message");
+                debug!(target: "pgwire", "handling Parse message");
                 handle_parse(socket, state).await?;
             }
             b'B' => { // Bind
-                debug!("pgwire: handling Bind message");
+                debug!(target: "pgwire", "handling Bind message");
                 handle_bind(socket, state).await?;
             }
             b'D' => { // Describe
-                debug!("pgwire: handling Describe message");
+                debug!(target: "pgwire", "handling Describe message");
                 handle_describe(socket, store, state).await?;
             }
             b'E' => { // Execute
-                debug!("pgwire: handling Execute message");
+                debug!(target: "pgwire", "handling Execute message");
                 handle_execute(socket, store, user, state).await?;
             }
             b'H' => { // Flush
-                debug!("pgwire: handling Flush message");
+                debug!(target: "pgwire", "handling Flush message");
                 // Flush pending output; per protocol, no response is sent for Flush itself
                 if let Err(e) = socket.flush().await { error!("pgwire: flush error: {}", e); }
             }
             b'S' => { // Sync
-                debug!("pgwire: handling Sync message");
+                debug!(target: "pgwire", "handling Sync message");
                 state.in_error = false;
                 send_ready(socket).await?;
             }
             b'C' => { // Close
-                debug!("pgwire: handling Close message");
+                debug!(target: "pgwire", "handling Close message");
                 handle_close(socket, state).await?;
             }
             b'X' => { 
-                debug!("pgwire: received Terminate message, closing connection");
+                debug!(target: "pgwire", "received Terminate message, closing connection");
                 break; 
             }
             _ => { 
                 // Unknown message: send ErrorResponse and enter error state; client should follow with Sync
-                debug!("pgwire: unknown message type byte={} (as char='{}'), sending ErrorResponse and waiting for Sync", tag[0], tag[0] as char);
+                debug!(target: "pgwire", "unknown message type byte={} (as char='{}'), sending ErrorResponse and waiting for Sync", tag[0], tag[0] as char);
+                if pgwire_trace_enabled() {
+                    // Try to read the length to dump some bytes (non-destructive best-effort)
+                    if let Ok(len) = read_u32(socket).await { 
+                        let mut tmp = vec![0u8; len.saturating_sub(4) as usize];
+                        if socket.read_exact(&mut tmp).await.is_ok() {
+                            debug!(target: "pgwire", "unknown frame payload (first 64 bytes): {}", hex_dump_prefix(&tmp, 64));
+                        }
+                    }
+                }
                 send_error(socket, "unsupported message type").await?;
                 state.in_error = true;
             }
         }
     }
-    debug!("pgwire: exiting query loop for user '{}'", user);
+    debug!(target: "pgwire", "exiting query loop for user '{}'", user);
     Ok(())
 }
 
 async fn send_ready(socket: &mut tokio::net::TcpStream) -> Result<()> {
-    debug!("pgwire: sending ReadyForQuery (status='I')");
+    debug!(target: "pgwire", "sending ReadyForQuery (status='I')");
     socket.write_all(b"Z").await?;
     write_i32(socket, 5).await?; // len
     socket.write_all(b"I").await?; // idle
     socket.flush().await?;
-    debug!("pgwire: ReadyForQuery flushed to client");
+    debug!(target: "pgwire", "ReadyForQuery flushed to client");
     Ok(())
 }
 
@@ -352,658 +381,47 @@ async fn write_parameter(socket: &mut tokio::net::TcpStream, k: &str, v: &str) -
 }
 
 
-async fn handle_query(socket: &mut tokio::net::TcpStream, store: &SharedStore, username: &str, state: &mut ConnState, q: &str) -> Result<()> {
+async fn handle_query(socket: &mut tokio::net::TcpStream, store: &SharedStore, _username: &str, state: &mut ConnState, q: &str) -> Result<()> {
+    // Simple Query cycle: execute one SQL string and always finish with ReadyForQuery.
+    // Keep pgwire thin: delegate all command handling to the common server exec.
     let q_trim = q.trim().trim_end_matches(';').trim();
-    debug!("pgwire query: {}", q_trim);
-    if q_trim.is_empty() { send_ready(socket).await?; return Ok(()); }
+    debug!("pgwire simple query: {}", q_trim);
 
-    // Fast-path: tolerate common session/transaction commands from clients
-    let up = q_trim.to_uppercase();
+    // Normalize with session defaults (db/schema)
+    let q_effective = exec::normalize_query_with_defaults(q_trim, &state.current_database, &state.current_schema);
 
-    // Compatibility fast-path: minimal pg_catalog.pg_database emulation
-    // Many drivers probe available databases using this catalog table.
-    // We synthesize a single row for the current database and avoid routing this
-    // through the general SQL parser (which may not support the exact predicate
-    // grammar used by drivers like DBeaver).
-    if up.contains("FROM PG_CATALOG.PG_DATABASE") {
-        debug!("pgwire: using compatibility path for pg_catalog.pg_database");
-        // Build a minimal set of columns commonly referenced by clients
-        let cols = vec![
-            "oid".to_string(),
-            "datname".to_string(),
-            "datdba".to_string(),
-            "encoding".to_string(),
-            "datcollate".to_string(),
-            "datctype".to_string(),
-            "datistemplate".to_string(),
-            "datallowconn".to_string(),
-            "datconnlimit".to_string(),
-        ];
-
-        // Single row describing the current database
-        // Note: we send everything as text (OID 25) per PG_TYPE_TEXT constant
-        let row = vec![
-            Some("1".to_string()),                                // oid (dummy)
-            Some(state.current_database.clone()),                   // datname
-            Some("10".to_string()),                               // datdba (dummy)
-            Some("6".to_string()),                                // encoding (UTF8)
-            Some("en_US.UTF-8".to_string()),                      // datcollate
-            Some("en_US.UTF-8".to_string()),                      // datctype
-            Some("f".to_string()),                                // datistemplate
-            Some("t".to_string()),                                // datallowconn
-            Some("-1".to_string()),                               // datconnlimit
-        ];
-
-        // Send response in Simple Query flow: RowDescription -> DataRow(s) -> CommandComplete -> ReadyForQuery
-        send_row_description(socket, &cols).await?;
-        send_data_row(socket, &row).await?;
-        send_command_complete(socket, "SELECT 1").await?;
-        send_ready(socket).await?;
-        return Ok(());
-    }
-    // Handle USE DATABASE/SCHEMA to update defaults for identifier qualification via global parser
-    if q_trim.to_uppercase().starts_with("USE ") {
-        match crate::query::parse(q_trim) {
-            Ok(crate::query::Command::UseDatabase { name }) => {
-                if !name.trim().is_empty() { state.current_database = name; }
-                send_command_complete(socket, "USE").await?;
-                send_ready(socket).await?;
-                return Ok(());
-            }
-            Ok(crate::query::Command::UseSchema { name }) => {
-                if !name.trim().is_empty() { state.current_schema = name; }
-                send_command_complete(socket, "USE").await?;
-                send_ready(socket).await?;
-                return Ok(());
-            }
-            _ => {}
-        }
-    }
-
-    if up.starts_with("SET ") {
-        // Parse SET command to validate syntax and handle special cases
-        match crate::query::parse(q_trim) {
-            Ok(crate::query::Command::Set { variable, value: _ }) => {
-                // server_version, client_encoding, and TimeZone are null actions (no-ops)
-                let var_lower = variable.to_lowercase();
-                if var_lower == "server_version" || var_lower == "client_encoding" || var_lower == "timezone" || var_lower == "time zone" {
-                    // Null action: silently accept but don't modify anything
-                    send_command_complete(socket, "SET").await?;
-                    send_ready(socket).await?;
-                    return Ok(());
-                }
-                // For other global config values, accept the SET command
-                // (In a full implementation, you would store these in session state)
-                send_command_complete(socket, "SET").await?;
-                send_ready(socket).await?;
-                return Ok(());
-            }
-            Ok(_) => {
-                // Not a SET command (shouldn't happen)
-                send_command_complete(socket, "SET").await?;
-                send_ready(socket).await?;
-                return Ok(());
-            }
-            Err(e) => {
-                // Invalid SET syntax
-                send_error(socket, &format!("Invalid SET syntax: {}", e)).await?;
-                send_ready(socket).await?;
-                return Ok(());
-            }
-        }
-    }
-    if up == "BEGIN" || up == "START TRANSACTION" {
-        send_command_complete(socket, "BEGIN").await?;
-        send_ready(socket).await?;
-        return Ok(());
-    }
-    if up == "COMMIT" {
-        send_command_complete(socket, "COMMIT").await?;
-        send_ready(socket).await?;
-        return Ok(());
-    }
-    if up == "ROLLBACK" {
-        send_command_complete(socket, "ROLLBACK").await?;
-        send_ready(socket).await?;
-        return Ok(());
-    }
-    if up.starts_with("RESET ") || up == "RESET ALL" || up == "RESET" {
-        // Accept RESET commands without error (used by DBeaver and other clients)
-        send_command_complete(socket, "RESET").await?;
-        send_ready(socket).await?;
-        return Ok(());
-    }
-    if up.starts_with("DISCARD ") || up == "DISCARD ALL" {
-        // Accept DISCARD commands without error (used by DBeaver)
-        send_command_complete(socket, "DISCARD").await?;
-        send_ready(socket).await?;
-        return Ok(());
-    }
-    if up.starts_with("DEALLOCATE ") || up == "DEALLOCATE ALL" {
-        // Accept DEALLOCATE commands without error (used by DBeaver for prepared statements)
-        send_command_complete(socket, "DEALLOCATE").await?;
-        send_ready(socket).await?;
-        return Ok(());
-    }
-    if up.starts_with("CLOSE ") {
-        // Accept CLOSE commands without error (used for closing cursors)
-        send_command_complete(socket, "CLOSE").await?;
-        send_ready(socket).await?;
-        return Ok(());
-    }
-
-    // Route SHOW commands to global execution layer
-    if up.starts_with("SHOW ") || up == "SHOW" {
-        let q_effective = exec::normalize_query_with_defaults(q_trim, &state.current_database, &state.current_schema);
-        match exec::execute_query2(store, &q_effective).await {
-            Ok(val) => {
-                let (cols, data) = match &val {
-                    serde_json::Value::Array(arr) => to_table(arr.clone())?,
-                    serde_json::Value::Object(_) => to_table(vec![val.clone()])?,
-                    _ => to_table(vec![val.clone()])?,
-                };
-                if !cols.is_empty() {
-                    send_row_description(socket, &cols).await?;
-                    for row in data.iter() { send_data_row(socket, row).await?; }
-                }
-                send_command_complete(socket, "SHOW").await?;
-                send_ready(socket).await?;
-                return Ok(());
-            }
-            Err(e) => { send_error(socket, &format!("{}", e)).await?; state.in_error = true; return Ok(()); }
-        }
-    }
-    // SHOW commands commonly used by SQLAlchemy/psycopg2
-    // SHOW TRANSACTION ISOLATION LEVEL (used by SQLAlchemy)
-    if up == "SHOW TRANSACTION ISOLATION LEVEL" {
-        let cols = vec!["transaction_isolation".to_string()];
-        send_row_description(socket, &cols).await?;
-        send_data_row(socket, &[Some("read committed".to_string())]).await?;
-        send_command_complete(socket, "SHOW").await?;
-        send_ready(socket).await?;
-        return Ok(());
-    }
-    // SHOW standard_conforming_strings (queried by SQLAlchemy/psycopg2)
-    if up == "SHOW STANDARD_CONFORMING_STRINGS" {
-        let cols = vec!["standard_conforming_strings".to_string()];
-        send_row_description(socket, &cols).await?;
-        send_data_row(socket, &[Some("on".to_string())]).await?;
-        send_command_complete(socket, "SHOW").await?;
-        send_ready(socket).await?;
-        return Ok(());
-    }
-    // SHOW server_version
-    if up.starts_with("SHOW SERVER_VERSION") {
-        let cols = vec!["server_version".to_string()];
-        send_row_description(socket, &cols).await?;
-        send_data_row(socket, &[Some("14.0".to_string())]).await?;
-        send_command_complete(socket, "SHOW").await?;
-        send_ready(socket).await?;
-        return Ok(());
-    }
-    // SHOW client_encoding
-    if up == "SHOW CLIENT_ENCODING" {
-        let cols = vec!["client_encoding".to_string()];
-        send_row_description(socket, &cols).await?;
-        send_data_row(socket, &[Some("UTF8".to_string())]).await?;
-        send_command_complete(socket, "SHOW").await?;
-        send_ready(socket).await?;
-        return Ok(());
-    }
-    // SHOW server_encoding
-    if up == "SHOW SERVER_ENCODING" {
-        let cols = vec!["server_encoding".to_string()];
-        send_row_description(socket, &cols).await?;
-        send_data_row(socket, &[Some("UTF8".to_string())]).await?;
-        send_command_complete(socket, "SHOW").await?;
-        send_ready(socket).await?;
-        return Ok(());
-    }
-    // SHOW DateStyle
-    if up == "SHOW DATESTYLE" {
-        let cols = vec!["DateStyle".to_string()];
-        send_row_description(socket, &cols).await?;
-        send_data_row(socket, &[Some("ISO, MDY".to_string())]).await?;
-        send_command_complete(socket, "SHOW").await?;
-        send_ready(socket).await?;
-        return Ok(());
-    }
-    // SHOW integer_datetimes
-    if up == "SHOW INTEGER_DATETIMES" {
-        let cols = vec!["integer_datetimes".to_string()];
-        send_row_description(socket, &cols).await?;
-        send_data_row(socket, &[Some("on".to_string())]).await?;
-        send_command_complete(socket, "SHOW").await?;
-        send_ready(socket).await?;
-        return Ok(());
-    }
-    // SHOW TIME ZONE or SHOW TIMEZONE
-    if up == "SHOW TIME ZONE" || up == "SHOW TIMEZONE" {
-        let cols = vec!["TimeZone".to_string()];
-        send_row_description(socket, &cols).await?;
-        send_data_row(socket, &[Some("UTC".to_string())]).await?;
-        send_command_complete(socket, "SHOW").await?;
-        send_ready(socket).await?;
-        return Ok(());
-    }
-    // SHOW search_path
-    if up == "SHOW SEARCH_PATH" {
-        let cols = vec!["search_path".to_string()];
-        send_row_description(socket, &cols).await?;
-        send_data_row(socket, &[Some("public".to_string())]).await?;
-        send_command_complete(socket, "SHOW").await?;
-        send_ready(socket).await?;
-        return Ok(());
-    }
-    // SHOW default_transaction_isolation
-    if up == "SHOW DEFAULT_TRANSACTION_ISOLATION" {
-        let cols = vec!["default_transaction_isolation".to_string()];
-        send_row_description(socket, &cols).await?;
-        send_data_row(socket, &[Some("read committed".to_string())]).await?;
-        send_command_complete(socket, "SHOW").await?;
-        send_ready(socket).await?;
-        return Ok(());
-    }
-    // SHOW transaction_read_only
-    if up == "SHOW TRANSACTION_READ_ONLY" {
-        let cols = vec!["transaction_read_only".to_string()];
-        send_row_description(socket, &cols).await?;
-        send_data_row(socket, &[Some("off".to_string())]).await?;
-        send_command_complete(socket, "SHOW").await?;
-        send_ready(socket).await?;
-        return Ok(());
-    }
-    // SHOW application_name (optional, benign)
-    if up == "SHOW APPLICATION_NAME" {
-        let cols = vec!["application_name".to_string()];
-        send_row_description(socket, &cols).await?;
-        send_data_row(socket, &[Some("clarama".to_string())]).await?;
-        send_command_complete(socket, "SHOW").await?;
-        send_ready(socket).await?;
-        return Ok(());
-    }
-    // SHOW extra_float_digits
-    if up == "SHOW EXTRA_FLOAT_DIGITS" {
-        let cols = vec!["extra_float_digits".to_string()];
-        send_row_description(socket, &cols).await?;
-        send_data_row(socket, &[Some("3".to_string())]).await?;
-        send_command_complete(socket, "SHOW").await?;
-        send_ready(socket).await?;
-        return Ok(());
-    }
-    // SHOW ALL: return a small table of known settings
-    if up == "SHOW ALL" {
-        let cols = vec!["name".to_string(), "setting".to_string()];
-        send_row_description(socket, &cols).await?;
-        let rows: Vec<[&str; 2]> = vec![
-            ("server_version", "14.0"),
-            ("server_encoding", "UTF8"),
-            ("client_encoding", "UTF8"),
-            ("DateStyle", "ISO, MDY"),
-            ("integer_datetimes", "on"),
-            ("standard_conforming_strings", "on"),
-            ("TimeZone", "UTC"),
-            ("search_path", "public"),
-            ("default_transaction_isolation", "read committed"),
-            ("transaction_read_only", "off"),
-            ("extra_float_digits", "3"),
-        ].into_iter().map(|(a,b)| [a,b]).collect();
-        for r in rows.iter() {
-            send_data_row(socket, &[Some(r[0].to_string()), Some(r[1].to_string())]).await?;
-        }
-        send_command_complete(socket, "SHOW").await?;
-        send_ready(socket).await?;
-        return Ok(());
-    }
-
-    // SHOW SCHEMAS (meta-command used by sql_source)
-    if up.starts_with("SHOW SCHEMAS") || up.starts_with("SHOW SCHEMA") {
-        let cols = vec!["schema_name".to_string()];
-        send_row_description(socket, &cols).await?;
-        use std::collections::BTreeSet;
-        let mut schemas: BTreeSet<String> = BTreeSet::new();
-        let root = store.root_path();
-        if let Ok(dbs) = std::fs::read_dir(&root) {
-            for db_ent in dbs.flatten() {
-                let db_path = db_ent.path(); if !db_path.is_dir() { continue; }
-                if let Ok(sd) = std::fs::read_dir(&db_path) {
-                    for sch_ent in sd.flatten() { let p = sch_ent.path(); if p.is_dir() { if let Some(name) = p.file_name().and_then(|s| s.to_str()) { if !name.starts_with('.') { schemas.insert(name.to_string()); } } } }
-                }
-            }
-        }
-        for s in schemas { send_data_row(socket, &[Some(s)]).await?; }
-        send_command_complete(socket, "SHOW").await?;
-        send_ready(socket).await?;
-        return Ok(());
-    }
-
-    // SHOW TABLES (list user tables)
-    if up == "SHOW TABLES" {
-        let cols = vec!["table_name".to_string()];
-        send_row_description(socket, &cols).await?;
-        let root = store.root_path();
-        if let Ok(dbs) = std::fs::read_dir(&root) {
-            for db_ent in dbs.flatten() {
-                let db_path = db_ent.path(); if !db_path.is_dir() { continue; }
-                if let Ok(sd) = std::fs::read_dir(&db_path) {
-                    for schema_dir in sd.flatten().filter(|e| e.path().is_dir()) {
-                        let sp = schema_dir.path();
-                        if let Ok(td) = std::fs::read_dir(&sp) {
-                            for tentry in td.flatten() {
-                                let tp = tentry.path();
-                                if tp.is_dir() && tp.join("schema.json").exists() {
-                                    let tname = tentry.file_name().to_string_lossy().to_string();
-                                    let tname = if let Some(stripped) = tname.strip_suffix(".time") { stripped.to_string() } else { tname };
-                                    send_data_row(socket, &[Some(tname)]).await?;
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        send_command_complete(socket, "SHOW").await?;
-        send_ready(socket).await?;
-        return Ok(());
-    }
-
-    // SHOW OBJECTS (tables/views)
-    if up == "SHOW OBJECTS" {
-        let cols = vec!["name".to_string(), "type".to_string()];
-        send_row_description(socket, &cols).await?;
-        let root = store.root_path();
-        if let Ok(dbs) = std::fs::read_dir(&root) {
-            for db_ent in dbs.flatten() {
-                let db_path = db_ent.path(); if !db_path.is_dir() { continue; }
-                if let Ok(sd) = std::fs::read_dir(&db_path) {
-                    for schema_dir in sd.flatten().filter(|e| e.path().is_dir()) {
-                        let sp = schema_dir.path();
-                        if let Ok(td) = std::fs::read_dir(&sp) {
-                            for tentry in td.flatten() {
-                                let tp = tentry.path();
-                                if tp.is_dir() && tp.join("schema.json").exists() {
-                                    let mut name = tentry.file_name().to_string_lossy().to_string();
-                                    if let Some(stripped) = name.strip_suffix(".time") { name = stripped.to_string(); }
-                                    send_data_row(socket, &[Some(name), Some("table".to_string())]).await?;
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        send_command_complete(socket, "SHOW").await?;
-        send_ready(socket).await?;
-        return Ok(());
-    }
-
-    // DESCRIBE <table>
-    if up.starts_with("DESCRIBE ") || up.starts_with("DESC ") {
-        // Columns as expected by sql_source: Primary Key, Column, Foreign Keys, Type, Nullable, Default, Autoincrement, Check, Unique, Index, comment
-        let cols = vec![
-            "Primary Key".to_string(), "Column".to_string(), "Foreign Keys".to_string(), "Type".to_string(), "Nullable".to_string(),
-            "Default".to_string(), "Autoincrement".to_string(), "Check".to_string(), "Unique".to_string(), "Index".to_string(), "comment".to_string()
-        ];
-        send_row_description(socket, &cols).await?;
-        // Extract identifier after keyword
-        let ident = if up.starts_with("DESCRIBE ") { &q_trim["DESCRIBE ".len()..] } else { &q_trim["DESC ".len()..] };
-        let ident = ident.trim().trim_matches('"');
-        // Qualify with current db/schema via central ident module and map to local path
-        let d = crate::ident::QueryDefaults::new(state.current_database.clone(), state.current_schema.clone());
-        let qualified = crate::ident::qualify_regular_ident(ident, &d);
-        let root = store.root_path();
-        let dir = crate::ident::to_local_path(&root, &qualified);
-        let sj = dir.join("schema.json");
-        let mut rows_added = 0usize;
-        if sj.exists() {
-            if let Ok(text) = std::fs::read_to_string(&sj) {
-                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) {
-                    if let serde_json::Value::Object(obj) = json {
-                        // Check if table has PRIMARY marker column (indicates primary key exists)
-                        let has_primary_marker = obj.contains_key("PRIMARY");
-                        
-                        // Identify the primary key column if PRIMARY marker exists
-                        // Use same heuristic as system.rs: look for "id", "record_id", or columns ending with "_id"
-                        let mut pk_column: Option<String> = None;
-                        if has_primary_marker {
-                            // First pass: look for typical primary key column names
-                            for k in obj.keys() {
-                                if k == "_time" || k == "PRIMARY" { continue; }
-                                if k == "id" || k == "record_id" || k.ends_with("_id") {
-                                    pk_column = Some(k.clone());
-                                    break;
-                                }
-                            }
-                            // If no typical PK column found, use first non-system column
-                            if pk_column.is_none() {
-                                for k in obj.keys() {
-                                    if k != "_time" && k != "PRIMARY" {
-                                        pk_column = Some(k.clone());
-                                        break;
-                                    }
-                                }
-                            }
-                        }
-                        
-                        // deterministic order
-                        let mut names: Vec<String> = obj.keys().cloned().collect();
-                        names.sort();
-                        // ensure _time first if present
-                        if let Some(pos) = names.iter().position(|n| n == "_time") { names.remove(pos); names.insert(0, "_time".to_string()); }
-                        for k in names {
-                            // Skip PRIMARY marker column itself (it's metadata, not a real column)
-                            if k == "PRIMARY" { continue; }
-                            
-                            let v = obj.get(&k).cloned().unwrap_or(serde_json::Value::String("string".into()));
-                            let tkey = if let serde_json::Value::String(s) = v { s } else if let serde_json::Value::Object(m) = v { m.get("type").and_then(|x| x.as_str()).unwrap_or("string").to_string() } else { "string".to_string() };
-                            let dtype = match tkey.as_str() { "int64" => "bigint", "string" | "utf8" => "text", _ => "double precision" };
-                            
-                            // Mark as primary key if this column matches identified PK column
-                            let is_pk = pk_column.as_ref().map(|pk| pk == &k).unwrap_or(false);
-                            let pk = if is_pk { "*" } else { "" };
-                            let auto = if is_pk { "yes" } else { "" };
-                            
-                            send_data_row(socket, &[
-                                Some(pk.to_string()),
-                                Some(k.clone()),
-                                Some(String::new()),
-                                Some(dtype.to_string()),
-                                Some("YES".to_string()),
-                                Some(String::new()),
-                                Some(auto.to_string()),
-                                Some(String::new()),
-                                Some(String::new()),
-                                Some(String::new()),
-                                Some(String::new()),
-                            ]).await?;
-                            rows_added += 1;
-                        }
-                    }
-                }
-            }
-        }
-        send_command_complete(socket, &format!("SELECT {}", rows_added)).await?;
-        send_ready(socket).await?;
-        return Ok(());
-    }
-
-    // Normalize query identifiers with current defaults for engine-bound statements (shared with HTTP)
-    debug!(target: "clarium::pgwire", "incoming sql: raw='{}'", q_trim);
-    let q_effective = crate::server::exec::normalize_query_with_defaults(q_trim, &state.current_database, &state.current_schema);
-    debug!(target: "clarium::pgwire", "effective sql after defaults: '{}'; defaults db='{}' schema='{}'", q_effective, state.current_database, state.current_schema);
-
-
-    // CREATE TABLE support (basic) to allow SQLAlchemy to create tables
-    if up.starts_with("CREATE TABLE ") {
-        match exec::do_create_table(store, q_effective.as_str()) {
-            Ok(_) => {
-                send_command_complete(socket, "CREATE TABLE").await?;
-                send_ready(socket).await?;
-                return Ok(());
-            }
-            Err(e) => {
-                send_error(socket, &format!("{}", e)).await?;
-                send_ready(socket).await?;
-                return Ok(());
-            }
-        }
-    }
-
-    // Keep basic INSERT convenience for writing records directly.
-    if let Some(ins) = parse_insert(&q_effective) {
-        // Authorization: INSERT on target database
-        let db_root = store.root_path();
-        let allowed = crate::security::authorize(db_root.to_string_lossy().as_ref(), username, crate::security::CommandKind::Insert, Some(&ins.database))?;
-        if !allowed { send_error(socket, "permission denied for INSERT").await?; send_ready(socket).await?; return Ok(()); }
-        let n = do_insert(store, ins).await? as i32;
-        send_command_complete(socket, &format!("INSERT 0 {}", n)).await?;
-        send_ready(socket).await?;
-        return Ok(());
-    }
-
-    // Authorization for parsed commands
-    let parsed = crate::query::parse(&q_effective);
-    if let Ok(cmd) = parsed {
-        use crate::query::Command as QC;
-        use crate::security::CommandKind as CK;
-        let (ck, db_opt): (CK, Option<String>) = match &cmd {
-            // Treat empty database name as None for sourceless queries
-            QC::Select(q) => (CK::Select, q.base_table.as_ref().and_then(|t| t.table_name().map(|s| s.to_string()))),
-            QC::Calculate{ target_sensor:_, query } => (CK::Calculate, query.base_table.as_ref().and_then(|t| t.table_name().map(|s| s.to_string()))),
-            QC::DeleteRows{ database, .. } => (CK::DeleteRows, Some(database.clone())),
-            QC::DeleteColumns{ database, .. } => (CK::DeleteColumns, Some(database.clone())),
-            QC::SchemaShow{ database } => (CK::Schema, Some(database.clone())),
-            QC::SchemaAdd{ database, .. } => (CK::Schema, Some(database.clone())),
-            // Legacy database ops
-            QC::DatabaseAdd{ database } => (CK::Database, Some(database.clone())),
-            QC::DatabaseDelete{ database } => (CK::Database, Some(database.clone())),
-            // New DDL ops
-            QC::CreateDatabase{ .. } | QC::DropDatabase{ .. } | QC::RenameDatabase{ .. } => (CK::Database, None),
-            QC::CreateSchema{ .. } | QC::DropSchema{ .. } | QC::RenameSchema{ .. } => (CK::Schema, None),
-            QC::CreateTimeTable{ .. } | QC::DropTimeTable{ .. } | QC::RenameTimeTable{ .. } => (CK::Database, None),
-            QC::CreateTable{ .. } | QC::DropTable{ .. } | QC::RenameTable{ .. } => (CK::Database, None),
-            // KV stores and keys
-            QC::CreateStore { database, .. } => (CK::Database, Some(database.clone())),
-            QC::DropStore { database, .. } => (CK::Database, Some(database.clone())),
-            QC::RenameStore { database, .. } => (CK::Database, Some(database.clone())),
-            QC::WriteKey { database, .. } => (CK::Other, Some(database.clone())),
-            QC::ReadKey { database, .. } => (CK::Other, Some(database.clone())),
-            QC::DropKey { database, .. } => (CK::Other, Some(database.clone())),
-            QC::RenameKey { database, .. } => (CK::Other, Some(database.clone())),
-            QC::ListStores { database, .. } => (CK::Other, Some(database.clone())),
-            QC::ListKeys { database, .. } => (CK::Other, Some(database.clone())),
-            QC::DescribeKey { database, .. } => (CK::Other, Some(database.clone())),
-            // Scripts management
-            QC::CreateScript { .. } | QC::DropScript { .. } | QC::RenameScript { .. } | QC::LoadScript { .. } => (CK::Other, None),
-            // User management
-            QC::UserAdd{ scope_db, .. } => (CK::Database, scope_db.clone()),
-            QC::UserDelete{ scope_db, .. } => (CK::Database, scope_db.clone()),
-            QC::UserAlter{ scope_db, .. } => (CK::Database, scope_db.clone()),
-            // Global session-affecting commands and SHOW
-            QC::UseDatabase { .. } | QC::UseSchema { .. } | QC::Set { .. } => (CK::Other, None),
-            QC::ShowTransactionIsolation
-            | QC::ShowStandardConformingStrings
-            | QC::ShowServerVersion
-            | QC::ShowClientEncoding
-            | QC::ShowServerEncoding
-            | QC::ShowDateStyle
-            | QC::ShowIntegerDateTimes
-            | QC::ShowTimeZone
-            | QC::ShowSearchPath
-            | QC::ShowDefaultTransactionIsolation
-            | QC::ShowTransactionReadOnly
-            | QC::ShowApplicationName
-            | QC::ShowExtraFloatDigits
-            | QC::ShowAll
-            | QC::ShowSchemas
-            | QC::ShowTables
-            | QC::ShowObjects
-            | QC::ShowScripts => (CK::Other, None),
-            QC::Slice(_) => (CK::Select, None),
-            QC::SelectUnion { .. } => (CK::Select, None),
-        };
-        let db_root = store.root_path();
-        let allowed = crate::security::authorize(db_root.to_string_lossy().as_ref(), username, ck, db_opt.as_deref())?;
-        if !allowed { send_error(socket, "permission denied").await?; send_ready(socket).await?; return Ok(()); }
-    }
-
-    // For SELECT statements, bypass JSON marshalling and stream DataFrame in column order
-    if let Ok(crate::query::Command::Select(q)) = crate::query::parse(&q_effective) {
-        match exec::execute_select_df(store, &q) {
-            Ok(df) => {
-                let (cols, data) = exec::dataframe_to_tabular(&df);
-                // Always send RowDescription if we have data, even if cols is empty
-                // (empty cols can happen with edge cases; still need field structure for protocol)
-                if !data.is_empty() || !cols.is_empty() {
-                    send_row_description(socket, &cols).await?;
-                    for row in data.iter() { send_data_row(socket, row).await?; }
-                }
-                let tag = format!("SELECT {}", data.len());
-                send_command_complete(socket, &tag).await?;
-                send_ready(socket).await?;
-                return Ok(());
-            }
-            Err(e) => {
-                send_error(socket, &format!("{}", e)).await?;
-                send_ready(socket).await?;
-                return Ok(());
-            }
-        }
-    }
-
-    // Delegate all other statements to the engine to expose full capabilities
-    match exec::execute_query2(store, &q_effective).await {
+    // Delegate execution to server exec; it handles SET/USE/CREATE/SELECT/SHOW/etc.
+    match exec::execute_query(store, &q_effective).await {
         Ok(val) => {
-            // Decide if we should return tabular rows or just a command-complete tag
             let upper = q_trim.chars().take(16).collect::<String>().to_uppercase();
-            // Normalize result into rows for display when appropriate
-            // Special-case SCHEMA SHOW which returns {"schema": [...]} 
-            let display_val = if upper.starts_with("SCHEMA SHOW") {
-                if let serde_json::Value::Object(m) = &val {
-                    if let Some(serde_json::Value::Array(arr)) = m.get("schema") { serde_json::Value::Array(arr.clone()) } else { val.clone() }
-                } else { val.clone() }
-            } else { val.clone() };
-            let (cols, data) = match &display_val {
+            // Convert JSON to a simple table for pgwire transport
+            let (cols, data) = match &val {
                 serde_json::Value::Array(arr) => to_table(arr.clone())?,
-                serde_json::Value::Object(_) => to_table(vec![display_val.clone()])?,
-                _ => to_table(vec![display_val.clone()])?,
+                serde_json::Value::Object(_) => to_table(vec![val.clone()])?,
+                _ => to_table(vec![val.clone()])?,
             };
-
-            // Always send RowDescription if we have data, even if cols is empty
-            // (empty cols can happen with edge cases; still need field structure for protocol)
             if !data.is_empty() || !cols.is_empty() {
                 send_row_description(socket, &cols).await?;
-                for row in data.iter() {
-                    send_data_row(socket, row).await?;
-                }
+                for row in data.iter() { send_data_row(socket, row).await?; }
             }
-
-            // Choose a sensible CommandComplete tag
-            let tag = if upper.starts_with("SELECT") {
-                format!("SELECT {}", data.len())
-            } else if upper.starts_with("CALCULATE") {
-                // Expect {"saved":N}
-                let saved = match &val { serde_json::Value::Object(m) => m.get("saved").and_then(|v| v.as_u64()).unwrap_or(0), _ => 0 };
-                format!("CALCULATE {}", saved)
-            } else if upper.starts_with("DELETE") {
-                "DELETE".to_string()
-            } else if upper.starts_with("SCHEMA") || upper.starts_with("DATABASE") {
-                // Show result rows (if any)
-                format!("OK {}", data.len())
-            } else {
-                // Fallback
-                if data.is_empty() { "OK".to_string() } else { format!("OK {}", data.len()) }
-            };
-
+            // Build a generic CommandComplete tag. Specific semantics are decided by server exec outputs.
+            let tag = if upper.starts_with("SELECT") { format!("SELECT {}", data.len()) }
+                else if upper.starts_with("CALCULATE") { let saved = match &val { serde_json::Value::Object(m) => m.get("saved").and_then(|v| v.as_u64()).unwrap_or(0), _ => 0 }; format!("CALCULATE {}", saved) }
+                else if upper.starts_with("DELETE") { "DELETE".to_string() }
+                else if upper.starts_with("SCHEMA") || upper.starts_with("DATABASE") { format!("OK {}", data.len()) }
+                else if upper.starts_with("SET") { "SET".to_string() }
+                else if upper.starts_with("CREATE TABLE") { "CREATE TABLE".to_string() }
+                else if data.is_empty() { "OK".to_string() } else { format!("OK {}", data.len()) };
             send_command_complete(socket, &tag).await?;
-            send_ready(socket).await?;
-            Ok(())
         }
         Err(e) => {
             send_error(socket, &format!("{}", e)).await?;
-            send_ready(socket).await
+            state.in_error = true;
         }
     }
+    // Always finish simple query with ReadyForQuery
+    send_ready(socket).await?;
+    Ok(())
 }
 
 fn to_table(rows: Vec<serde_json::Value>) -> Result<(Vec<String>, Vec<Vec<Option<String>>>)> {
@@ -1472,105 +890,46 @@ async fn handle_describe(socket: &mut tokio::net::TcpStream, store: &SharedStore
 }
 
 async fn handle_execute(socket: &mut tokio::net::TcpStream, store: &SharedStore, _user: &str, state: &mut ConnState) -> Result<()> {
+    // Extended protocol Execute: run an already bound portal. Keep pgwire thin and delegate
+    // execution to the common server executor. Do not send ReadyForQuery here; Sync handles it.
+
     let _len = read_u32(socket).await? as usize;
     let portal_name = read_cstring(socket).await?;
     let _max_rows = read_i32(socket).await?; // ignored for now
+
+    // Resolve portal and its prepared statement
     let portal = match state.portals.get(&portal_name) { Some(p) => p.clone(), None => { send_error(socket, "unknown portal").await?; state.in_error = true; return Ok(()); } };
     let stmt = match state.statements.get(&portal.stmt_name) { Some(s) => s, None => { send_error(socket, "unknown statement").await?; state.in_error = true; return Ok(()); } };
-    // Build SQL with substitutions
+
+    // Perform placeholder substitution and normalize with session defaults
     let substituted = match substitute_placeholders(&stmt.sql, &portal.params) { Ok(s) => s, Err(e) => { send_error(socket, &format!("{}", e)).await?; state.in_error = true; return Ok(()); } };
-    // Reuse execution path like handle_query, but without ReadyForQuery
     let q_trim = substituted.trim().trim_end_matches(';').trim();
     debug!("pgwire execute (portal='{}'): {}", portal_name, q_trim);
     let q_effective = exec::normalize_query_with_defaults(q_trim, &state.current_database, &state.current_schema);
 
-    // Handle SET commands (same fast-path as in handle_query)
-    let up = q_trim.to_uppercase();
-    if up.starts_with("SET ") {
-        debug!("pgwire execute: handling SET command via fast-path");
-        match crate::query::parse(q_trim) {
-            Ok(crate::query::Command::Set { variable, value: _ }) => {
-                let var_lower = variable.to_lowercase();
-                if var_lower == "server_version" || var_lower == "client_encoding" || var_lower == "timezone" || var_lower == "time zone" {
-                    debug!("pgwire execute: SET {} accepted (null action)", variable);
-                    send_command_complete(socket, "SET").await?;
-                    return Ok(());
-                }
-                debug!("pgwire execute: SET {} accepted", variable);
-                send_command_complete(socket, "SET").await?;
-                return Ok(());
-            }
-            Ok(_) => {
-                debug!("pgwire execute: SET command accepted (unexpected parse result)");
-                send_command_complete(socket, "SET").await?;
-                return Ok(());
-            }
-            Err(e) => {
-                debug!("pgwire execute: SET command parse error: {}", e);
-                send_error(socket, &format!("Invalid SET syntax: {}", e)).await?;
-                state.in_error = true;
-                return Ok(());
-            }
-        }
-    }
-
-    // Handle CREATE TABLE (same as in handle_query)
-    if up.starts_with("CREATE TABLE ") {
-        match exec::do_create_table(store, q_effective.as_str()) {
-            Ok(_) => {
-                send_command_complete(socket, "CREATE TABLE").await?;
-                return Ok(());
-            }
-            Err(e) => {
-                send_error(socket, &format!("{}", e)).await?;
-                state.in_error = true;
-                return Ok(());
-            }
-        }
-    }
-
-    // Prefer DataFrame path for SELECT to preserve column order
-    if let Ok(crate::query::Command::Select(qsel)) = crate::query::parse(&q_effective) {
-        match exec::execute_select_df(store, &qsel) {
-            Ok(df) => {
-                let (cols, data) = exec::dataframe_to_tabular(&df);
-                // Always send RowDescription if we have data, even if cols is empty
-                // (empty cols can happen with edge cases; still need field structure for protocol)
-                if !data.is_empty() || !cols.is_empty() {
-                    send_row_description(socket, &cols).await?;
-                    for row in data.iter() { send_data_row(socket, row).await?; }
-                }
-                let tag = format!("SELECT {}", data.len());
-                send_command_complete(socket, &tag).await?;
-                return Ok(());
-            }
-            Err(e) => { send_error(socket, &format!("{}", e)).await?; state.in_error = true; return Ok(()); }
-        }
-    }
-
-    match exec::execute_query2(store, &q_effective).await {
+    // Delegate execution to common server executor
+    match exec::execute_query(store, &q_effective).await {
         Ok(val) => {
             let upper = q_trim.chars().take(16).collect::<String>().to_uppercase();
-            let display_val = if upper.starts_with("SCHEMA SHOW") {
-                if let serde_json::Value::Object(m) = &val { if let Some(serde_json::Value::Array(arr)) = m.get("schema") { serde_json::Value::Array(arr.clone()) } else { val.clone() } } else { val.clone() }
-            } else { val.clone() };
-            let (cols, data) = match &display_val {
+            // Convert JSON result to a simple table for transport
+            let (cols, data) = match &val {
                 serde_json::Value::Array(arr) => to_table(arr.clone())?,
-                serde_json::Value::Object(_) => to_table(vec![display_val.clone()])?,
-                _ => to_table(vec![display_val.clone()])?,
+                serde_json::Value::Object(_) => to_table(vec![val.clone()])?,
+                _ => to_table(vec![val.clone()])?,
             };
-            // Always send RowDescription if we have data, even if cols is empty
-            // (empty cols can happen with edge cases; still need field structure for protocol)
             if !data.is_empty() || !cols.is_empty() {
                 send_row_description(socket, &cols).await?;
                 for row in data.iter() { send_data_row(socket, row).await?; }
             }
+            // Build a generic CommandComplete tag consistent with simple query
             let tag = if upper.starts_with("SELECT") { format!("SELECT {}", data.len()) }
                 else if upper.starts_with("CALCULATE") { let saved = match &val { serde_json::Value::Object(m) => m.get("saved").and_then(|v| v.as_u64()).unwrap_or(0), _ => 0 }; format!("CALCULATE {}", saved) }
                 else if upper.starts_with("DELETE") { "DELETE".to_string() }
                 else if upper.starts_with("SCHEMA") || upper.starts_with("DATABASE") { format!("OK {}", data.len()) }
+                else if upper.starts_with("SET") { "SET".to_string() }
+                else if upper.starts_with("CREATE TABLE") { "CREATE TABLE".to_string() }
                 else if data.is_empty() { "OK".to_string() } else { format!("OK {}", data.len()) };
-            send_command_complete(socket, &tag).await?
+            send_command_complete(socket, &tag).await?;
         }
         Err(e) => { send_error(socket, &format!("{}", e)).await?; state.in_error = true; }
     }

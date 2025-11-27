@@ -31,7 +31,7 @@ fn has_flag(args: &[String], flag: &str) -> bool {
 
 fn print_usage() {
     println!(
-        "clarium_test_suite\n\nUSAGE:\n  clarium_test_suite [--db-folder PATH] [--pg-port N] [--http-port N] [--user U] [--password P] [--database D] [--timeout SECS] [--check] [--sql SQL] [--exit-after-check] [--seaorm-demo] [--exit-after-seaorm]\n\nOPTIONS:\n  --db-folder PATH          Database root folder (default: dbs)\n  --pg-port N               Port for pgwire (default: 5433)\n  --http-port N             Port for HTTP API (default: 7878)\n  --user U                  Username for connectivity check (default: clarium)\n  --password P              Password for connectivity check (default: clarium)\n  --database D              Database name for DSN (default: clarium)\n  --timeout SECS            Startup timeout for readiness (default: 30)\n  --check                   After start, perform a connectivity check using tokio-postgres\n  --sql SQL                 SQL to run for the connectivity check\n  --exit-after-check        Exit after the check instead of staying running\n  --seaorm-demo             (dev-only feature) Run a SeaORM CRUD smoke test against the DSN\n  --exit-after-seaorm       Exit after SeaORM demo completes (CI-friendly)\n\nNOTES:\n  - The SeaORM demo is feature-gated. Build with: --features seaorm_dev\n"
+        "clarium_test_suite\n\nUSAGE:\n  clarium_test_suite [--db-folder PATH] [--pg-port N] [--http-port N] [--user U] [--password P] [--database D] [--timeout SECS] [--check] [--sql SQL] [--exit-after-check] [--sqlx-check] [--seaorm-demo] [--exit-after-seaorm]\n\nOPTIONS:\n  --db-folder PATH          Database root folder (default: dbs)\n  --pg-port N               Port for pgwire (default: 5433)\n  --http-port N             Port for HTTP API (default: 7878)\n  --user U                  Username for connectivity check (default: clarium)\n  --password P              Password for connectivity check (default: clarium)\n  --database D              Database name for DSN (default: clarium)\n  --timeout SECS            Startup timeout for readiness (default: 30)\n  --check                   After start, perform a connectivity check using tokio-postgres\n  --sql SQL                 SQL to run for the connectivity check (simple query flow)\n  --exit-after-check        Exit after the check instead of staying running\n  --sqlx-check              Perform an extended-protocol check (prepare/bind/execute) using tokio-postgres\n  --seaorm-demo             (dev-only feature) Run a SeaORM CRUD smoke test against the DSN\n  --exit-after-seaorm       Exit after SeaORM demo completes (CI-friendly)\n\nNOTES:\n  - The SeaORM demo is feature-gated. Build with: --features seaorm_dev\n  - For extra server-side protocol logs, set: RUST_LOG=debug CLARIUM_PGWIRE_TRACE=1\n"
     );
 }
 
@@ -72,6 +72,7 @@ async fn main() -> Result<()> {
     let timeout_secs: u64 = arg_val(&args, "--timeout").and_then(|s| s.parse().ok()).unwrap_or(30);
     let do_check = has_flag(&args, "--check");
     let exit_after_check = has_flag(&args, "--exit-after-check");
+    let do_sqlx_check = has_flag(&args, "--sqlx-check");
     let do_seaorm = has_flag(&args, "--seaorm-demo");
     let exit_after_seaorm = has_flag(&args, "--exit-after-seaorm");
     let sql = arg_val(&args, "--sql").unwrap_or_else(|| "SELECT COUNT(_time) FROM clarium/public/demo.time".to_string());
@@ -104,6 +105,7 @@ async fn main() -> Result<()> {
         println!("Running connectivity check via tokio-postgres...");
         if let Err(e) = run_check(&dsn, &sql).await {
             eprintln!("Connectivity check FAILED: {}", e);
+            eprintln!("  Hints: try setting RUST_LOG=debug and CLARIUM_PGWIRE_TRACE=1 for detailed server logs.");
             // If explicitly checking, return error code
             if exit_after_check { return Err(e); }
         } else {
@@ -111,6 +113,17 @@ async fn main() -> Result<()> {
         }
         if exit_after_check {
             return Ok(());
+        }
+    }
+
+    if do_sqlx_check {
+        println!("Running extended-protocol check (prepare/bind/execute via tokio-postgres)...");
+        if let Err(e) = run_sqlx_like_check(&dsn).await {
+            eprintln!("Extended-protocol check FAILED: {}", e);
+            eprintln!("  Hints: enable RUST_LOG=debug and CLARIUM_PGWIRE_TRACE=1 on the server for detailed pgwire traces.");
+            return Err(e);
+        } else {
+            println!("Extended-protocol check OK");
         }
     }
 
@@ -164,6 +177,24 @@ async fn run_check(dsn: &str, sql: &str) -> Result<()> {
         }
     }
     println!("Query returned {} row(s)", row_count);
+    Ok(())
+}
+
+// Minimal extended-protocol round-trip: prepare a statement, bind a param, execute, fetch one row
+async fn run_sqlx_like_check(dsn: &str) -> Result<()> {
+    use tokio_postgres::NoTls;
+    let (client, connection) = tokio_postgres::connect(dsn, NoTls).await?;
+    tokio::spawn(async move {
+        if let Err(e) = connection.await {
+            eprintln!("postgres connection error: {}", e);
+        }
+    });
+    let stmt = client.prepare("SELECT $1::int8 AS v").await?;
+    let rows = client.query(&stmt, &[&42_i64]).await?;
+    if let Some(row) = rows.first() {
+        let v: i64 = row.try_get("v").unwrap_or_default();
+        println!("  extended query result: v={}", v);
+    }
     Ok(())
 }
 
