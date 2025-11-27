@@ -1162,6 +1162,7 @@ async fn handle_execute(socket: &mut tokio::net::TcpStream, store: &SharedStore,
             let tag = if upper.starts_with("SELECT") { format!("SELECT {}", data.len()) }
                 else if upper.starts_with("CALCULATE") { let saved = match &val { serde_json::Value::Object(m) => m.get("saved").and_then(|v| v.as_u64()).unwrap_or(0), _ => 0 }; format!("CALCULATE {}", saved) }
                 else if upper.starts_with("DELETE") { "DELETE".to_string() }
+                else if upper.starts_with("UPDATE") { "UPDATE".to_string() }
                 else if upper.starts_with("SCHEMA") || upper.starts_with("DATABASE") { format!("OK {}", data.len()) }
                 else if upper.starts_with("SET") { "SET".to_string() }
                 else if upper.starts_with("CREATE TABLE") { "CREATE TABLE".to_string() }

@@ -1,31 +1,42 @@
-use anyhow::{Context, Result};
-use serde_json::Value;
+// Submodules implementing parts of exec
+// NOTE: This module is intentionally kept thin. Add new logic in exec_*.rs files.
+pub mod exec_select;
+pub mod exec_show;
+pub mod select_stages;
+pub mod exec_slice;
+pub mod exec_common;
+pub mod where_subquery;
+pub mod exec_helpers; // shared helpers (dataframe conversions, select df)
+pub mod exec_create;  // regular table DDL and CREATE TABLE parser
+pub mod exec_insert;  // INSERT INTO handling
+pub mod df_utils;     // dataframe helpers (read_df_or_kv, etc.)
+pub mod exec_calculate; // CALCULATE handling
+pub mod exec_keys;      // KV key operations
+pub mod exec_update;    // UPDATE handling
+pub mod exec_delete;    // DELETE COLUMNS handling
+
+use anyhow::Result;
 use polars::prelude::*;
-use std::ops::Not;
-
-use crate::{storage::{SharedStore, KvValue}, query::{self, Command}};
-use crate::scripts::{get_script_registry, scripts_dir_for};
-use std::path::Path;
-use tracing::{debug};
-// Wrapper that supports ROLLING BY by delegating to rolling or standard paths
-// Shared defaults for database and schema qualification across protocols
+use crate::{query, query::Command};
+use crate::storage::{SharedStore, KvValue};
 use crate::ident::QueryDefaults;
+use crate::scripts::get_script_registry;
+use std::path::Path;
+use tracing::debug;
+// Bring frequently used helpers from submodules into scope
+use crate::server::exec::exec_select::run_select;
+use crate::server::exec::exec_slice::run_slice;
+use crate::scripts::scripts_dir_for;
+use crate::server::exec::where_subquery::{eval_where_mask, where_contains_subquery};
+use crate::server::exec::exec_common::build_where_expr;
+use std::ops::Not;
+use crate::server::exec::exec_helpers::dataframe_to_json;
+use crate::server::exec::df_utils::read_df_or_kv;
+// Re-export common helpers so external callers can keep using crate::server::exec::*
+pub use crate::server::exec::exec_helpers::{execute_select_df, dataframe_to_tabular};
+pub use crate::server::exec::exec_create::do_create_table;
 
-mod df_utils;
-mod exec_common;
-pub(crate) mod exec_select;
-mod exec_slice;
-mod exec_show;
-mod where_subquery;
-mod select_stages;
-use self::df_utils::{read_df_or_kv, dataframe_to_json};
-use self::exec_select::run_select;
-use self::exec_common::{build_where_expr};
-use self::exec_slice::{run_slice};
-use self::where_subquery::{where_contains_subquery, eval_where_mask};
-
-pub async fn execute_query(store: &SharedStore, text: &str) -> Result<Value> {
-    debug!(target: "clarium::exec", "execute_query: text='{}'", text);
+pub async fn execute_query(store: &SharedStore, text: &str) -> Result<serde_json::Value> {
     let cmd = query::parse(text)?;
     match cmd {
         Command::Slice(plan) => {
@@ -65,146 +76,13 @@ pub async fn execute_query(store: &SharedStore, text: &str) -> Result<Value> {
             Ok(serde_json::json!({"status":"ok"}))
         }
         Command::Insert { table, columns, values } => {
-            // INSERT INTO table (col1, col2, ...) VALUES (val1, val2, ...), ...
-            // Convert dot notation (schema.table) to slash notation (schema/table) for storage
-            // But preserve .time suffix for time tables
-            let table_path = if table.ends_with(".time") {
-                let base = &table[..table.len() - 5]; // Remove ".time"
-                format!("{}.time", base.replace('.', "/"))
-            } else {
-                table.replace('.', "/")
-            };
-            
-            let guard = store.0.lock();
-            
-            // Ensure table exists
-            guard.create_table(&table_path).ok();
-            
-            // Check if it's a time table
-            if table_path.ends_with(".time") {
-                // For time tables, we need _time column and build Records
-                // Find _time column index (could be named "ID", "_time", or similar based on column list)
-                let time_col_idx = columns.iter().position(|c| {
-                    let c_upper = c.to_uppercase();
-                    c_upper == "_TIME" || c_upper == "ID"
-                }).ok_or_else(|| anyhow::anyhow!("INSERT into time table requires _time or ID column"))?;
-                
-                let mut records: Vec<crate::storage::Record> = Vec::with_capacity(values.len());
-                
-                for row in &values {
-                    if row.len() != columns.len() {
-                        anyhow::bail!("INSERT value count mismatch: expected {} columns", columns.len());
-                    }
-                    
-                    // Extract _time value
-                    let time_val = match &row[time_col_idx] {
-                        query::ArithTerm::Number(n) => *n as i64,
-                        query::ArithTerm::Str(s) => s.parse::<i64>()?,
-                        query::ArithTerm::Null => anyhow::bail!("_time cannot be NULL in time table"),
-                        _ => anyhow::bail!("Invalid _time value"),
-                    };
-                    
-                    // Build sensor map from other columns
-                    let mut sensors = serde_json::Map::new();
-                    for (i, col_name) in columns.iter().enumerate() {
-                        if i == time_col_idx {
-                            continue; // Skip _time column
-                        }
-                        
-                        let val = match &row[i] {
-                            query::ArithTerm::Number(n) => serde_json::json!(n),
-                            query::ArithTerm::Str(s) => serde_json::json!(s),
-                            query::ArithTerm::Null => serde_json::Value::Null,
-                            _ => serde_json::Value::Null,
-                        };
-                        
-                        sensors.insert(col_name.clone(), val);
-                    }
-                    
-                    records.push(crate::storage::Record { _time: time_val, sensors });
-                }
-                
-                guard.write_records(&table_path, &records)?;
-                Ok(serde_json::json!({"status":"ok", "inserted": records.len()}))
-            } else {
-                // Regular parquet table - build DataFrame and append
-                // Create series for each column
-                let mut series_vec: Vec<Series> = Vec::new();
-                
-                for (col_idx, col_name) in columns.iter().enumerate() {
-                    // Collect values for this column across all rows
-                    let mut col_values: Vec<query::ArithTerm> = Vec::with_capacity(values.len());
-                    for row in &values {
-                        if row.len() != columns.len() {
-                            anyhow::bail!("INSERT value count mismatch: expected {} columns", columns.len());
-                        }
-                        col_values.push(row[col_idx].clone());
-                    }
-                    
-                    // Determine column type and create series
-                    // Check first non-null value for type
-                    let mut all_null = true;
-                    let mut has_string = false;
-                    let mut has_float = false;
-                    
-                    for val in &col_values {
-                        match val {
-                            query::ArithTerm::Str(_) => { all_null = false; has_string = true; }
-                            query::ArithTerm::Number(_) => { all_null = false; has_float = true; }
-                            query::ArithTerm::Null => {}
-                            _ => {}
-                        }
-                    }
-                    
-                    let series = if all_null {
-                        Series::new_null(col_name.as_str().into(), col_values.len())
-                    } else if has_string {
-                        // String column
-                        let vals: Vec<Option<String>> = col_values.iter().map(|v| match v {
-                            query::ArithTerm::Str(s) => Some(s.clone()),
-                            query::ArithTerm::Number(n) => Some(n.to_string()),
-                            query::ArithTerm::Null => None,
-                            _ => None,
-                        }).collect();
-                        Series::new(col_name.as_str().into(), vals)
-                    } else if has_float {
-                        // Numeric column
-                        let vals: Vec<Option<f64>> = col_values.iter().map(|v| match v {
-                            query::ArithTerm::Number(n) => Some(*n),
-                            query::ArithTerm::Str(s) => s.parse::<f64>().ok(),
-                            query::ArithTerm::Null => None,
-                            _ => None,
-                        }).collect();
-                        Series::new(col_name.as_str().into(), vals)
-                    } else {
-                        Series::new_null(col_name.as_str().into(), col_values.len())
-                    };
-                    
-                    series_vec.push(series);
-                }
-                
-                let columns_vec: Vec<Column> = series_vec.into_iter().map(|s| s.into()).collect();
-                let new_df = DataFrame::new(columns_vec)?;
-                
-                // Append to existing table or create new
-                let combined = match guard.read_df(&table_path) {
-                    Ok(existing) => existing.vstack(&new_df)?,
-                    Err(_) => new_df.clone(),
-                };
-                
-                guard.rewrite_table_df(&table_path, combined)?;
-                Ok(serde_json::json!({"status":"ok", "inserted": new_df.height()}))
-            }
+            crate::server::exec::exec_insert::handle_insert(store, table, columns, values)
         }
         Command::Select(q) => {
-            let df = run_select(store, &q)?;
-            // Handle SELECT ... INTO <table> [APPEND|REPLACE]
-            if let Some(dest) = &q.into_table {
+            let (df, into) = crate::server::exec::exec_select::handle_select(store, &q)?;
+            if let Some((dest, mode)) = into {
                 let dest = dest.trim();
-                let mode = q.into_mode.clone().unwrap_or(crate::query::IntoMode::Append);
                 let guard = store.0.lock();
-                // Ensure destination exists (create if missing)
-                // create_table works for both .time and regular tables; .time is implied by suffix
                 guard.create_table(dest).ok();
                 if dest.ends_with(".time") {
                     // Expect exactly one _time column and ensure uniqueness
@@ -212,7 +90,6 @@ pub async fn execute_query(store: &SharedStore, text: &str) -> Result<Value> {
                     if time_cols != 1 { anyhow::bail!("INTO time table requires exactly one _time column in the projection"); }
                     let time_col = df.column("_time").ok();
                     let time = time_col.and_then(|c| c.i64().ok()).ok_or_else(|| anyhow::anyhow!("_time not in result for INTO time table"))?;
-                    // Uniqueness and non-null check
                     let mut seen: std::collections::HashSet<i64> = std::collections::HashSet::with_capacity(df.height());
                     for i in 0..df.height() {
                         let tval = time.get(i).ok_or_else(|| anyhow::anyhow!("null _time value not allowed for INTO time table"))?;
@@ -243,16 +120,9 @@ pub async fn execute_query(store: &SharedStore, text: &str) -> Result<Value> {
                     guard.write_records(dest, &records)?;
                 } else {
                     match mode {
-                        crate::query::IntoMode::Replace => {
-                            // Full rewrite
-                            guard.rewrite_table_df(dest, df.clone())?;
-                        }
+                        crate::query::IntoMode::Replace => { guard.rewrite_table_df(dest, df.clone())?; }
                         crate::query::IntoMode::Append => {
-                            // Read existing if present and vstack, else just write new
-                            let combined = match guard.read_df(dest) {
-                                Ok(existing) => { existing.vstack(&df)? }
-                                Err(_) => df.clone(),
-                            };
+                            let combined = match guard.read_df(dest) { Ok(existing) => { existing.vstack(&df)? } Err(_) => df.clone(), };
                             guard.rewrite_table_df(dest, combined)?;
                         }
                     }
@@ -261,119 +131,11 @@ pub async fn execute_query(store: &SharedStore, text: &str) -> Result<Value> {
             Ok(dataframe_to_json(&df))
         }
         Command::SelectUnion { queries, all } => {
-            // Execute each query and collect DataFrames
-            let mut dfs: Vec<DataFrame> = Vec::new();
-            for q in queries {
-                let df = run_select(store, &q)?;
-                dfs.push(df);
-            }
-            // Align schemas (union of columns)
-            let mut all_cols: Vec<String> = Vec::new();
-            for df in &dfs {
-                for n in df.get_column_names().iter().map(|s| s.to_string()) {
-                    if !all_cols.contains(&n) { all_cols.push(n); }
-                }
-            }
-            let mut aligned: Vec<DataFrame> = Vec::new();
-            // First, determine the dtype for each column from the first DF that has it
-            let mut col_types: std::collections::HashMap<String, DataType> = std::collections::HashMap::new();
-            for df in &dfs {
-                for col_name in df.get_column_names() {
-                    let col_name_str = col_name.to_string();
-                    if !col_types.contains_key(&col_name_str) {
-                        if let Ok(col) = df.column(col_name.as_str()) {
-                            col_types.insert(col_name_str, col.dtype().clone());
-                        }
-                    }
-                }
-            }
-            for mut df in dfs {
-                let df_cols: Vec<String> = df.get_column_names().iter().map(|s| s.to_string()).collect();
-                for c in &all_cols {
-                    if !df_cols.iter().any(|n| n == c) {
-                        // Create a null series with the correct dtype
-                        let dtype = col_types.get(c).cloned().unwrap_or(DataType::Null);
-                        let s = Series::new_null(c.as_str().into(), df.height()).cast(&dtype)?;
-                        df.with_column(s)?;
-                    }
-                }
-                // Reorder columns to all_cols order
-                let cols: Vec<Column> = all_cols.iter().map(|n| df.column(n.as_str()).unwrap().clone()).collect();
-                aligned.push(DataFrame::new(cols)?);
-            }
-            // Concatenate
-            let mut out = if aligned.is_empty() { DataFrame::new(Vec::<Column>::new())? } else {
-                let mut acc = aligned[0].clone();
-                for df in aligned.iter().skip(1) { acc.vstack_mut(df)?; }
-                acc
-            };
-            if !all {
-                // DISTINCT rows
-                out = out.lazy().unique(None, UniqueKeepStrategy::First).collect()?;
-            }
+            let out = crate::server::exec::exec_select::handle_select_union(store, &queries, all)?;
             Ok(dataframe_to_json(&out))
         }
         Command::Calculate { target_sensor, query } => {
-            // run select
-            let df = run_select(store, &query)?;
-            // Expect columns: _time and one value column
-            let mut records = Vec::with_capacity(df.height());
-            let time_col = df.column("_time").ok();
-            let time = time_col.and_then(|c| c.i64().ok()).ok_or_else(|| anyhow::anyhow!("_time not in result for CALCULATE"))?;
-
-            // pick the first non-time column for value
-            let val_series_name = df.get_column_names().into_iter().find(|n| n.as_str() != "_time").ok_or_else(|| anyhow::anyhow!("No value column to save"))?;
-            let val_series = df.column(val_series_name)?;
-
-            match val_series.dtype() {
-                DataType::Float64 => {
-                    let vals = val_series.f64()?;
-                    for i in 0..df.height() {
-                        let t = time.get(i).ok_or_else(|| anyhow::anyhow!("bad time index"))?;
-                        if let Some(v) = vals.get(i) {
-                            let mut map = serde_json::Map::new();
-                            map.insert(target_sensor.clone(), serde_json::json!(v));
-                            records.push(crate::storage::Record { _time: t, sensors: map });
-                        }
-                    }
-                }
-                DataType::Int64 => {
-                    let vals = val_series.i64()?;
-                    for i in 0..df.height() {
-                        let t = time.get(i).ok_or_else(|| anyhow::anyhow!("bad time index"))?;
-                        if let Some(v) = vals.get(i) {
-                            let mut map = serde_json::Map::new();
-                            map.insert(target_sensor.clone(), serde_json::json!(v));
-                            records.push(crate::storage::Record { _time: t, sensors: map });
-                        }
-                    }
-                }
-                DataType::String => {
-                    for i in 0..df.height() {
-                        let t = time.get(i).ok_or_else(|| anyhow::anyhow!("bad time index"))?;
-                        let av = val_series.get(i);
-                        if let Ok(AnyValue::StringOwned(s)) = av {
-                            let mut map = serde_json::Map::new();
-                            map.insert(target_sensor.clone(), serde_json::json!(s));
-                            records.push(crate::storage::Record { _time: t, sensors: map });
-                        } else if let Ok(AnyValue::String(s)) = av {
-                            let mut map = serde_json::Map::new();
-                            map.insert(target_sensor.clone(), serde_json::json!(s));
-                            records.push(crate::storage::Record { _time: t, sensors: map });
-                        }
-                    }
-                }
-                dt => {
-                    anyhow::bail!("Unsupported CALCULATE value dtype: {:?}", dt);
-                }
-            }
-            {
-                let guard = store.0.lock();
-                let tbl = query.base_table.as_ref().ok_or_else(|| anyhow::anyhow!("CALCULATE requires a FROM source to persist results"))?;
-                let table_name = tbl.table_name().ok_or_else(|| anyhow::anyhow!("CALCULATE requires a table, not a subquery"))?;
-                guard.write_records(table_name, &records)?;
-            }
-            Ok(serde_json::json!({"saved": records.len()}))
+            crate::server::exec::exec_calculate::handle_calculate(store, &target_sensor, &query)
         }
         // KV STORE/KEY operations
         Command::CreateStore { database, store: st } => {
@@ -432,84 +194,16 @@ pub async fn execute_query(store: &SharedStore, text: &str) -> Result<Value> {
             }
         }
         Command::WriteKey { database, store: st, key, value, ttl_ms, reset_on_access } => {
-            use std::time::Duration;
-            let kv = store.kv_store(&database, &st);
-            let ttl = ttl_ms.and_then(|ms| if ms > 0 { Some(Duration::from_millis(ms as u64)) } else { None });
-            let vstr = value.trim();
-            // Helper to try loading DF from an address
-            let try_df = || -> anyhow::Result<DataFrame> {
-                // Value could be a KV address or a table path
-                read_df_or_kv(store, vstr)
-            };
-            let kind: &str;
-            let kv_val = if vstr.starts_with('{') || vstr.starts_with('[') {
-                // JSON literal
-                let j: serde_json::Value = serde_json::from_str(vstr)?;
-                kind = "json";
-                KvValue::Json(j)
-            } else if (vstr.starts_with('"') && vstr.ends_with('"')) || (vstr.starts_with('\'') && vstr.ends_with('\'')) {
-                // Quoted string
-                let un = &vstr[1..vstr.len()-1];
-                kind = "string";
-                KvValue::Str(un.to_string())
-            } else if vstr.contains(".store.") || vstr.contains(".time") || vstr.contains('/') {
-                if let Ok(df) = try_df() {
-                    kind = "table";
-                    KvValue::ParquetDf(df)
-                } else if let Ok(n) = vstr.parse::<i64>() {
-                    kind = "int";
-                    KvValue::Int(n)
-                } else {
-                    kind = "string";
-                    KvValue::Str(vstr.to_string())
-                }
-            } else if let Ok(n) = vstr.parse::<i64>() {
-                kind = "int";
-                KvValue::Int(n)
-            } else {
-                // Try JSON as last resort
-                if let Ok(j) = serde_json::from_str::<serde_json::Value>(vstr) {
-                    kind = "json"; KvValue::Json(j)
-                } else {
-                    kind = "string"; KvValue::Str(vstr.to_string())
-                }
-            };
-            kv.set(&key, kv_val, ttl, reset_on_access);
-            Ok(serde_json::json!({"status":"ok","written":1,"type": kind}))
+            crate::server::exec::exec_keys::handle_write_key(store, &database, &st, &key, &value, ttl_ms, reset_on_access)
         }
         Command::ReadKey { database, store: st, key } => {
-            let kv = store.kv_store(&database, &st);
-            if let Some(val) = kv.get(&key) {
-                match val {
-                    KvValue::Str(s) => Ok(serde_json::json!({"type":"string","value": s})),
-                    KvValue::Int(n) => Ok(serde_json::json!({"type":"int","value": n})),
-                    KvValue::Json(j) => Ok(serde_json::json!({"type":"json","value": j})),
-                    KvValue::ParquetDf(df) => {
-                        let cols_meta: Vec<serde_json::Value> = df.get_column_names().iter().map(|name| {
-                            let dt = df.column(name.as_str()).ok().map(|c| format!("{:?}", c.dtype())).unwrap_or_else(|| "Unknown".into());
-                            serde_json::json!({"name": name, "dtype": dt})
-                        }).collect();
-                        Ok(serde_json::json!({
-                            "type": "table",
-                            "rows": df.height(),
-                            "cols": df.width(),
-                            "columns": cols_meta
-                        }))
-                    }
-                }
-            } else {
-                anyhow::bail!(format!("Key not found: {}.store.{}.{}", database, st, key));
-            }
+            crate::server::exec::exec_keys::handle_read_key(store, &database, &st, &key)
         }
         Command::DropKey { database, store: st, key } => {
-            let kv = store.kv_store(&database, &st);
-            let existed = kv.delete(&key);
-            Ok(serde_json::json!({"status":"ok","dropped": existed}))
+            crate::server::exec::exec_keys::handle_drop_key(store, &database, &st, &key)
         }
         Command::RenameKey { database, store: st, from, to } => {
-            let kv = store.kv_store(&database, &st);
-            let moved = kv.rename_key(&from, &to);
-            Ok(serde_json::json!({"status":"ok","renamed": moved}))
+            crate::server::exec::exec_keys::handle_rename_key(store, &database, &st, &from, &to)
         }
         Command::DeleteRows { database, where_clause } => {
             // Load full dataframe
@@ -540,80 +234,11 @@ pub async fn execute_query(store: &SharedStore, text: &str) -> Result<Value> {
             guard.rewrite_table_df(&database, new_df)?;
             Ok(serde_json::json!({"status": "ok"}))
         }
+        Command::Update { table, assignments, where_clause } => {
+            crate::server::exec::exec_update::handle_update(store, table, assignments, where_clause)
+        }
         Command::DeleteColumns { database, columns, where_clause } => {
-            // Load full dataframe
-            let mut df_all = read_df_or_kv(store, &database)?;
-            if columns.is_empty() { return Ok(serde_json::json!({"status":"no-op"})); }
-            let new_df = if let Some(w) = &where_clause {
-                // Create DataContext with registry snapshot for WHERE clause evaluation
-                let registry_snapshot = crate::scripts::get_script_registry()
-                    .and_then(|r| r.snapshot().ok());
-                let mut ctx = crate::server::data_context::DataContext::with_defaults("clarium", "public");
-                if let Some(reg) = registry_snapshot {
-                    ctx.script_registry = Some(reg);
-                }
-                // Build mask boolean (with subquery support)
-                let mask = if where_contains_subquery(w) {
-                    eval_where_mask(&df_all, &ctx, store, w)?
-                } else {
-                    let mask_df = df_all.clone().lazy().select([build_where_expr(w, &ctx).alias("__m__")]).collect()?;
-                    mask_df.column("__m__")?.bool()?.clone()
-                };
-                // For each target column, null out where mask true
-                for name in &columns {
-                    if !df_all.get_column_names().iter().any(|c| c.as_str() == name) { continue; }
-                    let s = df_all.column(name.as_str())?;
-                    let dt = s.dtype().clone();
-                    let len = s.len();
-                    let mut null_idx: Vec<bool> = Vec::with_capacity(len);
-                    for i in 0..len { null_idx.push(mask.get(i).unwrap_or(false)); }
-                    let new_series = match dt {
-                        DataType::Int64 => {
-                            let ca = s.i64()?;
-                            let mut out: Vec<Option<i64>> = Vec::with_capacity(len);
-                            for (i, v) in ca.into_iter().enumerate() { if null_idx[i] { out.push(None); } else { out.push(v); } }
-                            Series::new(name.clone().into(), out)
-                        }
-                        DataType::Float64 => {
-                            let ca = s.f64()?;
-                            let mut out: Vec<Option<f64>> = Vec::with_capacity(len);
-                            for (i, v) in ca.into_iter().enumerate() { if null_idx[i] { out.push(None); } else { out.push(v); } }
-                            Series::new(name.clone().into(), out)
-                        }
-                        DataType::String => {
-                            let mut out: Vec<Option<String>> = Vec::with_capacity(len);
-                            for i in 0..len {
-                                if null_idx[i] { out.push(None); } else {
-                                    match s.get(i) {
-                                        Ok(AnyValue::StringOwned(v)) => out.push(Some(v.to_string())),
-                                        Ok(AnyValue::String(v)) => out.push(Some(v.to_string())),
-                                        _ => out.push(None),
-                                    }
-                                }
-                            }
-                            Series::new(name.clone().into(), out)
-                        }
-                        _ => {
-                            // Fallback: cast to Float64
-                            let s_cast = s.cast(&DataType::Float64)?;
-                            let ca = s_cast.f64()?;
-                            let mut out: Vec<Option<f64>> = Vec::with_capacity(len);
-                            for (i, v) in ca.into_iter().enumerate() { if null_idx[i] { out.push(None); } else { out.push(v); } }
-                            Series::new(name.clone().into(), out)
-                        }
-                    };
-                    df_all.replace(name.as_str(), new_series)?;
-                }
-                df_all
-            } else {
-                // Drop columns entirely
-                let to_drop: Vec<&str> = columns.iter().filter(|n| df_all.get_column_names().iter().any(|c| c.as_str() == n.as_str())).map(|s| s.as_str()).collect();
-                if !to_drop.is_empty() { df_all = df_all.drop_many(to_drop); }
-                df_all
-            };
-            let guard = store.0.lock();
-            guard.rewrite_table_df(&database, new_df)?;
-            Ok(serde_json::json!({"status": "ok"}))
+            crate::server::exec::exec_delete::handle_delete_columns(store, database, columns, where_clause)
         }
         Command::CreateScript { path, code } => {
             use std::fs;
@@ -808,88 +433,13 @@ pub async fn execute_query(store: &SharedStore, text: &str) -> Result<Value> {
             Ok(serde_json::json!({"status":"ok"}))
         }
         Command::CreateTable { table, primary_key, partitions } => {
-            // Regular table: no .time suffix; initialize schema.json (tableType=regular)
-            // Add detailed debug/info so pgwire/SeaORM paths can verify actions taken.
-            use std::{fs, path::PathBuf};
-            debug!(target: "clarium::exec", "CreateTable: begin table='{}' pk={:?} partitions={:?}", table, primary_key, partitions);
-
-            // Resolve filesystem paths for diagnostics (before creating)
-            let (_dir_path_before, exists_before) = {
-                let g = store.0.lock();
-                let root = g.root_path().clone();
-                let dir: PathBuf = root.join(table.replace('/', std::path::MAIN_SEPARATOR.to_string().as_str()));
-                let ex = dir.exists();
-                (dir, ex)
-            };
-            info!(target: "clarium::ddl", "CREATE TABLE requested table='{}' existed_before={}", table, exists_before);
-
-            if table.ends_with(".time") { anyhow::bail!("CREATE TABLE cannot target a .time table"); }
-
-            // Create the table directory and initial schema via store
-            {
-                let guard = store.0.lock();
-                guard.create_table(&table)?;
-                if primary_key.is_some() || partitions.is_some() {
-                    guard.set_table_metadata(&table, primary_key, partitions)?;
-                }
-            }
-
-            // Post-create diagnostics
-            let (exists_after, schema_path, schema_summary) = {
-                let g = store.0.lock();
-                let root = g.root_path().clone();
-                let dir: PathBuf = root.join(table.replace('/', std::path::MAIN_SEPARATOR.to_string().as_str()));
-                let sp = dir.join("schema.json");
-                let mut summary = String::new();
-                if sp.exists() {
-                    if let Ok(text) = fs::read_to_string(&sp) {
-                        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) {
-                            if let Some(obj) = json.as_object() {
-                                let mut cols: Vec<String> = obj
-                                    .iter()
-                                    .filter_map(|(k, v)| { let ty = v.as_str().unwrap_or(""); if k != "PRIMARY" { Some(format!("{}:{}", k, ty)) } else { None } })
-                                    .collect();
-                                cols.sort();
-                                summary = format!("cols={} [{}]", cols.len(), cols.join(", "));
-                            }
-                        }
-                    }
-                }
-                (dir.exists(), sp, summary)
-            };
-
-            info!(target: "clarium::ddl", "CREATE TABLE finalized table='{}' existed_after={} schema='{}' {}",
-                table, exists_after, schema_path.display(), schema_summary);
-            debug!(target: "clarium::exec", "CreateTable: success table='{}'", table);
-            Ok(serde_json::json!({"status":"ok"}))
+            crate::server::exec::exec_create::handle_create_table(store, &table, &primary_key, &partitions)
         }
         Command::DropTable { table, if_exists } => {
-            let guard = store.0.lock();
-            if table.ends_with(".time") { anyhow::bail!("DROP TABLE cannot target a .time table"); }
-            // Check if table exists
-            let table_path = guard.root_path().join(table.replace('/', std::path::MAIN_SEPARATOR.to_string().as_str()));
-            let exists = table_path.exists();
-            // If IF EXISTS is used and table doesn't exist, return success without error
-            if if_exists && !exists {
-                return Ok(serde_json::json!({"status":"ok"}));
-            }
-            // If table doesn't exist and IF EXISTS is not used, return error
-            if !exists {
-                anyhow::bail!("Table not found: {}", table);
-            }
-            // Otherwise proceed with normal deletion
-            guard.delete_table(&table)?;
-            Ok(serde_json::json!({"status":"ok"}))
+            crate::server::exec::exec_create::handle_drop_table(store, &table, if_exists)
         }
         Command::RenameTable { from, to } => {
-            use std::fs;
-            if from.ends_with(".time") || to.ends_with(".time") { anyhow::bail!("RENAME TABLE cannot rename .time tables; use RENAME TIME TABLE"); }
-            let src = store.root_path().join(from.replace('/', std::path::MAIN_SEPARATOR.to_string().as_str()));
-            let dst = store.root_path().join(to.replace('/', std::path::MAIN_SEPARATOR.to_string().as_str()));
-            if !src.exists() { anyhow::bail!("Source table not found: {}", from); }
-            if let Some(parent) = dst.parent() { fs::create_dir_all(parent).ok(); }
-            fs::rename(&src, &dst)?;
-            Ok(serde_json::json!({"status":"ok"}))
+            crate::server::exec::exec_create::handle_rename_table(store, &from, &to)
         }
         Command::UserAdd { username, password, is_admin, perms, scope_db } => {
             // Build permissions
@@ -1074,6 +624,23 @@ pub fn normalize_query_with_defaults(q: &str, db: &str, schema: &str) -> String 
             return format!("{}{}{}", head, qualified, rest);
         }
     }
+    if up.starts_with("UPDATE ") {
+        // UPDATE <ident> SET ...
+        let after = &q[7..];
+        let up_after = after.to_uppercase();
+        if let Some(i) = up_after.find(" SET ") {
+            let mut ident = after[..i].trim();
+            let rest = &after[i..];
+            // Strip quotes
+            if (ident.starts_with('"') && ident.ends_with('"')) || (ident.starts_with('\'') && ident.ends_with('\'')) {
+                if ident.len() >= 2 { ident = &ident[1..ident.len()-1]; }
+            }
+            let is_time = ident.ends_with(".time") || ident.to_lowercase().ends_with(".time");
+            let qualified = if is_time { qualify_identifier_with_defaults(ident, db, schema) } else { qualify_identifier_regular_table_with_defaults(ident, db, schema) };
+            return format!("UPDATE {}{}", qualified, rest);
+        }
+        return q.to_string();
+    }
     if up.starts_with("CALCULATE ") {
         if let Some(p) = up.find(" AS SELECT ") {
             let (left, right) = q.split_at(p + 4);
@@ -1084,35 +651,7 @@ pub fn normalize_query_with_defaults(q: &str, db: &str, schema: &str) -> String 
     q.to_string()
 }
 
-pub fn execute_select_df(store: &SharedStore, q: &crate::query::Query) -> Result<DataFrame> {
-    // Staged pipeline: use unified run_select path for all cases (ROLLING handled inside stages)
-    run_select(store, q)
-}
-
-pub fn dataframe_to_tabular(df: &DataFrame) -> (Vec<String>, Vec<Vec<Option<String>>>) {
-    let cols: Vec<String> = df.get_column_names().into_iter().map(|s| s.to_string()).collect();
-    let mut data: Vec<Vec<Option<String>>> = Vec::with_capacity(df.height());
-    for row_idx in 0..df.height() {
-        let mut row: Vec<Option<String>> = Vec::with_capacity(cols.len());
-        for c in &cols {
-            let s = df.column(c.as_str()).unwrap();
-            let av = s.get(row_idx);
-            let cell = match av {
-                Ok(AnyValue::Int64(v)) => Some(v.to_string()),
-                Ok(AnyValue::Int32(v)) => Some((v as i64).to_string()),
-                Ok(AnyValue::Float64(v)) => Some(v.to_string()),
-                Ok(AnyValue::Boolean(v)) => Some(if v {"t".into()} else {"f".into()}),
-                Ok(AnyValue::String(v)) => Some(v.to_string()),
-                Ok(AnyValue::StringOwned(v)) => Some(v.to_string()),
-                Ok(AnyValue::Null) => None,
-                _ => None,
-            };
-            row.push(cell);
-        }
-        data.push(row);
-    }
-    (cols, data)
-}
+// dataframe_to_tabular and execute_select_df are provided by exec_helpers and re-exported above.
 
 pub async fn execute_query2(store: &SharedStore, text: &str) -> Result<serde_json::Value> {
     let cmd = query::parse(text)?;
@@ -1244,93 +783,6 @@ pub async fn execute_query2(store: &SharedStore, text: &str) -> Result<serde_jso
 pub async fn execute_query_with_defaults(store: &SharedStore, text: &str, defaults: &QueryDefaults) -> Result<serde_json::Value> {
     let effective = normalize_query_with_defaults(text, &defaults.current_database, &defaults.current_schema);
     execute_query2(store, &effective).await
-}
-
-/// Parse and execute a CREATE TABLE statement with full SQL syntax (columns and types).
-/// This function is used by pgwire to support CREATE TABLE commands from SQL clients.
-/// 
-/// Syntax: CREATE TABLE [IF NOT EXISTS] <db>/<schema>/<table> (col type, ...)
-pub fn do_create_table(store: &SharedStore, q: &str) -> Result<()> {
-    use anyhow::anyhow;
-    // Parse: CREATE TABLE [IF NOT EXISTS] <db>/<schema>/<table> (col type, ...)
-    debug!(target: "clarium::exec", "do_create_table: begin q='{}'", q);
-    let mut s = q.trim();
-    let up = s.to_uppercase();
-    if !up.starts_with("CREATE TABLE ") { return Err(anyhow!("unsupported CREATE TABLE")); }
-    s = s["CREATE TABLE ".len()..].trim();
-    let s_up = s.to_uppercase();
-    if s_up.starts_with("IF NOT EXISTS ") { s = s["IF NOT EXISTS ".len()..].trim(); }
-    // Extract identifier up to '(' and the column list inside (...)
-    let p_open = s.find('(').ok_or_else(|| anyhow!("expected ( in CREATE TABLE"))?;
-    let ident = s[..p_open].trim();
-    let p_close = s.rfind(')').ok_or_else(|| anyhow!("expected ) in CREATE TABLE"))?;
-    let cols_str = &s[p_open+1 .. p_close];
-    // Parse columns: name type [, name type ...]
-    // Also detect PRIMARY KEY constraints (both inline and table-level)
-    let mut cols: Vec<(String, String)> = Vec::new();
-    let mut cur = String::new();
-    let mut depth = 0i32;
-    for ch in cols_str.chars() {
-        match ch {
-            '(' => { depth += 1; cur.push(ch); }
-            ')' => { depth -= 1; cur.push(ch); }
-            ',' if depth == 0 => { if !cur.trim().is_empty() { cols.push(split_col_def(cur.trim())); } cur.clear(); }
-            _ => cur.push(ch),
-        }
-    }
-    if !cur.trim().is_empty() { cols.push(split_col_def(cur.trim())); }
-    
-    // Detect PRIMARY KEY: check for inline "PRIMARY KEY" or table-level "PRIMARY KEY (col)"
-    let mut has_primary_key = false;
-    let cols_str_up = cols_str.to_uppercase();
-    if cols_str_up.contains("PRIMARY KEY") {
-        has_primary_key = true;
-    }
-    
-    // Map SQL types to internal type keys
-    let mut schema_entries: Vec<(String, String)> = Vec::new();
-    for (name, ty) in cols.into_iter() {
-        let n = name.trim_matches('"').to_string();
-        // Skip table-level constraints (they start with keywords like PRIMARY, FOREIGN, UNIQUE, CHECK, CONSTRAINT)
-        let n_up = n.to_uppercase();
-        if n_up == "PRIMARY" || n_up == "FOREIGN" || n_up == "UNIQUE" || n_up == "CHECK" || n_up == "CONSTRAINT" {
-            continue;
-        }
-        if n == "_time" { continue; }
-        let t_up = ty.to_ascii_lowercase();
-        let key = if t_up.contains("char") || t_up.contains("text") || t_up.contains("json") || t_up.contains("bool") { "string".to_string() }
-            else if t_up.contains("int") { "int64".to_string() }
-            else if t_up.contains("double") || t_up.contains("real") || t_up.contains("float") || t_up.contains("numeric") || t_up.contains("decimal") { "float64".to_string() }
-            else if t_up.contains("time") || t_up.contains("date") { "int64".to_string() }
-            else { "string".to_string() };
-        schema_entries.push((n, key));
-    }
-    // Create directory and schema.json
-    let ident_norm = ident.trim().trim_matches('"');
-    // If normalized earlier, we expect slashes; otherwise convert dots to slashes
-    let db_path = if ident_norm.contains('/') { ident_norm.to_string() } else { ident_norm.replace('.', "/") };
-    let root = store.root_path();
-    let dir = std::path::Path::new(&root).join(db_path.replace('/', std::path::MAIN_SEPARATOR.to_string().as_str()));
-    debug!(target: "clarium::exec", "do_create_table: dir='{}' (db_path='{}')", dir.display(), db_path);
-    std::fs::create_dir_all(&dir).with_context(|| format!("create table dir {}", dir.display()))?;
-    let mut map = serde_json::Map::new();
-    for (k, t) in schema_entries.into_iter() { map.insert(k, serde_json::Value::String(t)); }
-    // Add PRIMARY marker column if table has primary key constraint
-    if has_primary_key {
-        map.insert("PRIMARY".to_string(), serde_json::Value::String("marker".to_string()));
-    }
-    let sj = dir.join("schema.json");
-    std::fs::write(&sj, serde_json::to_string_pretty(&serde_json::Value::Object(map))?)?;
-    debug!(target: "clarium::exec", "do_create_table: wrote schema.json at '{}'", sj.display());
-    Ok(())
-}
-
-fn split_col_def(s: &str) -> (String, String) {
-    let mut parts = s.split_whitespace();
-    let name = parts.next().unwrap_or("").to_string();
-    let mut ty = String::new();
-    for p in parts { if !ty.is_empty() { ty.push(' '); } ty.push_str(p); }
-    (name, ty)
 }
 
 #[cfg(test)]

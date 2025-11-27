@@ -568,6 +568,10 @@ fn to_ck_and_db(cmd: &query::Command) -> (security::CommandKind, Option<String>)
     match cmd {
         query::Command::Select(q) => (security::CommandKind::Select, q.base_table.as_ref().and_then(|t| t.table_name().map(|s| s.to_string()))),
         query::Command::Calculate { query: q, .. } => (security::CommandKind::Calculate, q.base_table.as_ref().and_then(|t| t.table_name().map(|s| s.to_string()))),
+        query::Command::Update { table, .. } => {
+            let db_name = if table.contains('/') { table.split('/').next().map(|s| s.to_string()) } else { None };
+            (security::CommandKind::Other, db_name)
+        }
         query::Command::DeleteRows { database, .. } => (security::CommandKind::DeleteRows, Some(database.clone())),
         query::Command::DeleteColumns { database, .. } => (security::CommandKind::DeleteColumns, Some(database.clone())),
         query::Command::SchemaShow { database } => (security::CommandKind::Schema, Some(database.clone())),

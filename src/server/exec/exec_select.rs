@@ -94,3 +94,59 @@ fn derive_defaults_from_ident(ident: &str) -> (String, String) {
     if parts.len() >= 3 { return (parts[0].to_string(), parts[1].to_string()); }
     ("clarium".into(), "public".into())
 }
+
+// High-level handlers for SELECT and SELECT UNION, extracted from exec.rs to keep dispatcher thin.
+// These functions encapsulate INTO handling and schema alignment logic.
+
+pub fn handle_select(store: &SharedStore, q: &crate::query::Query) -> Result<(DataFrame, Option<(String, crate::query::IntoMode)>)> {
+    // Return the DataFrame and optional INTO destination with mode for the caller to persist.
+    let df = run_select(store, q)?;
+    let into = q.into_table.as_ref().map(|dest| (dest.clone(), q.into_mode.clone().unwrap_or(crate::query::IntoMode::Append)));
+    Ok((df, into))
+}
+
+pub fn handle_select_union(store: &SharedStore, queries: &[crate::query::Query], all: bool) -> Result<DataFrame> {
+    // Execute each query and collect DataFrames
+    let mut dfs: Vec<DataFrame> = Vec::new();
+    for q in queries { dfs.push(run_select(store, q)?); }
+    // Align schemas (union of columns)
+    let mut all_cols: Vec<String> = Vec::new();
+    for df in &dfs {
+        for n in df.get_column_names().iter().map(|s| s.to_string()) {
+            if !all_cols.contains(&n) { all_cols.push(n); }
+        }
+    }
+    // Determine dtype per column from first DF that has it
+    let mut col_types: std::collections::HashMap<String, DataType> = std::collections::HashMap::new();
+    for df in &dfs {
+        for col_name in df.get_column_names() {
+            let col_name_str = col_name.to_string();
+            if !col_types.contains_key(&col_name_str) {
+                if let Ok(col) = df.column(col_name.as_str()) { col_types.insert(col_name_str, col.dtype().clone()); }
+            }
+        }
+    }
+    let mut aligned: Vec<DataFrame> = Vec::new();
+    for mut df in dfs {
+        let df_cols: Vec<String> = df.get_column_names().iter().map(|s| s.to_string()).collect();
+        for c in &all_cols {
+            if !df_cols.iter().any(|n| n == c) {
+                let dtype = col_types.get(c).cloned().unwrap_or(DataType::Null);
+                let s = Series::new_null(c.as_str().into(), df.height()).cast(&dtype)?;
+                df.with_column(s)?;
+            }
+        }
+        // Reorder columns to all_cols order
+        let cols: Vec<Column> = all_cols.iter().map(|n| df.column(n.as_str()).unwrap().clone()).collect();
+        aligned.push(DataFrame::new(cols)?);
+    }
+    let mut out = if aligned.is_empty() { DataFrame::new(Vec::<Column>::new())? } else {
+        let mut acc = aligned[0].clone();
+        for df in aligned.iter().skip(1) { acc.vstack_mut(df)?; }
+        acc
+    };
+    if !all {
+        out = out.lazy().unique(None, polars::prelude::UniqueKeepStrategy::First).collect()?;
+    }
+    Ok(out)
+}

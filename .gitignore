@@ -2166,3 +2166,5 @@ target/
 /dbs/clarium/public/demo_positive_events/data.parquet
 /dbs/clarium/public/demo_positive_events/schema.json
 /dbs/user.parquet
+/dbs/clarium/public/metrics/data.parquet
+/dbs/clarium/public/IF/schema.json
