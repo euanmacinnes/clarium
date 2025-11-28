@@ -2,6 +2,10 @@
 
 A minimal Rust service for storing and querying time‑series data backed by Parquet. It exposes an HTTP+WebSocket API and an optional PostgreSQL wire (pgwire) endpoint, and ships with a small SQL‑like query language for aggregations. Storage is filesystem‑based using a three‑level layout: database/schema/table.time.
 
+Full documentation
+------------------
+- See docs/README.md for the full docs set, including Getting Started, SQL reference, Time‑series, Views, UDFs, System catalogs, Storage format, Administration, Compatibility, and End‑to‑end Examples.
+
 Quick start
 
 - Prerequisites: Rust stable (1.75+), Internet access for crates
