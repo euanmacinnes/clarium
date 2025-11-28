@@ -112,3 +112,4 @@ Next steps
 - Read concepts.md to understand objects and naming.
 - See sql-reference.md for the query surface with examples.
 - Explore time-series and views in depth in time-series.md and views.md.
+- If you’re launching Clarium from the terminal, see cli.md for server and CLI usage with copy‑pasteable examples.

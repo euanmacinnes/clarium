@@ -10,6 +10,7 @@ Start here if you’re new, or jump to a topic below.
 Contents
 --------
 - Getting started: quick tour and first query — see getting-started.md
+- Command-line (server + CLI): running clarium_server, clarium_cli, psql/pgwire — see cli.md
 - Core concepts: databases, schemas, tables, time tables, views — see concepts.md
 - SQL reference: SELECT, FROM, JOIN, WHERE, GROUP BY, BY windows, ROLLING, ORDER/LIMIT, INTO, CTEs, UNION — see sql-reference.md
 - Views: CREATE/DROP/SHOW VIEW, selecting from views, pg_get_viewdef, collisions — see views.md
