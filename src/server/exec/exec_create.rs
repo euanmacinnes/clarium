@@ -14,6 +14,10 @@ pub fn handle_create_table(store: &SharedStore, table: &str, primary_key: &Optio
     use std::{fs, path::PathBuf};
     debug!(target: "clarium::exec", "CreateTable: begin table='{}' pk={:?} partitions={:?}", table, primary_key, partitions);
 
+    // Qualify with current session defaults if not already fully qualified
+    let qd = crate::system::current_query_defaults();
+    let table = crate::ident::qualify_regular_ident(table, &qd);
+
     // Resolve filesystem paths for diagnostics (before creating)
     let (_dir_path_before, exists_before) = {
         let g = store.0.lock();
@@ -78,8 +82,11 @@ pub fn handle_create_table(store: &SharedStore, table: &str, primary_key: &Optio
 pub fn handle_drop_table(store: &SharedStore, table: &str, if_exists: bool) -> Result<serde_json::Value> {
     let guard = store.0.lock();
     if table.ends_with(".time") { anyhow::bail!("DROP TABLE cannot target a .time table"); }
+    // Qualify with session defaults
+    let qd = crate::system::current_query_defaults();
+    let tableq = crate::ident::qualify_regular_ident(table, &qd);
     // Check if table exists
-    let table_path = guard.root_path().join(table.replace('/', std::path::MAIN_SEPARATOR.to_string().as_str()));
+    let table_path = guard.root_path().join(tableq.replace('/', std::path::MAIN_SEPARATOR.to_string().as_str()));
     let exists = table_path.exists();
     // If IF EXISTS is used and table doesn't exist, return success without error
     if if_exists && !exists {
@@ -87,18 +94,21 @@ pub fn handle_drop_table(store: &SharedStore, table: &str, if_exists: bool) -> R
     }
     // If table doesn't exist and IF EXISTS is not used, return error
     if !exists {
-        anyhow::bail!("Table not found: {}", table);
+        anyhow::bail!("Table not found: {}", tableq);
     }
     // Otherwise proceed with normal deletion
-    guard.delete_table(&table)?;
+    guard.delete_table(&tableq)?;
     Ok(serde_json::json!({"status":"ok"}))
 }
 
 pub fn handle_rename_table(store: &SharedStore, from: &str, to: &str) -> Result<serde_json::Value> {
     use std::fs;
     if from.ends_with(".time") || to.ends_with(".time") { anyhow::bail!("RENAME TABLE cannot rename .time tables; use RENAME TIME TABLE"); }
-    let src = store.root_path().join(from.replace('/', std::path::MAIN_SEPARATOR.to_string().as_str()));
-    let dst = store.root_path().join(to.replace('/', std::path::MAIN_SEPARATOR.to_string().as_str()));
+    let qd = crate::system::current_query_defaults();
+    let fromq = crate::ident::qualify_regular_ident(from, &qd);
+    let toq = crate::ident::qualify_regular_ident(to, &qd);
+    let src = store.root_path().join(fromq.replace('/', std::path::MAIN_SEPARATOR.to_string().as_str()));
+    let dst = store.root_path().join(toq.replace('/', std::path::MAIN_SEPARATOR.to_string().as_str()));
     if !src.exists() { anyhow::bail!("Source table not found: {}", from); }
     if let Some(parent) = dst.parent() { fs::create_dir_all(parent).ok(); }
     fs::rename(&src, &dst)?;

@@ -105,6 +105,7 @@ mod perf_tests;
 mod perf_tests_month;
 mod pg_catalog_tests;
 mod test_views;
+mod session_defaults_tests;
 mod cast_and_regclass_tests;
 mod cast_followups_tests;
 mod quick_checks_udf;

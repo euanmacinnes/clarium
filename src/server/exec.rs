@@ -71,10 +71,16 @@ pub async fn execute_query(store: &SharedStore, text: &str) -> Result<serde_json
         | Command::ShowScripts => {
             self::exec_show::execute_show(store, cmd).await
         }
-        // USE and SET commands affect only session defaults; return ok here
-        Command::UseDatabase { .. } | Command::UseSchema { .. } | Command::Set { .. } => {
+        // USE and SET commands affect only session defaults; update thread-local defaults
+        Command::UseDatabase { name } => {
+            crate::system::set_current_database(&name);
             Ok(serde_json::json!({"status":"ok"}))
         }
+        Command::UseSchema { name } => {
+            crate::system::set_current_schema(&name);
+            Ok(serde_json::json!({"status":"ok"}))
+        }
+        Command::Set { .. } => { Ok(serde_json::json!({"status":"ok"})) }
         Command::Insert { table, columns, values } => {
             crate::server::exec::exec_insert::handle_insert(store, table, columns, values)
         }
@@ -325,26 +331,34 @@ pub async fn execute_query(store: &SharedStore, text: &str) -> Result<serde_json
         }
         Command::CreateSchema { path } => {
             use std::fs;
-            let dir = store.root_path().join(path.replace('/', std::path::MAIN_SEPARATOR.to_string().as_str()));
+            // If unqualified (no '/'), prepend current database
+            let full = if path.contains('/') || path.contains('\\') { path.clone() } else { format!("{}/{}", crate::system::get_current_database(), path) };
+            let dir = store.root_path().join(full.replace('/', std::path::MAIN_SEPARATOR.to_string().as_str()));
             fs::create_dir_all(&dir)?;
             Ok(serde_json::json!({"status":"ok"}))
         }
         Command::DropSchema { path } => {
             use std::fs;
-            let dir = store.root_path().join(path.replace('/', std::path::MAIN_SEPARATOR.to_string().as_str()));
+            let full = if path.contains('/') || path.contains('\\') { path.clone() } else { format!("{}/{}", crate::system::get_current_database(), path) };
+            let dir = store.root_path().join(full.replace('/', std::path::MAIN_SEPARATOR.to_string().as_str()));
             if dir.exists() { let _ = fs::remove_dir_all(&dir); }
             Ok(serde_json::json!({"status":"ok"}))
         }
         Command::RenameSchema { from, to } => {
             use std::fs;
-            let src = store.root_path().join(from.replace('/', std::path::MAIN_SEPARATOR.to_string().as_str()));
-            let dst = store.root_path().join(to.replace('/', std::path::MAIN_SEPARATOR.to_string().as_str()));
+            let from_full = if from.contains('/') || from.contains('\\') { from.clone() } else { format!("{}/{}", crate::system::get_current_database(), from) };
+            let to_full = if to.contains('/') || to.contains('\\') { to.clone() } else { format!("{}/{}", crate::system::get_current_database(), to) };
+            let src = store.root_path().join(from_full.replace('/', std::path::MAIN_SEPARATOR.to_string().as_str()));
+            let dst = store.root_path().join(to_full.replace('/', std::path::MAIN_SEPARATOR.to_string().as_str()));
             if !src.exists() { anyhow::bail!("Source schema not found: {}", from); }
             if let Some(parent) = dst.parent() { fs::create_dir_all(parent).ok(); }
             fs::rename(&src, &dst)?;
             Ok(serde_json::json!({"status":"ok"}))
         }
         Command::CreateTimeTable { table } => {
+            // Qualify identifier with current session defaults
+            let d = crate::system::current_query_defaults();
+            let table = crate::ident::qualify_time_ident(&table, &d);
             // Prevent name collision with existing views
             {
                 let root = store.root_path().clone();
@@ -363,14 +377,19 @@ pub async fn execute_query(store: &SharedStore, text: &str) -> Result<serde_json
             Ok(serde_json::json!({"status":"ok"}))
         }
         Command::DropTimeTable { table } => {
+            let d = crate::system::current_query_defaults();
+            let table = crate::ident::qualify_time_ident(&table, &d);
             let guard = store.0.lock();
             guard.delete_table(&table)?;
             Ok(serde_json::json!({"status":"ok"}))
         }
         Command::RenameTimeTable { from, to } => {
             use std::fs;
-            let src = store.root_path().join(from.replace('/', std::path::MAIN_SEPARATOR.to_string().as_str()));
-            let dst = store.root_path().join(to.replace('/', std::path::MAIN_SEPARATOR.to_string().as_str()));
+            let d = crate::system::current_query_defaults();
+            let fromq = crate::ident::qualify_time_ident(&from, &d);
+            let toq = crate::ident::qualify_time_ident(&to, &d);
+            let src = store.root_path().join(fromq.replace('/', std::path::MAIN_SEPARATOR.to_string().as_str()));
+            let dst = store.root_path().join(toq.replace('/', std::path::MAIN_SEPARATOR.to_string().as_str()));
             if !src.exists() { anyhow::bail!("Source time table not found: {}", from); }
             if let Some(parent) = dst.parent() { fs::create_dir_all(parent).ok(); }
             fs::rename(&src, &dst)?;

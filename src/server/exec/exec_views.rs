@@ -27,8 +27,8 @@ fn dtype_key_of(dt: &polars::prelude::DataType) -> String {
 }
 
 fn qualify_view_name(name: &str) -> String {
-    // Use regular table qualifier with defaults (clarium/public)
-    let d = crate::ident::QueryDefaults::from_options(None, None);
+    // Use current session defaults (USE DATABASE/SCHEMA)
+    let d = crate::system::current_query_defaults();
     crate::ident::qualify_regular_ident(name, &d)
 }
 

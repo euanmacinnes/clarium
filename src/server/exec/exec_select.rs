@@ -96,7 +96,8 @@ fn derive_defaults_from_ident(ident: &str) -> (String, String) {
     // Try dotted db.schema.table
     let parts: Vec<&str> = ident.split('.').collect();
     if parts.len() >= 3 { return (parts[0].to_string(), parts[1].to_string()); }
-    ("clarium".into(), "public".into())
+    // Fall back to session defaults (USE DATABASE/SCHEMA)
+    (crate::system::get_current_database(), crate::system::get_current_schema())
 }
 
 // High-level handlers for SELECT and SELECT UNION, extracted from exec.rs to keep dispatcher thin.
