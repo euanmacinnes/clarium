@@ -49,6 +49,45 @@ fn get_or_assign_table_oid(table_dir: &Path, db: &str, schema: &str, table: &str
     default_oid
 }
 
+/// Obtain a stable, synthesized OID for a view, persisted in the `.view` JSON file
+/// under a nested `__clarium_oids__` map to avoid clashing with user keys.
+pub(crate) fn get_or_assign_view_oid(view_file: &Path, db: &str, schema: &str, view: &str) -> i32 {
+    // Reserve a different range for views to minimize accidental collision with tables
+    // Range start 18000
+    let seed = format!("view:{}.{}/{}", db, schema, view);
+    let default_oid = 18000 + (stable_hash_u32(&seed) % 1_000_000) as i32;
+    if let Some(mut json) = read_json(view_file) {
+        if let Some(obj) = json.as_object_mut() {
+            let o = obj.entry("__clarium_oids__").or_insert(serde_json::json!({}));
+            if let Some(map) = o.as_object() {
+                if let Some(v) = map.get("class_oid").and_then(|v| v.as_i64()) {
+                    return v as i32;
+                }
+            }
+            // write back
+            let mut new_map = o.as_object().cloned().unwrap_or_default();
+            new_map.insert("class_oid".to_string(), serde_json::json!(default_oid));
+            *o = serde_json::Value::Object(new_map);
+            write_json(view_file, &serde_json::Value::Object(obj.clone()));
+            return default_oid;
+        }
+    }
+    default_oid
+}
+
+/// Lookup a view definition by its OID. Returns Some(definition_sql) or None
+/// if OID is not found or maps to a non-view object.
+pub fn lookup_view_definition_by_oid(store: &SharedStore, oid: i32) -> Option<String> {
+    let views = enumerate_views(store);
+    for v in views {
+        let vid = get_or_assign_view_oid(&v.file, &v.db, &v.schema, &v.view);
+        if vid == oid {
+            return Some(v.def_sql);
+        }
+    }
+    None
+}
+
 // Thread-local execution flags to avoid cross-test and cross-session interference.
 // These replace the previous process-wide AtomicBools, which could cause
 // intermittent failures when tests run in parallel and flip the flags.
@@ -67,6 +106,37 @@ thread_local! {
 }
 pub fn get_strict_projection() -> bool { TLS_STRICT_PROJECTION.with(|c| c.get()) }
 pub fn set_strict_projection(v: bool) { TLS_STRICT_PROJECTION.with(|c| c.set(v)); }
+
+// Thread-local current database/schema for session-aware qualification (per-thread/session)
+thread_local! {
+    static TLS_CURRENT_DB: Cell<Option<String>> = const { Cell::new(None) };
+}
+thread_local! {
+    static TLS_CURRENT_SCHEMA: Cell<Option<String>> = const { Cell::new(None) };
+}
+
+/// Get current database name for this thread/session, or default "clarium"
+pub fn get_current_database() -> String {
+    TLS_CURRENT_DB.with(|c| c.take()).map(|s| { TLS_CURRENT_DB.with(|c2| c2.set(Some(s.clone()))); s }).unwrap_or_else(|| "clarium".to_string())
+}
+
+/// Get current schema name for this thread/session, or default "public"
+pub fn get_current_schema() -> String {
+    TLS_CURRENT_SCHEMA.with(|c| c.take()).map(|s| { TLS_CURRENT_SCHEMA.with(|c2| c2.set(Some(s.clone()))); s }).unwrap_or_else(|| "public".to_string())
+}
+
+/// Set current database for this thread/session
+pub fn set_current_database(db: &str) { TLS_CURRENT_DB.with(|c| c.set(Some(db.to_string()))); }
+
+/// Set current schema for this thread/session
+pub fn set_current_schema(schema: &str) { TLS_CURRENT_SCHEMA.with(|c| c.set(Some(schema.to_string()))); }
+
+/// Helper to obtain QueryDefaults from current thread-local session values
+pub fn current_query_defaults() -> crate::ident::QueryDefaults {
+    let db = get_current_database();
+    let schema = get_current_schema();
+    crate::ident::QueryDefaults::new(db, schema)
+}
 
 fn strip_time_ext(name: &str) -> String {
     if let Some(stripped) = name.strip_suffix(".time") { stripped.to_string() } else { name.to_string() }
@@ -119,6 +189,55 @@ fn enumerate_tables(store: &SharedStore) -> Vec<TableMeta> {
                                     }
                                     if !cols.iter().any(|(n, _)| n == "_time") { cols.insert(0, ("_time".into(), "int64".into())); }
                                     out.push(TableMeta { db: dbname.clone(), schema: schema_name.clone(), table: tname, cols, has_primary_marker, dir: tp.clone() });
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
+#[derive(Debug, Clone)]
+struct ViewMeta {
+    db: String,
+    schema: String,
+    view: String,
+    def_sql: String,
+    file: PathBuf,
+}
+
+fn enumerate_views(store: &SharedStore) -> Vec<ViewMeta> {
+    let mut out: Vec<ViewMeta> = Vec::new();
+    let root = store.root_path();
+    if let Ok(dbs) = std::fs::read_dir(&root) {
+        for db_ent in dbs.flatten() {
+            let db_path = db_ent.path(); if !db_path.is_dir() { continue; }
+            let dbname = match db_path.file_name().and_then(|s| s.to_str()) { Some(n) => n.to_string(), None => continue };
+            if dbname.starts_with('.') { continue; }
+            if let Ok(schemas) = std::fs::read_dir(&db_path) {
+                for sch_ent in schemas.flatten() {
+                    let sch_path = sch_ent.path(); if !sch_path.is_dir() { continue; }
+                    let schema_name = sch_path.file_name().and_then(|s| s.to_str()).unwrap_or("").to_string();
+                    if schema_name.starts_with('.') { continue; }
+                    if let Ok(entries) = std::fs::read_dir(&sch_path) {
+                        for e in entries.flatten() {
+                            let p = e.path();
+                            if p.is_file() {
+                                if let Some(ext) = p.extension().and_then(|s| s.to_str()) {
+                                    if ext.eq_ignore_ascii_case("view") {
+                                        let vname = p.file_stem().and_then(|s| s.to_str()).unwrap_or("").to_string();
+                                        // read def
+                                        let mut def = String::new();
+                                        if let Some(json) = read_json(&p) {
+                                            if let Some(s) = json.get("definition_sql").and_then(|v| v.as_str()) {
+                                                def = s.to_string();
+                                            }
+                                        }
+                                        out.push(ViewMeta { db: dbname.clone(), schema: schema_name.clone(), view: vname, def_sql: def, file: p.clone() });
+                                    }
                                 }
                             }
                         }
@@ -266,7 +385,71 @@ pub fn system_table_df(name: &str, store: &SharedStore) -> Option<DataFrame> {
     }
 
     if is("information_schema.views") {
-        return DataFrame::new(vec![Series::new("table_name".into(), Vec::<String>::new()).into()]).ok();
+        // List views by scanning for .view files under db/schema folders
+        let root = store.root_path();
+        let mut schemas: Vec<String> = Vec::new();
+        let mut names: Vec<String> = Vec::new();
+        let mut defs: Vec<String> = Vec::new();
+        if let Ok(dbs) = std::fs::read_dir(&root) {
+            for db_ent in dbs.flatten() {
+                let db_path = db_ent.path(); if !db_path.is_dir() { continue; }
+                if db_ent.file_name().to_string_lossy().starts_with('.') { continue; }
+                if let Ok(schemas_dir) = std::fs::read_dir(&db_path) {
+                    for sch_ent in schemas_dir.flatten() {
+                        let sch_path = sch_ent.path(); if !sch_path.is_dir() { continue; }
+                        let schema_name = sch_ent.file_name().to_string_lossy().to_string();
+                        if schema_name.starts_with('.') { continue; }
+                        if let Ok(entries) = std::fs::read_dir(&sch_path) {
+                            for e in entries.flatten() {
+                                let p = e.path();
+                                if p.is_file() {
+                                    if let Some(ext) = p.extension().and_then(|s| s.to_str()) {
+                                        if ext.eq_ignore_ascii_case("view") {
+                                            let tname = p.file_stem().and_then(|s| s.to_str()).unwrap_or("").to_string();
+                                            // Read definition for convenience
+                                            let mut def = String::new();
+                                            if let Ok(text) = std::fs::read_to_string(&p) {
+                                                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) {
+                                                    if let Some(s) = json.get("definition_sql").and_then(|v| v.as_str()) {
+                                                        def = s.to_string();
+                                                    }
+                                                }
+                                            }
+                                            schemas.push(schema_name.clone());
+                                            names.push(tname);
+                                            defs.push(def);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        return DataFrame::new(vec![
+            Series::new("table_schema".into(), schemas).into(),
+            Series::new("table_name".into(), names).into(),
+            Series::new("view_definition".into(), defs).into(),
+        ]).ok();
+    }
+
+    // pg_catalog.pg_views compatibility
+    if last1 == "pg_views" || last2 == "pg_catalog.pg_views" {
+        let views = enumerate_views(store);
+        let mut schemaname: Vec<String> = Vec::new();
+        let mut viewname: Vec<String> = Vec::new();
+        let mut definition: Vec<String> = Vec::new();
+        for v in views {
+            schemaname.push(v.schema);
+            viewname.push(v.view);
+            definition.push(v.def_sql);
+        }
+        return DataFrame::new(vec![
+            Series::new("schemaname".into(), schemaname).into(),
+            Series::new("viewname".into(), viewname).into(),
+            Series::new("definition".into(), definition).into(),
+        ]).ok();
     }
 
     // pg_catalog.pg_type can also be referred to as just pg_type
@@ -522,6 +705,7 @@ pub fn system_table_df(name: &str, store: &SharedStore) -> Option<DataFrame> {
 
     if last1 == "pg_class" || last2 == "pg_catalog.pg_class" {
         let metas = enumerate_tables(store);
+        let vmetas = enumerate_views(store);
         let mut relname: Vec<String> = Vec::new();
         let mut nspname: Vec<String> = Vec::new();
         let mut relkind: Vec<String> = Vec::new();
@@ -532,21 +716,28 @@ pub fn system_table_df(name: &str, store: &SharedStore) -> Option<DataFrame> {
         // Map schema names to namespace OIDs (matching pg_namespace)
         let pg_catalog_oid: i32 = 11;
         let public_oid: i32 = 2200;
+        let ns_oid_for = |schema: &str| -> i32 {
+            match schema {
+                "pg_catalog" => pg_catalog_oid,
+                "public" => public_oid,
+                _ => public_oid,
+            }
+        };
         
         for m in metas.iter() {
             relname.push(m.table.clone());
             nspname.push(m.schema.clone());
             relkind.push("r".to_string());
-            // Assign/reuse synthetic OID persisted in schema.json for stability
             oid.push(get_or_assign_table_oid(&m.dir, &m.db, &m.schema, &m.table));
-            // Map schema name to namespace OID
-            let ns_oid = match m.schema.as_str() {
-                "pg_catalog" => pg_catalog_oid,
-                "public" => public_oid,
-                _ => public_oid, // default to public
-            };
-            relnamespace.push(ns_oid);
-            // relpartbound is NULL for non-partitioned tables
+            relnamespace.push(ns_oid_for(&m.schema));
+            relpartbound.push(None);
+        }
+        for v in vmetas.iter() {
+            relname.push(v.view.clone());
+            nspname.push(v.schema.clone());
+            relkind.push("v".to_string());
+            oid.push(get_or_assign_view_oid(&v.file, &v.db, &v.schema, &v.view));
+            relnamespace.push(ns_oid_for(&v.schema));
             relpartbound.push(None);
         }
         return DataFrame::new(vec![

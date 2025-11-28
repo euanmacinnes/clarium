@@ -572,6 +572,8 @@ fn to_ck_and_db(cmd: &query::Command) -> (security::CommandKind, Option<String>)
             let db_name = if table.contains('/') { table.split('/').next().map(|s| s.to_string()) } else { None };
             (security::CommandKind::Other, db_name)
         }
+        // Views
+        query::Command::CreateView { .. } | query::Command::DropView { .. } | query::Command::ShowView { .. } => (security::CommandKind::Database, None),
         query::Command::DeleteRows { database, .. } => (security::CommandKind::DeleteRows, Some(database.clone())),
         query::Command::DeleteColumns { database, .. } => (security::CommandKind::DeleteColumns, Some(database.clone())),
         query::Command::SchemaShow { database } => (security::CommandKind::Schema, Some(database.clone())),

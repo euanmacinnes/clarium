@@ -34,6 +34,8 @@ pub(crate) fn run_select_with_context(store: &SharedStore, q: &crate::query::Que
         .and_then(|r| r.snapshot().ok());
     
     let mut ctx = DataContext::with_defaults(def_db, def_schema);
+    // Attach storage handle for functions that need metadata (e.g., pg_get_viewdef)
+    ctx.store = Some(store.clone());
     if let Some(reg) = registry_snapshot {
         ctx.script_registry = Some(reg);
     }
@@ -45,6 +47,8 @@ pub(crate) fn run_select_with_context(store: &SharedStore, q: &crate::query::Que
         // This allows nested subqueries to identify which aliases belong to outer query levels
         ctx.parent_sources.extend(parent.parent_sources.iter().cloned());
         ctx.parent_sources.extend(parent.sources.iter().cloned());
+        // Inherit store if not set
+        if ctx.store.is_none() { ctx.store = parent.store.clone(); }
     }
     
     debug!(target: "clarium::exec", "run_select (staged): base_table_present={} joins_present={} by_window_ms={:?} group_by_cols={:?} rolling_window_ms={:?} select_len={} where_present={} order_by_present={:?} limit={:?} into_table_present={}",

@@ -51,6 +51,9 @@ pub struct DataContext {
     /// Query-scoped prepared Lua VM reused for all UDF calls in this query.
     /// Stored here to make the Lua state explicitly query-specific.
     pub query_lua: Rc<RefCell<Option<crate::scripts::PreparedLua>>>,
+    /// Optional handle to storage so certain scalar helpers can resolve metadata
+    /// (e.g., pg_get_viewdef) during expression compilation.
+    pub store: Option<crate::storage::SharedStore>,
     /// CTE (Common Table Expression) results indexed by name
     pub cte_tables: HashMap<String, DataFrame>,
     /// Temporary ORDER BY columns added for sorting but not in original SELECT projection
@@ -91,7 +94,7 @@ impl DataContext {
         }
         // Normalize identifier: handle quoting and case folding like Postgres for unquoted identifiers
         let raw = name.trim();
-        let (folded, was_quoted) = if raw.starts_with('"') && raw.ends_with('"') && raw.len() >= 2 {
+        let (folded, _was_quoted) = if raw.starts_with('"') && raw.ends_with('"') && raw.len() >= 2 {
             (raw[1..raw.len()-1].to_string(), true)
         } else {
             (raw.to_ascii_lowercase(), false)
@@ -183,6 +186,7 @@ impl DataContext {
             stage_user_columns: HashMap::new(),
             script_registry: None,
             query_lua: Rc::new(RefCell::new(None)),
+            store: None,
             cte_tables: HashMap::new(),
             temp_order_by_columns: HashSet::new(),
         }
@@ -426,6 +430,23 @@ impl DataContext {
                 // Resolve to a canonical path for regular tables or KV
                 let effective = self.resolve_table_ident(name);
                 tracing::debug!(target: "clarium::exec", "load_source_df: resolving name='{}' -> effective='{}' alias={:?}", name, effective, alias);
+                // If this resolves to a VIEW file (<db>/<schema>/<name>.view), execute its definition as a subquery
+                if !effective.contains(".store.") {
+                    if let Some(vf) = crate::server::exec::exec_views::read_view_file(store, &effective).ok().flatten() {
+                        tracing::debug!(target: "clarium::exec", "load_source_df: view hit name='{}' -> executing definition", effective);
+                        // Parse and execute the stored definition SQL
+                        let cmd = crate::query::parse(&vf.definition_sql)?;
+                        let subquery_df = match cmd {
+                            crate::query::Command::Select(q) => crate::server::exec::exec_select::run_select_with_context(store, &q, Some(self))?,
+                            crate::query::Command::SelectUnion { queries, all } => crate::server::exec::exec_select::handle_select_union(store, &queries, all)?,
+                            _ => anyhow::bail!("View definition must be SELECT or SELECT UNION"),
+                        };
+                        // Prefix columns with alias or view name
+                        let prefixed = Self::prefix_columns(subquery_df, t)?;
+                        tracing::debug!(target: "clarium::exec", "load_source_df: view prefixed -> cols={:?}", prefixed.get_column_names());
+                        return Ok(prefixed);
+                    }
+                }
                 let df = if effective.contains(".store.") {
                     // KV addressing
                     let out = Self::read_df_or_kv(store, &effective)?;

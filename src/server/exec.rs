@@ -15,6 +15,7 @@ pub mod exec_keys;      // KV key operations
 pub mod exec_update;    // UPDATE handling
 pub mod exec_delete;    // DELETE COLUMNS handling
 pub mod exec_scripts;   // SCRIPT management (create/drop/rename/load)
+pub mod exec_views;     // VIEW management (create/drop/show)
 
 use anyhow::Result;
 use polars::prelude::*;
@@ -83,6 +84,12 @@ pub async fn execute_query(store: &SharedStore, text: &str) -> Result<serde_json
         | Command::RenameScript { .. }
         | Command::LoadScript { .. } => {
             self::exec_scripts::execute_scripts(store, cmd)
+        }
+        // View management
+        Command::CreateView { .. }
+        | Command::DropView { .. }
+        | Command::ShowView { .. } => {
+            self::exec_views::execute_views(store, cmd)
         }
         Command::Select(q) => {
             let (df, into) = crate::server::exec::exec_select::handle_select(store, &q)?;
@@ -338,6 +345,19 @@ pub async fn execute_query(store: &SharedStore, text: &str) -> Result<serde_json
             Ok(serde_json::json!({"status":"ok"}))
         }
         Command::CreateTimeTable { table } => {
+            // Prevent name collision with existing views
+            {
+                let root = store.root_path().clone();
+                let mut vp = root.join(table.replace('/', std::path::MAIN_SEPARATOR.to_string().as_str()));
+                // The table ident here is expected to end with .time, so the base directory is already with .time suffix
+                // We want to check for a view that uses the base name without .time
+                let base_no_time = if let Some(stripped) = table.strip_suffix(".time") { stripped } else { &table };
+                vp = root.join(base_no_time.replace('/', std::path::MAIN_SEPARATOR.to_string().as_str()));
+                vp.set_extension("view");
+                if vp.exists() {
+                    anyhow::bail!(format!("Object name conflict: a VIEW exists with name '{}'. Time table names must be unique across views.", base_no_time));
+                }
+            }
             let guard = store.0.lock();
             guard.create_table(&table)?;
             Ok(serde_json::json!({"status":"ok"}))

@@ -199,6 +199,13 @@ pub enum Command {
     Select(Query),
     // UNION or UNION ALL of multiple SELECT queries
     SelectUnion { queries: Vec<Query>, all: bool },
+    // VIEW DDL
+    // CREATE [OR ALTER] VIEW <name> AS <SELECT...>
+    CreateView { name: String, or_alter: bool, definition_sql: String },
+    // DROP VIEW [IF EXISTS] <name>
+    DropView { name: String, if_exists: bool },
+    // SHOW VIEW <name>
+    ShowView { name: String },
     Calculate { target_sensor: String, query: Query },
     // UPDATE <table> SET col = value[, ...] [WHERE ...]
     Update { table: String, assignments: Vec<(String, ArithTerm)>, where_clause: Option<WhereExpr> },
@@ -459,6 +466,26 @@ fn parse_create(s: &str) -> Result<Command> {
         if name.is_empty() { anyhow::bail!("Invalid CREATE DATABASE: missing database name"); }
         return Ok(Command::CreateDatabase { name: name.to_string() });
     }
+    if up.starts_with("VIEW ") || up.starts_with("OR ALTER VIEW ") {
+        // CREATE [OR ALTER] VIEW <name> AS <SELECT...>
+        // Capture the definition SQL verbatim after AS (can be SELECT or SELECT UNION)
+        let mut or_alter = false;
+        let after = if up.starts_with("OR ALTER VIEW ") {
+            or_alter = true;
+            &rest["OR ALTER VIEW ".len()..]
+        } else {
+            &rest["VIEW ".len()..]
+        };
+        let after = after.trim();
+        // Split on AS (case-insensitive)
+        let up_after = after.to_uppercase();
+        let as_pos = up_after.find(" AS ").ok_or_else(|| anyhow::anyhow!("Invalid CREATE VIEW: expected AS"))?;
+        let name = after[..as_pos].trim();
+        let def_sql = after[as_pos + 4..].trim();
+        if name.is_empty() { anyhow::bail!("Invalid CREATE VIEW: missing view name"); }
+        if def_sql.is_empty() { anyhow::bail!("Invalid CREATE VIEW: missing SELECT definition after AS"); }
+        return Ok(Command::CreateView { name: name.to_string(), or_alter, definition_sql: def_sql.to_string() });
+    }
     if up.starts_with("SCRIPT ") {
         // CREATE SCRIPT name AS 'code'
         let after = &rest[7..];
@@ -539,6 +566,19 @@ fn parse_drop(s: &str) -> Result<Command> {
     // DROP TABLE <db>/<schema>/<table> | <table>
     let rest = s[4..].trim();
     let up = rest.to_uppercase();
+    if up.starts_with("VIEW ") || up.starts_with("VIEW") {
+        // DROP VIEW [IF EXISTS] <name>
+        let mut tail = if up == "VIEW" { "" } else { &rest["VIEW ".len()..] };
+        tail = tail.trim();
+        let tail_up = tail.to_uppercase();
+        let mut if_exists = false;
+        if tail_up.starts_with("IF EXISTS ") {
+            if_exists = true;
+            tail = &tail["IF EXISTS ".len()..].trim();
+        }
+        if tail.is_empty() { anyhow::bail!("Invalid DROP VIEW: missing view name"); }
+        return Ok(Command::DropView { name: tail.to_string(), if_exists });
+    }
     if up.starts_with("DATABASE ") {
         let name = rest[9..].trim();
         if name.is_empty() { anyhow::bail!("Invalid DROP DATABASE: missing database name"); }
@@ -4057,6 +4097,11 @@ fn parse_show(s: &str) -> Result<Command> {
     if up == "SHOW TABLES" { return Ok(Command::ShowTables); }
     if up == "SHOW OBJECTS" { return Ok(Command::ShowObjects); }
     if up == "SHOW SCRIPTS" { return Ok(Command::ShowScripts); }
+    if up.starts_with("SHOW VIEW ") {
+        let name = s.trim()["SHOW VIEW ".len()..].trim();
+        if name.is_empty() { anyhow::bail!("SHOW VIEW: missing name"); }
+        return Ok(Command::ShowView { name: name.to_string() });
+    }
     anyhow::bail!("Unsupported SHOW command")
 }
 

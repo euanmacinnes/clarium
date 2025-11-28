@@ -26,6 +26,16 @@ pub fn handle_create_table(store: &SharedStore, table: &str, primary_key: &Optio
 
     if table.ends_with(".time") { anyhow::bail!("CREATE TABLE cannot target a .time table"); }
 
+    // Enforce uniqueness with views: a table cannot be created if a view with the same base name exists
+    {
+        let root = store.root_path().clone();
+        let mut vp = root.join(table.replace('/', std::path::MAIN_SEPARATOR.to_string().as_str()));
+        // For regular table, vp points to .../db/schema/table — convert to .view file
+        vp.set_extension("view");
+        if vp.exists() {
+            anyhow::bail!(format!("Object name conflict: a VIEW exists with name '{}'. Table names must be unique across views.", table));
+        }
+    }
     // Create the table directory and initial schema via store
     {
         let guard = store.0.lock();

@@ -354,6 +354,38 @@ pub fn build_arith_expr(a: &ArithExpr, ctx: &crate::server::data_context::DataCo
                 }
             }
 
+            // Built-in: pg_get_viewdef(oid)
+            // Return the stored view definition for the given pg_class OID, or NULL when not found.
+            if name_lc == "pg_get_viewdef" && args.len() == 1 {
+                // Build the argument expression as Int64
+                let arg_expr = build_arith_expr(&args[0], ctx).cast(DataType::Int64);
+                let store_opt = ctx.store.clone();
+                return arg_expr.map(
+                    move |col: Column| {
+                        use polars::prelude::AnyValue;
+                        let s = col.as_materialized_series();
+                        let ca = s.i64()?;
+                        let len = ca.len();
+                        let mut out: Vec<Option<String>> = Vec::with_capacity(len);
+                        for i in 0..len {
+                            let oid_opt = ca.get(i);
+                            if let Some(oid) = oid_opt {
+                                if let Some(ref st) = store_opt {
+                                    let def = crate::system::lookup_view_definition_by_oid(st, oid as i32);
+                                    out.push(def);
+                                } else {
+                                    out.push(None);
+                                }
+                            } else {
+                                out.push(None);
+                            }
+                        }
+                        Ok(Series::new("pg_get_viewdef".into(), out).into_column())
+                    },
+                    |_schema, _field| Ok(Field::new("pg_get_viewdef".into(), DataType::String))
+                );
+            }
+
             // Use the query-scoped registry from DataContext.
             // Clone the registry Arc so the closure can own it (avoids lifetime issues).
             // This ensures stable UDF resolution throughout query execution,
