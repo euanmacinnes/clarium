@@ -16,7 +16,7 @@ def test_create_insert_select(conn: Connection, with_schema: bool):
 
     # Try to create a simple table; Clarium may restrict DDL — mark xfail on clear unsupported cases
     try:
-        conn.execute(text(f"CREATE TABLE {fq} (_time BIGINT, value DOUBLE PRECISION)"))
+        conn.execute(text(f"CREATE TABLE {fq} (_time INT, value FLOAT)"))
     except (ProgrammingError, OperationalError, DBAPIError) as e:
         # If the backend does not support CREATE TABLE, xfail with message
         pytest.xfail(f"CREATE TABLE not supported by pgwire: {e}")

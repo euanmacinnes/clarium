@@ -2,6 +2,7 @@ use super::super::run_select;
 use crate::query::{self, Command};
 use crate::storage::{Store, SharedStore, Record};
 use super::udf_common::init_all_test_udfs;
+use std::collections::HashSet;
 
 /// pg_catalog tests that mimic SQLAlchemy introspection queries.
 /// SQLAlchemy uses these queries during connection initialization and schema reflection.
@@ -120,6 +121,80 @@ fn test_pg_namespace_basic_query() {
         .collect();
     assert!(names.contains(&"pg_catalog".to_string()));
     assert!(names.contains(&"public".to_string()));
+}
+
+#[test]
+fn test_information_schema_tables_public_demo_defaults() {
+    // Verify that querying information_schema.tables for schema 'public'
+    // returns the expected columns in order and lists the default demo tables.
+    // Query under test (exact):
+    // SELECT table_schema, table_name, table_type FROM information_schema.tables WHERE table_schema = 'public'
+
+    let tmp = tempfile::tempdir().unwrap();
+    let store = Store::new(tmp.path()).unwrap();
+
+    // Create the default demo tables similar to first-run bootstrap:
+    // - clarium/public/demo.time (time table)
+    // - clarium/public/demo_positive_events (regular table)
+    // - clarium/public/demo_negative_events (regular table)
+    let demo_time = "clarium/public/demo.time";
+    // Write a tiny record to ensure the time table exists on disk
+    let recs = vec![Record { _time: 1_700_000_000_000, sensors: serde_json::Map::from_iter(vec![("value".into(), serde_json::json!(0.0))]) }];
+    store.write_records(demo_time, &recs).unwrap();
+    // Create regular tables
+    store.create_table("clarium/public/demo_positive_events").unwrap();
+    store.create_table("clarium/public/demo_negative_events").unwrap();
+
+    let shared = SharedStore::new(tmp.path()).unwrap();
+
+    let sql = "SELECT table_schema, table_name, table_type FROM information_schema.tables WHERE table_schema = 'public'";
+    let q = match query::parse(sql).unwrap() { Command::Select(q) => q, _ => unreachable!() };
+    let df = run_select(&shared, &q).unwrap();
+
+    // Verify column order is exactly as requested
+    let cols = df.get_column_names();
+    assert_eq!(cols, vec!["table_schema", "table_name", "table_type"]);
+
+    // Gather results into sets for comparison without depending on filesystem order
+    let mut schemas: HashSet<String> = HashSet::new();
+    let mut names: HashSet<String> = HashSet::new();
+    let mut types: HashSet<String> = HashSet::new();
+
+    for i in 0..df.height() {
+        // Extract plain string values without the debug quotes that AnyValue::to_string() adds
+        let s = match df.get_columns()[0].as_materialized_series().get(i).unwrap() {
+            polars::prelude::AnyValue::String(v) => v.to_string(),
+            polars::prelude::AnyValue::StringOwned(v) => v.to_string(),
+            other => other.to_string(),
+        };
+        let n = match df.get_columns()[1].as_materialized_series().get(i).unwrap() {
+            polars::prelude::AnyValue::String(v) => v.to_string(),
+            polars::prelude::AnyValue::StringOwned(v) => v.to_string(),
+            other => other.to_string(),
+        };
+        let t = match df.get_columns()[2].as_materialized_series().get(i).unwrap() {
+            polars::prelude::AnyValue::String(v) => v.to_string(),
+            polars::prelude::AnyValue::StringOwned(v) => v.to_string(),
+            other => other.to_string(),
+        };
+        schemas.insert(s);
+        names.insert(n);
+        types.insert(t);
+    }
+
+    // All rows should be in schema 'public'
+    assert_eq!(schemas, HashSet::from(["public".to_string()]));
+
+    // Expected default demo tables (time table name is 'demo' without .time suffix)
+    let expected_names: HashSet<String> = HashSet::from([
+        "demo".to_string(),
+        "demo_positive_events".to_string(),
+        "demo_negative_events".to_string(),
+    ]);
+    assert!(expected_names.is_subset(&names), "Expected demo tables missing. got={:?}", names);
+
+    // Table type should be BASE TABLE for all
+    assert_eq!(types, HashSet::from(["BASE TABLE".to_string()]));
 }
 
 #[test]
