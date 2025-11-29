@@ -436,6 +436,7 @@ fn test_pg_catalog_pg_get_viewdef() {
 fn test_pg_type_with_to_regtype() {
     // Test query that uses TO_REGTYPE function to filter pg_type
     // This query checks for hstore type existence and retrieves type metadata
+    super::udf_common::init_all_test_udfs();
     let tmp = tempfile::tempdir().unwrap();
     let _store = Store::new(tmp.path()).unwrap();
     let shared = SharedStore::new(tmp.path()).unwrap();

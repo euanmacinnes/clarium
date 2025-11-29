@@ -1508,7 +1508,8 @@ fn parse_select(s: &str) -> Result<Query> {
                         else if dir.eq_ignore_ascii_case("ASC") { asc = true; }
                         else { /* unknown token ignored */ }
                     }
-                    list.push((name.trim().to_string(), asc));
+                    let normalized_name = crate::ident::normalize_identifier(name.trim());
+                    list.push((normalized_name, asc));
                 }
             }
             if list.is_empty() { anyhow::bail!("Invalid ORDER BY: empty list"); }
@@ -2626,6 +2627,8 @@ fn parse_type_name(s: &str) -> Option<(SqlType, usize)> {
         },
         // Schema-qualified regclass (e.g., pg_catalog.regclass) or bare regclass
         x if x.ends_with(".regclass") || x == "regclass" => SqlType::Regclass,
+        // Schema-qualified regtype (e.g., pg_catalog.regtype) or bare regtype
+        x if x.ends_with(".regtype") || x == "regtype" => SqlType::Regtype,
         _ => return None,
     };
     Some((ty, consumed_kw))

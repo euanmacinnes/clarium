@@ -315,8 +315,19 @@ impl DataContext {
     ///    We still map the result back to an actual column present in `df` by repeating the resolution against `df` using the outcome.
     ///    If resolution remains impossible in `df`, return a not found/ambiguous error.
     pub fn resolve_column_at_stage(&self, df: &DataFrame, name: &str, stage: SelectStage) -> Result<String> {
+        crate::tprintln!("[resolve_column_at_stage] Resolving '{}' at stage {:?}", name, stage);
+        crate::tprintln!("[resolve_column_at_stage] DataFrame columns: {:?}", df.get_column_names());
+        crate::tprintln!("[resolve_column_at_stage] alias_to_name: {:?}", self.alias_to_name);
         // Step 1: normal resolution first
-        if let Ok(n) = self.resolve_column(df, name) { return Ok(n); }
+        match self.resolve_column(df, name) {
+            Ok(n) => {
+                crate::tprintln!("[resolve_column_at_stage] resolve_column succeeded: '{}'", n);
+                return Ok(n);
+            }
+            Err(e) => {
+                crate::tprintln!("[resolve_column_at_stage] resolve_column failed: {}", e);
+            }
+        }
         // Step 2: consult stage-visible names
         let visible = self.visible_columns_until(stage);
         let def_db = self.current_database.as_deref();
@@ -394,6 +405,17 @@ impl DataContext {
                 }
             }
         }
+        
+        // Last resort: if name contains a dot (e.g., "T.OID"), strip the alias prefix and retry
+        if name.contains('.') {
+            if let Some((_alias, col_part)) = name.rsplit_once('.') {
+                // Recursively call resolve_column_at_stage with just the column part
+                if let Ok(resolved) = self.resolve_column_at_stage(df, col_part, stage) {
+                    return Ok(resolved);
+                }
+            }
+        }
+        
         anyhow::bail!(format!("Column not found: {}", name));
     }
 

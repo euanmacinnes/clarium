@@ -13,7 +13,9 @@ pub fn order_limit(mut df: DataFrame, q: &Query, ctx: &mut DataContext) -> Resul
     // ORDER BY on columns that are not part of the final projection by
     // skipping those sort keys instead of erroring. This preserves historical
     // behavior expected by tests which allow ORDER BY on non-projected columns.
+    tprintln!("[ORDER_LIMIT] DataFrame columns: {:?}", df.get_column_names());
     if let Some(ob) = &q.order_by {
+        tprintln!("[ORDER_LIMIT] ORDER BY clauses: {:?}", ob);
         if !ob.is_empty() {
             let strict = system::get_strict_projection();
             // In strict mode, validate that no ORDER BY columns are temporary (not in original SELECT)
