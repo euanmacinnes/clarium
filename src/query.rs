@@ -390,7 +390,7 @@ pub fn parse(input: &str) -> Result<Command> {
         let q = parse_select(select_part)?;
         return Ok(Command::Calculate { target_sensor, query: q });
     }
-    if sup.starts_with("WITH ") || sup.starts_with("SELECT ") {
+    if sup.starts_with("WITH ") || sup.starts_with("SELECT") {
         // Detect UNION / UNION ALL at top-level using a parser that respects nesting
         let (parts, all) = split_union_queries(s)?;
         if parts.len() > 1 {

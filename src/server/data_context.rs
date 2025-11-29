@@ -232,9 +232,16 @@ impl DataContext {
         let suffix_matches_in_df = |suffix: &str| -> Vec<String> {
             let needle = format!(".{}", suffix);
             let needle_lower = needle.to_lowercase();
+            let suffix_lower = suffix.to_lowercase();
             cols.iter().filter_map(|c| {
                 let s = c.as_str();
-                if s.to_lowercase().ends_with(&needle_lower) { Some(s.to_string()) } else { None }
+                let s_lower = s.to_lowercase();
+                // Match qualified columns ending with ".suffix" or unqualified columns equal to "suffix"
+                if s_lower.ends_with(&needle_lower) || s_lower == suffix_lower {
+                    Some(s.to_string())
+                } else {
+                    None
+                }
             }).collect()
         };
         // 1) If name contains a dot, it may be fully or partially qualified (e.g., alias.col or schema/table.col)
@@ -248,18 +255,41 @@ impl DataContext {
                 // Case-insensitive alias lookup
                 let alias_known = self.alias_to_name.keys().any(|k| k.eq_ignore_ascii_case(maybe_alias));
                 if alias_known {
+                    crate::tprintln!("[resolve_column] alias '{}' is known, col_part='{}'", maybe_alias, col_part);
                     // Try exact with defaults, then unique suffix within current df
                     if let (Some(db), Some(schema)) = (def_db, def_schema) {
                         let candidate = format!("{}/{}/{}", db, schema, name);
-                        if let Some(actual_name) = exact_in_df(&candidate) { return Ok(actual_name); }
-                    }
-                    let mut matches = suffix_matches_in_df(col_part);
-                    if matches.len() > 1 {
-                        if let (Some(db), Some(schema)) = (def_db, def_schema) {
-                            matches.retain(|m| m.starts_with(&format!("{}/{}/", db, schema)));
+                        if let Some(actual_name) = exact_in_df(&candidate) { 
+                            crate::tprintln!("[resolve_column] found qualified candidate: '{}'", actual_name);
+                            return Ok(actual_name); 
                         }
                     }
-                    if matches.len() == 1 { return Ok(matches.remove(0)); }
+                    let mut matches = suffix_matches_in_df(col_part);
+                    crate::tprintln!("[resolve_column] suffix_matches for '{}': {:?}", col_part, matches);
+                    if matches.len() > 1 {
+                        if let (Some(db), Some(schema)) = (def_db, def_schema) {
+                            let scoped: Vec<String> = matches.iter().filter(|m| m.starts_with(&format!("{}/{}/", db, schema))).cloned().collect();
+                            crate::tprintln!("[resolve_column] scoped matches: {:?}", scoped);
+                            // Only use scoped matches if we actually found any qualified columns
+                            if !scoped.is_empty() {
+                                matches = scoped;
+                            }
+                        }
+                    }
+                    crate::tprintln!("[resolve_column] final matches after scoping: {:?}", matches);
+                    if matches.len() == 1 { 
+                        crate::tprintln!("[resolve_column] returning single match: '{}'", matches[0]);
+                        return Ok(matches.remove(0)); 
+                    }
+                    // If we have multiple unqualified matches (e.g., "OID" and "oid"), try exact case-insensitive match on col_part
+                    if matches.len() > 1 {
+                        crate::tprintln!("[resolve_column] multiple matches, trying exact case-insensitive match for '{}'", col_part);
+                        if let Some(exact_match) = matches.iter().find(|m| m.as_str().eq_ignore_ascii_case(col_part)) {
+                            crate::tprintln!("[resolve_column] found exact match: '{}'", exact_match);
+                            return Ok(exact_match.clone());
+                        }
+                        crate::tprintln!("[resolve_column] no exact match found");
+                    }
                 } else {
                     // Alias unknown: bail early to avoid accidentally mapping to inner columns like o.customer_id == o.customer_id
                     anyhow::bail!(format!("Column not found: {} (unknown alias '{}')", name, maybe_alias));
