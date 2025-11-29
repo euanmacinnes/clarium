@@ -148,11 +148,23 @@ pub fn build_where_expr(w: &WhereExpr, ctx: &crate::server::data_context::DataCo
                 // to tolerate Int64-vs-Float64 comparisons (e.g., from correlated subqueries).
                 CompOp::Eq => {
                     let numeric_literal = matches!(right, ArithExpr::Term(ArithTerm::Number(_))) || matches!(left, ArithExpr::Term(ArithTerm::Number(_)));
-                    if numeric_literal { l.clone().cast(DataType::Float64).eq(r.clone().cast(DataType::Float64)) } else { l.eq(r) }
+                    if numeric_literal { 
+                        l.clone().cast(DataType::Float64).eq(r.clone().cast(DataType::Float64)) 
+                    } else { 
+                        // Type coercion: try string-to-int first, then int-to-string
+                        // Cast both sides to string to handle mixed string/int comparisons
+                        l.clone().cast(DataType::String).eq(r.clone().cast(DataType::String))
+                    }
                 }
                 CompOp::Ne => {
                     let numeric_literal = matches!(right, ArithExpr::Term(ArithTerm::Number(_))) || matches!(left, ArithExpr::Term(ArithTerm::Number(_)));
-                    if numeric_literal { l.clone().cast(DataType::Float64).neq(r.clone().cast(DataType::Float64)) } else { l.neq(r) }
+                    if numeric_literal { 
+                        l.clone().cast(DataType::Float64).neq(r.clone().cast(DataType::Float64)) 
+                    } else { 
+                        // Type coercion: try string-to-int first, then int-to-string
+                        // Cast both sides to string to handle mixed string/int comparisons
+                        l.clone().cast(DataType::String).neq(r.clone().cast(DataType::String))
+                    }
                 }
                 CompOp::Like | CompOp::NotLike => {
                     // Support LIKE when RHS is a literal string pattern by converting to a regex and applying via map

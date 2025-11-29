@@ -225,29 +225,33 @@ impl DataContext {
         let cols = df.get_column_names();
         let def_db = self.current_database.as_deref();
         let def_schema = self.current_schema.as_deref();
-        // Helper: check exact and suffix matches in df
-        let exact_in_df = |n: &str| cols.iter().any(|c| c.as_str() == n);
+        // Helper: check exact and suffix matches in df (case-insensitive for unquoted identifiers)
+        let exact_in_df = |n: &str| -> Option<String> {
+            cols.iter().find(|c| c.as_str().eq_ignore_ascii_case(n)).map(|c| c.to_string())
+        };
         let suffix_matches_in_df = |suffix: &str| -> Vec<String> {
             let needle = format!(".{}", suffix);
+            let needle_lower = needle.to_lowercase();
             cols.iter().filter_map(|c| {
                 let s = c.as_str();
-                if s.ends_with(&needle) { Some(s.to_string()) } else { None }
+                if s.to_lowercase().ends_with(&needle_lower) { Some(s.to_string()) } else { None }
             }).collect()
         };
         // 1) If name contains a dot, it may be fully or partially qualified (e.g., alias.col or schema/table.col)
         if name.contains('.') {
             // If it's already an exact column in df, return it
-            if exact_in_df(name) { return Ok(name.to_string()); }
+            if let Some(actual_name) = exact_in_df(name) { return Ok(actual_name); }
             // If formatted as alias.col, only allow suffix fallback when alias is known in this context.
             if let Some((maybe_alias, col_part)) = name.rsplit_once('.') {
                 // If alias is not known to this context, do NOT resolve by suffix here — it may belong to an outer query.
                 // Leave such names to be handled by correlated subquery substitution instead of hijacking them locally.
-                let alias_known = self.alias_to_name.contains_key(maybe_alias);
+                // Case-insensitive alias lookup
+                let alias_known = self.alias_to_name.keys().any(|k| k.eq_ignore_ascii_case(maybe_alias));
                 if alias_known {
                     // Try exact with defaults, then unique suffix within current df
                     if let (Some(db), Some(schema)) = (def_db, def_schema) {
                         let candidate = format!("{}/{}/{}", db, schema, name);
-                        if exact_in_df(&candidate) { return Ok(candidate); }
+                        if let Some(actual_name) = exact_in_df(&candidate) { return Ok(actual_name); }
                     }
                     let mut matches = suffix_matches_in_df(col_part);
                     if matches.len() > 1 {
@@ -273,7 +277,7 @@ impl DataContext {
                     1 => format!("{}/{}", db, name),
                     _ => name.to_string(),
                 };
-                if exact_in_df(&candidate) { return Ok(candidate); }
+                if let Some(actual_name) = exact_in_df(&candidate) { return Ok(actual_name); }
                 // As a fallback, if df has only one suffix match for the column part, use it
                 if let Some((_tbl, col_part)) = name.rsplit_once('.') {
                     let mut matches = suffix_matches_in_df(col_part);
@@ -287,7 +291,7 @@ impl DataContext {
             anyhow::bail!(format!("Column not found: {}", name));
         }
         // 2) Unqualified name: try exact match first
-        if exact_in_df(name) { return Ok(name.to_string()); }
+        if let Some(actual_name) = exact_in_df(name) { return Ok(actual_name); }
         // 3) Suffix matches
         let mut matches = suffix_matches_in_df(name);
         if matches.is_empty() { anyhow::bail!(format!("Column not found: {}", name)); }
@@ -325,11 +329,14 @@ impl DataContext {
         // If the incoming name is already fully-qualified, see if it's visible
         if name.contains('.') {
             if visible.contains(name) {
-                // If df has it, return; otherwise try suffix match into df
-                if df.get_column_names().iter().any(|n| n.as_str() == name) { return Ok(name.to_string()); }
+                // If df has it, return actual column name; otherwise try suffix match into df (case-insensitive)
+                if let Some(actual) = df.get_column_names().iter().find(|n| n.as_str().eq_ignore_ascii_case(name)) {
+                    return Ok(actual.to_string());
+                }
                 let needle = format!(".{}", name.split('.').next_back().unwrap_or(name));
+                let needle_lower = needle.to_lowercase();
                 let mut df_matches: Vec<String> = df.get_column_names().iter().filter_map(|c| {
-                    let s = c.as_str(); if s.ends_with(&needle) { Some(s.to_string()) } else { None }
+                    let s = c.as_str(); if s.to_lowercase().ends_with(&needle_lower) { Some(s.to_string()) } else { None }
                 }).collect();
                 if df_matches.len() == 1 { return Ok(df_matches[0].clone()); }
                 if df_matches.len() > 1 {
@@ -343,12 +350,15 @@ impl DataContext {
         }
         // Unqualified: try exact visible first
         if visible.contains(name) {
-            // If df has exact, use it
-            if df.get_column_names().iter().any(|n| n.as_str() == name) { return Ok(name.to_string()); }
+            // If df has exact, use actual column name (case-insensitive)
+            if let Some(actual) = df.get_column_names().iter().find(|n| n.as_str().eq_ignore_ascii_case(name)) {
+                return Ok(actual.to_string());
+            }
             // Otherwise disambiguate by suffix against df
             let needle = format!(".{}", name);
+            let needle_lower = needle.to_lowercase();
             let mut df_matches: Vec<String> = df.get_column_names().iter().filter_map(|c| {
-                let s = c.as_str(); if s.ends_with(&needle) { Some(s.to_string()) } else { None }
+                let s = c.as_str(); if s.to_lowercase().ends_with(&needle_lower) { Some(s.to_string()) } else { None }
             }).collect();
             if df_matches.len() == 1 { return Ok(df_matches[0].clone()); }
             if df_matches.len() > 1 {

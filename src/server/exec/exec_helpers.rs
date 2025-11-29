@@ -128,19 +128,13 @@ pub fn normalize_query_with_defaults(q: &str, db: &str, schema: &str) -> String 
         }
         if ident.is_empty() { return q.to_string(); }
 
-        // Strip quotes from identifier
-        let mut ident_clean = ident;
-        if (ident.starts_with('"') && ident.ends_with('"')) || (ident.starts_with('\'') && ident.ends_with('\'')) {
-            if ident.len() >= 2 {
-                ident_clean = &ident[1..ident.len()-1];
-            }
-        }
-
+        // Don't strip quotes here - let normalize_identifier handle them to preserve case-sensitivity info
         // Support both normal and .time tables: choose qualifier based on suffix
-        let qualified = if ident_clean.to_lowercase().ends_with(".time") {
-            qualify_identifier_with_defaults(ident_clean, db, schema)
+        let normalized = crate::ident::normalize_identifier(ident);
+        let qualified = if normalized.to_lowercase().ends_with(".time") {
+            qualify_identifier_with_defaults(&normalized, db, schema)
         } else {
-            qualify_identifier_regular_table_with_defaults(ident_clean, db, schema)
+            qualify_identifier_regular_table_with_defaults(&normalized, db, schema)
         };
         return format!("INSERT INTO {}{}", qualified, rest);
     }
@@ -162,15 +156,9 @@ pub fn normalize_query_with_defaults(q: &str, db: &str, schema: &str) -> String 
         }
         if ident.is_empty() { return q.to_string(); }
 
-        // Strip quotes from identifier
-        let mut ident_clean = ident;
-        if (ident.starts_with('"') && ident.ends_with('"')) || (ident.starts_with('\'') && ident.ends_with('\'')) {
-            if ident.len() >= 2 {
-                ident_clean = &ident[1..ident.len()-1];
-            }
-        }
-
-        let qualified = qualify_identifier_regular_table_with_defaults(ident_clean, db, schema);
+        // Don't strip quotes here - let normalize_identifier handle them
+        let normalized = crate::ident::normalize_identifier(ident);
+        let qualified = qualify_identifier_regular_table_with_defaults(&normalized, db, schema);
         let prefix = if consumed > 0 { format!("CREATE TABLE IF NOT EXISTS {}", qualified) } else { format!("CREATE TABLE {}", qualified) };
         return format!("{}{}", prefix, rest);
     }
@@ -184,15 +172,9 @@ pub fn normalize_query_with_defaults(q: &str, db: &str, schema: &str) -> String 
             }
             if ident.is_empty() { return q.to_string(); }
 
-            // Strip quotes from identifier
-            let mut ident_clean = ident;
-            if (ident.starts_with('"') && ident.ends_with('"')) || (ident.starts_with('\'') && ident.ends_with('\'')) {
-                if ident.len() >= 2 {
-                    ident_clean = &ident[1..ident.len()-1];
-                }
-            }
-
-            let qualified = qualify_identifier_with_defaults(ident_clean, db, schema);
+            // Don't strip quotes here - let normalize_identifier handle them
+            let normalized = crate::ident::normalize_identifier(ident);
+            let qualified = qualify_identifier_with_defaults(&normalized, db, schema);
             return format!("{}{}{}", head, qualified, rest);
         }
     }
@@ -202,16 +184,14 @@ pub fn normalize_query_with_defaults(q: &str, db: &str, schema: &str) -> String 
         let after = &q[7..];
         let up_after = after.to_uppercase();
         if let Some(i) = up_after.find(" SET ") {
-            let mut ident = after[..i].trim();
+            let ident = after[..i].trim();
             let rest = &after[i..];
-            // Strip quotes
-            if (ident.starts_with('"') && ident.ends_with('"')) || (ident.starts_with('\'') && ident.ends_with('\'')) {
-                if ident.len() >= 2 { ident = &ident[1..ident.len()-1]; }
-            }
-            let qualified = if ident.to_lowercase().ends_with(".time") {
-                qualify_identifier_with_defaults(ident, db, schema)
+            // Don't strip quotes here - let normalize_identifier handle them
+            let normalized = crate::ident::normalize_identifier(ident);
+            let qualified = if normalized.to_lowercase().ends_with(".time") {
+                qualify_identifier_with_defaults(&normalized, db, schema)
             } else {
-                qualify_identifier_regular_table_with_defaults(ident, db, schema)
+                qualify_identifier_regular_table_with_defaults(&normalized, db, schema)
             };
             return format!("UPDATE {}{}", qualified, rest);
         }

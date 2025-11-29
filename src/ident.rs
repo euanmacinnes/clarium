@@ -8,6 +8,20 @@ use std::path::{Path, PathBuf};
 pub const DEFAULT_DB: &str = "clarium";
 pub const DEFAULT_SCHEMA: &str = "public";
 
+/// Normalize an identifier according to SQL rules:
+/// - If enclosed in double-quotes, strip quotes and preserve case
+/// - Otherwise, convert to lowercase for case-insensitive matching
+pub fn normalize_identifier(ident: &str) -> String {
+    let trimmed = ident.trim();
+    if trimmed.starts_with('"') && trimmed.ends_with('"') && trimmed.len() >= 2 {
+        // Double-quoted: preserve case, strip quotes
+        trimmed[1..trimmed.len()-1].to_string()
+    } else {
+        // Unquoted: convert to lowercase
+        trimmed.to_ascii_lowercase()
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct QueryDefaults {
     pub current_database: String,
@@ -50,35 +64,36 @@ pub fn qualify_table_ident(ident: &str, d: &QueryDefaults, require_time: bool) -
     if s.contains('/') {
         let parts: Vec<&str> = s.split('/').filter(|p| !p.is_empty()).collect();
         let (dpart, spart, mut t): (String, String, String) = match parts.len() {
-            0 => (db.clone(), schema.clone(), String::new()),
-            1 => (db.clone(), schema.clone(), parts[0].to_string()),
-            2 => (db.clone(), parts[0].to_string(), parts[1].to_string()),
-            _ => (parts[0].to_string(), parts[1].to_string(), parts[2..].join("/")),
+            0 => (normalize_identifier(db), normalize_identifier(schema), String::new()),
+            1 => (normalize_identifier(db), normalize_identifier(schema), normalize_identifier(parts[0])),
+            2 => (normalize_identifier(db), normalize_identifier(parts[0]), normalize_identifier(parts[1])),
+            _ => (normalize_identifier(parts[0]), normalize_identifier(parts[1]), parts[2..].iter().map(|p| normalize_identifier(p)).collect::<Vec<_>>().join("/")),
         };
-        if require_time && !t.ends_with(".time") { t.push_str(".time"); }
+        if require_time && !t.to_lowercase().ends_with(".time") { t.push_str(".time"); }
         return format!("{}/{}/{}", dpart, spart, t);
     }
     // Dotted or bare identifier
     let parts: Vec<&str> = s.split('.').collect();
     // Special-case dotted inputs that end with a standalone "time" token when a time table is required
     if require_time && parts.len() == 2 && parts[1].eq_ignore_ascii_case("time") {
-        let t = format!("{}.time", parts[0]);
-        return format!("{}/{}/{}", db, schema, t);
+        let base = normalize_identifier(parts[0]);
+        let t = format!("{}.time", base);
+        return format!("{}/{}/{}", normalize_identifier(db), normalize_identifier(schema), t);
     }
     if require_time && parts.len() >= 3 && parts.last().map(|x| x.eq_ignore_ascii_case("time")).unwrap_or(false) {
-        let dpart = parts[0].to_string();
-        let spart = parts[1].to_string();
-        let base = parts[parts.len() - 2];
+        let dpart = normalize_identifier(parts[0]);
+        let spart = normalize_identifier(parts[1]);
+        let base = normalize_identifier(parts[parts.len() - 2]);
         let t = format!("{}.time", base);
         return format!("{}/{}/{}", dpart, spart, t);
     }
     let (dpart, spart, mut t): (String, String, String) = match parts.len() {
-        0 => (db.clone(), schema.clone(), String::new()),
-        1 => (db.clone(), schema.clone(), parts[0].to_string()),
-        2 => (db.clone(), parts[0].to_string(), parts[1].to_string()),
-        _ => (parts[0].to_string(), parts[1].to_string(), parts[2..].join(".")),
+        0 => (normalize_identifier(db), normalize_identifier(schema), String::new()),
+        1 => (normalize_identifier(db), normalize_identifier(schema), normalize_identifier(parts[0])),
+        2 => (normalize_identifier(db), normalize_identifier(parts[0]), normalize_identifier(parts[1])),
+        _ => (normalize_identifier(parts[0]), normalize_identifier(parts[1]), parts[2..].iter().map(|p| normalize_identifier(p)).collect::<Vec<_>>().join(".")),
     };
-    if require_time && !t.ends_with(".time") { t.push_str(".time"); }
+    if require_time && !t.to_lowercase().ends_with(".time") { t.push_str(".time"); }
     format!("{}/{}/{}", dpart, spart, t)
 }
 

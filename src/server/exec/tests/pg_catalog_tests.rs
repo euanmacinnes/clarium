@@ -436,19 +436,17 @@ fn test_pg_catalog_pg_get_viewdef() {
 fn test_pg_type_with_to_regtype() {
     // Test query that uses TO_REGTYPE function to filter pg_type
     // This query checks for hstore type existence and retrieves type metadata
-    init_all_test_udfs();
-    
     let tmp = tempfile::tempdir().unwrap();
     let _store = Store::new(tmp.path()).unwrap();
     let shared = SharedStore::new(tmp.path()).unwrap();
 
     let q = match query::parse(
         "SELECT \
-               typname AS name, oid, typarray AS array_oid, \
-               oid::regtype::text AS regtype, typdelim AS delimiter \
-           FROM pg_type t \
-           WHERE t.oid = to_regtype('hstore') \
-           ORDER BY t.oid"
+               TYPNAME AS NAME, OID, TYPARRAY AS ARRAY_OID, \
+               OID::REGTYPE::TEXT AS REGTYPE, TYPDELIM AS DELIMITER \
+           FROM PG_TYPE T \
+           WHERE T.OID = TO_REGTYPE('HSTORE') \
+           ORDER BY T.OID"
     ).unwrap() {
         Command::Select(q) => q,
         _ => unreachable!()

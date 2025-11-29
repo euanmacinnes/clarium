@@ -486,7 +486,8 @@ fn parse_create(s: &str) -> Result<Command> {
         let def_sql = after[as_pos + 4..].trim();
         if name.is_empty() { anyhow::bail!("Invalid CREATE VIEW: missing view name"); }
         if def_sql.is_empty() { anyhow::bail!("Invalid CREATE VIEW: missing SELECT definition after AS"); }
-        return Ok(Command::CreateView { name: name.to_string(), or_alter, definition_sql: def_sql.to_string() });
+        let normalized_name = crate::ident::normalize_identifier(name);
+        return Ok(Command::CreateView { name: normalized_name, or_alter, definition_sql: def_sql.to_string() });
     }
     if up.starts_with("SCRIPT ") {
         // CREATE SCRIPT name AS 'code'
@@ -503,7 +504,8 @@ fn parse_create(s: &str) -> Result<Command> {
     if up.starts_with("SCHEMA ") {
         let path = rest[7..].trim();
         if path.is_empty() { anyhow::bail!("Invalid CREATE SCHEMA: missing schema name"); }
-        return Ok(Command::CreateSchema { path: path.to_string() });
+        let normalized_path = crate::ident::normalize_identifier(path);
+        return Ok(Command::CreateSchema { path: normalized_path });
     }
     if up.starts_with("STORE ") {
         // CREATE STORE <db>.store.<store>
@@ -579,22 +581,26 @@ fn parse_drop(s: &str) -> Result<Command> {
             tail = &tail["IF EXISTS ".len()..].trim();
         }
         if tail.is_empty() { anyhow::bail!("Invalid DROP VIEW: missing view name"); }
-        return Ok(Command::DropView { name: tail.to_string(), if_exists });
+        let normalized_name = crate::ident::normalize_identifier(tail);
+        return Ok(Command::DropView { name: normalized_name, if_exists });
     }
     if up.starts_with("DATABASE ") {
         let name = rest[9..].trim();
         if name.is_empty() { anyhow::bail!("Invalid DROP DATABASE: missing database name"); }
-        return Ok(Command::DropDatabase { name: name.to_string() });
+        let normalized_name = crate::ident::normalize_identifier(name);
+        return Ok(Command::DropDatabase { name: normalized_name });
     }
     if up.starts_with("SCRIPT ") {
         let name = rest[7..].trim();
         if name.is_empty() { anyhow::bail!("Invalid DROP SCRIPT: missing name"); }
+        // Script names already normalized in scripts.rs, pass as-is for now
         return Ok(Command::DropScript { path: name.to_string() });
     }
     if up.starts_with("SCHEMA ") {
         let path = rest[7..].trim();
         if path.is_empty() { anyhow::bail!("Invalid DROP SCHEMA: missing schema name"); }
-        return Ok(Command::DropSchema { path: path.to_string() });
+        let normalized_path = crate::ident::normalize_identifier(path);
+        return Ok(Command::DropSchema { path: normalized_path });
     }
     if up.starts_with("TIME TABLE ") {
         let table = rest[11..].trim();
@@ -635,6 +641,7 @@ fn parse_rename(s: &str) -> Result<Command> {
         let old = parts[0].trim();
         let newn = parts[1].trim();
         if old.is_empty() || newn.is_empty() { anyhow::bail!("Invalid RENAME SCRIPT: missing names"); }
+        // Script names already normalized in scripts.rs, pass as-is
         return Ok(Command::RenameScript { from: old.to_string(), to: newn.to_string() });
     }
     // Otherwise existing rename handlers below
@@ -651,7 +658,9 @@ fn parse_rename(s: &str) -> Result<Command> {
             let from = arg[..i].trim();
             let to = arg[i+to_kw.len()..].trim();
             if from.is_empty() || to.is_empty() { anyhow::bail!("Invalid RENAME DATABASE syntax: expected RENAME DATABASE <from> TO <to>"); }
-            return Ok(Command::RenameDatabase { from: from.to_string(), to: to.to_string() });
+            let normalized_from = crate::ident::normalize_identifier(from);
+            let normalized_to = crate::ident::normalize_identifier(to);
+            return Ok(Command::RenameDatabase { from: normalized_from, to: normalized_to });
         } else { anyhow::bail!("Invalid RENAME DATABASE: missing TO <new_name>"); }
     }
     if up.starts_with("SCHEMA ") {
@@ -661,7 +670,9 @@ fn parse_rename(s: &str) -> Result<Command> {
             let from = arg[..i].trim();
             let to = arg[i+to_kw.len()..].trim();
             if from.is_empty() || to.is_empty() { anyhow::bail!("Invalid RENAME SCHEMA syntax: expected RENAME SCHEMA <from> TO <to>"); }
-            return Ok(Command::RenameSchema { from: from.to_string(), to: to.to_string() });
+            let normalized_from = crate::ident::normalize_identifier(from);
+            let normalized_to = crate::ident::normalize_identifier(to);
+            return Ok(Command::RenameSchema { from: normalized_from, to: normalized_to });
         } else { anyhow::bail!("Invalid RENAME SCHEMA: missing TO <new_name>"); }
     }
     if up.starts_with("TIME TABLE ") {
@@ -4102,7 +4113,8 @@ fn parse_show(s: &str) -> Result<Command> {
     if up.starts_with("SHOW VIEW ") {
         let name = s.trim()["SHOW VIEW ".len()..].trim();
         if name.is_empty() { anyhow::bail!("SHOW VIEW: missing name"); }
-        return Ok(Command::ShowView { name: name.to_string() });
+        let normalized_name = crate::ident::normalize_identifier(name);
+        return Ok(Command::ShowView { name: normalized_name });
     }
     anyhow::bail!("Unsupported SHOW command")
 }
@@ -4113,12 +4125,14 @@ fn parse_use(s: &str) -> Result<Command> {
     if up.starts_with("DATABASE ") {
         let name = rest[9..].trim();
         if name.is_empty() { anyhow::bail!("USE DATABASE: missing name"); }
-        return Ok(Command::UseDatabase { name: name.to_string() });
+        let normalized_name = crate::ident::normalize_identifier(name);
+        return Ok(Command::UseDatabase { name: normalized_name });
     }
     if up.starts_with("SCHEMA ") {
         let name = rest[7..].trim();
         if name.is_empty() { anyhow::bail!("USE SCHEMA: missing name"); }
-        return Ok(Command::UseSchema { name: name.to_string() });
+        let normalized_name = crate::ident::normalize_identifier(name);
+        return Ok(Command::UseSchema { name: normalized_name });
     }
     anyhow::bail!("Unsupported USE command")
 }

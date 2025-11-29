@@ -198,9 +198,9 @@ fn test_empty_or_malformed_queries() {
     let result2 = normalize_query_with_defaults("DROP TABLE", "clarium", "public");
     assert_eq!(result2, "DROP TABLE");
     
-    // DROP TABLE IF EXISTS without table name - "IF EXISTS" is treated as the table name
+    // DROP TABLE IF EXISTS without table name - "IF EXISTS" is treated as the table name (normalized to lowercase)
     let result3 = normalize_query_with_defaults("DROP TABLE IF EXISTS", "clarium", "public");
-    assert_eq!(result3, "DROP TABLE clarium/public/IF EXISTS");
+    assert_eq!(result3, "DROP TABLE clarium/public/if exists");
     
     // RENAME TABLE without TO
     let result4 = normalize_query_with_defaults("RENAME TABLE my_table", "clarium", "public");
@@ -249,9 +249,9 @@ fn test_special_characters_in_table_names() {
     let result2 = normalize_query_with_defaults("DROP TABLE table123", "clarium", "public");
     assert_eq!(result2, "DROP TABLE clarium/public/table123");
     
-    // Mixed case table names
+    // Mixed case table names (normalized to lowercase)
     let result3 = normalize_query_with_defaults("DROP TABLE MyTable", "clarium", "public");
-    assert_eq!(result3, "DROP TABLE clarium/public/MyTable");
+    assert_eq!(result3, "DROP TABLE clarium/public/mytable");
 }
 
 #[tokio::test]
