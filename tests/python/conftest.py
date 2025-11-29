@@ -13,7 +13,7 @@ from sqlalchemy.engine.url import make_url
 from sqlalchemy.exc import OperationalError
 
 
-DEFAULT_URL = "postgresql+psycopg://localhost:5433/clarium"
+DEFAULT_URL = "postgresql+psycopg://clarium:clarium@127.0.0.1:5433/clarium"
 
 
 def get_db_url() -> str:

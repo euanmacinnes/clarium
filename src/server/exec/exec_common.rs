@@ -264,6 +264,11 @@ pub fn build_arith_expr(a: &ArithExpr, ctx: &crate::server::data_context::DataCo
                         lit(polars::prelude::Null {})
                     }
                 }
+                SqlType::Regtype => {
+                    // Similar to Regclass, convert type name to OID
+                    // For now, treat it similarly - cast to integer representation
+                    inner.cast(DataType::Int32)
+                }
             }
         }
         ArithExpr::BinOp { left, op, right } => {

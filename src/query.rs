@@ -77,6 +77,8 @@ pub enum SqlType {
     Interval,
     Numeric(Option<(i32, i32)>),
     Regclass,
+    // PostgreSQL regtype pseudo-type used in casts like oid::regtype::text
+    Regtype,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -451,7 +453,7 @@ pub fn parse(input: &str) -> Result<Command> {
     if sup.starts_with("INSERT ") {
         return parse_insert(s);
     }
-    bail!("Unsupported command {} ", sup)
+    bail!("Unsupported DDL-SQL command: {} ", sup)
 }
 
 fn parse_create(s: &str) -> Result<Command> {

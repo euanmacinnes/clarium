@@ -36,7 +36,25 @@ use crate::server::exec::df_utils::read_df_or_kv;
 pub use crate::server::exec::exec_helpers::{execute_select_df, dataframe_to_tabular, normalize_query_with_defaults};
 pub use crate::server::exec::exec_create::do_create_table;
 
+/// Returns true if the provided SQL text is a transaction control statement
+/// that we treat as a no-op for compatibility (BEGIN/START TRANSACTION/COMMIT/END/ROLLBACK).
+fn is_transaction_control(text: &str) -> bool {
+    let s = text.trim();
+    if s.is_empty() { return false; }
+    let s = s.strip_suffix(';').unwrap_or(s).trim();
+    let up = s.to_ascii_uppercase();
+    matches!(
+        up.as_str(),
+        "BEGIN" | "START TRANSACTION" | "COMMIT" | "END" | "ROLLBACK"
+    )
+}
+
 pub async fn execute_query(store: &SharedStore, text: &str) -> Result<serde_json::Value> {
+    // Accept transaction control statements as no-ops globally so all frontends
+    // (HTTP/WS/pgwire) behave consistently even without real transactional storage.
+    if is_transaction_control(text) {
+        return Ok(serde_json::json!({"status":"ok"}));
+    }
     let cmd = query::parse(text)?;
     match cmd {
         Command::Slice(plan) => {

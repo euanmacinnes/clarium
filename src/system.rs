@@ -466,9 +466,10 @@ pub fn system_table_df(name: &str, store: &SharedStore) -> Option<DataFrame> {
             "bool".into(),
             "timestamp".into(),
             "timestamptz".into(),
+            "hstore".into(),
         ];
-        let oids: Vec<i32> = vec![23, 20, 701, 25, 16, 1114, 1184];
-        let arrays: Vec<i32> = vec![1007, 1016, 1022, 1009, 1000, 1115, 1185];
+        let oids: Vec<i32> = vec![23, 20, 701, 25, 16, 1114, 1184, 16414];
+        let arrays: Vec<i32> = vec![1007, 1016, 1022, 1009, 1000, 1115, 1185, 16415];
         let pg_catalog_oid: i32 = 11;
         let typnamespace: Vec<i32> = vec![pg_catalog_oid; names.len()];
         // Element type OID for array types; for built-in scalar types set to 0.
@@ -488,9 +489,12 @@ pub fn system_table_df(name: &str, store: &SharedStore) -> Option<DataFrame> {
             "B".into(), // bool boolean
             "D".into(), // timestamp datetime
             "D".into(), // timestamptz datetime
+            "U".into(), // hstore user-defined
         ];
         // Type type: 'b' for base types
         let typtype: Vec<String> = vec!["b".into(); names.len()];
+        // Type delimiter used in arrays; comma for most types
+        let typdelim: Vec<String> = vec![",".into(); names.len()];
 
         let df = DataFrame::new(vec![
             Series::new("typname".into(), names).into(),
@@ -503,6 +507,7 @@ pub fn system_table_df(name: &str, store: &SharedStore) -> Option<DataFrame> {
             Series::new("typtypmod".into(), typtypmod).into(),
             Series::new("typcategory".into(), typcategory).into(),
             Series::new("typtype".into(), typtype).into(),
+            Series::new("typdelim".into(), typdelim).into(),
         ]).ok();
         if let Some(ref df) = df {
             debug!(target: "clarium::system", "system_table_df: matched pg_type rows={}, cols={:?}", df.height(), df.get_column_names());

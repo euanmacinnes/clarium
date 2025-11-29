@@ -2,7 +2,7 @@
 
 // Centralized UDF initialization for all tests
 mod udf_common {
-    use crate::scripts::{init_script_registry_once, ScriptRegistry, ScriptMeta, ScriptKind};
+    use crate::scripts::{init_script_registry_once, ScriptRegistry, ScriptMeta, ScriptKind, load_global_default_scripts};
     use polars::prelude::DataType;
     use std::sync::Once;
 
@@ -13,6 +13,9 @@ mod udf_common {
     pub fn init_all_test_udfs() {
         INIT.call_once(|| {
             let reg = ScriptRegistry::new().unwrap();
+            
+            // Load global default scripts from scripts/scalars directory
+            let _ = load_global_default_scripts(&reg);
             
             // Scalar UDFs
             reg.load_script_text("is_pos", "function is_pos(x) if x==nil then return false end return x>0 end").unwrap();

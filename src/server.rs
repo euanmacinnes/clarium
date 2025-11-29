@@ -32,6 +32,25 @@ use crate::scripts::{ScriptRegistry, scripts_dir_for, load_all_scripts_for_schem
 
 const SESSION_COOKIE: &str = "clarium_session";
 
+/// Returns a normalized transaction command kind if the text is a transaction control statement.
+/// Supported commands: BEGIN, START TRANSACTION, COMMIT, END, ROLLBACK (case-insensitive; optional trailing semicolon).
+fn detect_transaction_cmd(text: &str) -> Option<&'static str> {
+    let up = text.trim();
+    if up.is_empty() { return None; }
+    // Strip a single trailing semicolon if present
+    let up = up.strip_suffix(';').unwrap_or(up).trim();
+    let up = up.to_ascii_uppercase();
+    match up.as_str() {
+        "BEGIN" => Some("BEGIN"),
+        "START TRANSACTION" => Some("BEGIN"),
+        "COMMIT" => Some("COMMIT"),
+        // PostgreSQL accepts END as an alias for COMMIT
+        "END" => Some("COMMIT"),
+        "ROLLBACK" => Some("ROLLBACK"),
+        _ => None,
+    }
+}
+
 /// Shared server state injected into all handlers.
 ///
 /// Holds the global `SharedStore` handle, session maps (usernames and CSRF tokens),
@@ -644,6 +663,10 @@ async fn query_handler(
     if !validate_csrf(&state, &headers).await {
         return (StatusCode::FORBIDDEN, Json(serde_json::json!({"status":"forbidden","error":"invalid csrf"})));
     }
+    // Transaction control statements: accept as no-ops for client compatibility
+    if let Some(_tx) = detect_transaction_cmd(&payload.query) {
+        return (StatusCode::OK, Json(serde_json::json!({"status":"ok","results": {"transaction":"ok"} })));
+    }
     // Parse and authorize
     let cmd = match query::parse(&payload.query) {
         Ok(c) => c,
@@ -692,6 +715,11 @@ async fn ws_handler(State(state): State<AppState>, headers: HeaderMap, ws: WebSo
             while let Some(Ok(msg)) = socket.next().await {
                 match msg {
                     Message::Text(text) => {
+                        // Transaction control statements over WS: accept as no-ops
+                        if detect_transaction_cmd(&text).is_some() {
+                            let _ = socket.send(Message::Text(serde_json::json!({"status":"ok","results": {"transaction":"ok"}}).to_string().into())).await;
+                            continue;
+                        }
                         // authorize per message
                         let auth_ok = if let Ok(cmd) = query::parse(&text) {
                             let (ck, db_opt) = to_ck_and_db(&cmd);

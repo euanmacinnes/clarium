@@ -513,7 +513,8 @@ async fn handle_query(socket: &mut tokio::net::TcpStream, store: &SharedStore, _
         match exec::execute_query(store, &q_effective).await {
             Ok(val) => {
                 let upper = q_trim.chars().take(32).collect::<String>().to_uppercase();
-                let is_select_like = upper.starts_with("SELECT") || upper.starts_with("WITH ");
+                // Treat SHOW as a row-returning command similar to SELECT for client compatibility
+                let is_select_like = upper.starts_with("SELECT") || upper.starts_with("WITH ") || upper.starts_with("SHOW ");
                 let (cols, data) = if is_select_like {
                     match &val {
                         serde_json::Value::Array(arr) => to_table(arr.clone())?,
@@ -528,6 +529,7 @@ async fn handle_query(socket: &mut tokio::net::TcpStream, store: &SharedStore, _
                 let tag = if upper.starts_with("SELECT") { format!("SELECT {}", data.len()) }
                     else if upper.starts_with("CALCULATE") { let saved = match &val { serde_json::Value::Object(m) => m.get("saved").and_then(|v| v.as_u64()).unwrap_or(0), _ => 0 }; format!("CALCULATE {}", saved) }
                     else if upper.starts_with("DELETE") { "DELETE".to_string() }
+                    else if upper.starts_with("SHOW ") { format!("SHOW {}", data.len()) }
                     else if upper.starts_with("SCHEMA") || upper.starts_with("DATABASE") { format!("OK {}", data.len()) }
                     else if upper.starts_with("SET") { "SET".to_string() }
                     else if upper.starts_with("CREATE TABLE") { "CREATE TABLE".to_string() }
@@ -653,33 +655,6 @@ async fn send_error(socket: &mut tokio::net::TcpStream, msg: &str) -> Result<()>
     write_i32(socket, (payload.len() + 4) as i32).await?;
     socket.write_all(&payload).await?;
     Ok(())
-}
-
-async fn do_insert(store: &SharedStore, ins: InsertStmt) -> Result<usize> {
-    // Build record(s) from values; support single VALUES row for now
-    let mut sensors = serde_json::Map::new();
-    let mut ts: Option<i64> = None;
-    for (name, val) in ins.columns.iter().zip(ins.values.iter()) {
-        if name == "_time" {
-            ts = match val {
-                InsertValue::Null => None,
-                InsertValue::Number(n) => Some(*n),
-                InsertValue::String(s) => s.parse::<i64>().ok(),
-            };
-        } else {
-            let jv = match val {
-                InsertValue::Null => serde_json::Value::Null,
-                InsertValue::Number(n) => serde_json::Value::Number(serde_json::Number::from(*n)),
-                InsertValue::String(s) => serde_json::Value::String(s.clone()),
-            };
-            sensors.insert(name.clone(), jv);
-        }
-    }
-    let time_ms = ts.unwrap_or_else(now_ms);
-    let rec = Record { _time: time_ms, sensors };
-    let guard = store.0.lock();
-    guard.write_records(&ins.database, &[rec])?;
-    Ok(1)
 }
 
 fn now_ms() -> i64 { use std::time::{SystemTime, UNIX_EPOCH}; SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as i64 }
@@ -1057,7 +1032,7 @@ async fn describe_row_description(socket: &mut tokio::net::TcpStream, store: &Sh
     // executor and deriving a table shape from the first row. For non-SELECT, return NoData.
     let q = sql.trim();
     let up = q.to_uppercase();
-    if up.starts_with("SELECT") || up.starts_with("WITH ") {
+    if up.starts_with("SELECT") || up.starts_with("WITH ") || up.starts_with("SHOW ") {
         let q_eff = exec::normalize_query_with_defaults(q, &state.current_database, &state.current_schema);
         match exec::execute_query(store, &q_eff).await {
             Ok(val) => {
