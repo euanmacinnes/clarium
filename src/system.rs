@@ -527,6 +527,64 @@ pub fn system_table_df(name: &str, store: &SharedStore) -> Option<DataFrame> {
         ]).ok();
     }
 
+    // pg_catalog.pg_database compatibility
+    if last1 == "pg_database" || last2 == "pg_catalog.pg_database" {
+        // Enumerate databases by listing first-level directories under the db root.
+        let root = store.root_path();
+        let mut names: Vec<String> = Vec::new();
+        if let Ok(dbs) = std::fs::read_dir(&root) {
+            for ent in dbs.flatten() {
+                let p = ent.path();
+                if p.is_dir() {
+                    if let Some(name) = p.file_name().and_then(|s| s.to_str()) {
+                        if !name.starts_with('.') {
+                            names.push(name.to_string());
+                        }
+                    }
+                }
+            }
+        }
+        // Fallback: if no dbs found, expose a default logical database "clarium"
+        if names.is_empty() { names.push("clarium".to_string()); }
+
+        // Synthesize columns commonly used by clients/ORMs
+        // oid: stable positive OID derived from name
+        let oids: Vec<i32> = names.iter().map(|n| {
+            // Reserve a range starting at 20000 for database OIDs
+            20000 + (stable_hash_u32(&format!("db:{}", n)) % 1_000_000) as i32
+        }).collect();
+        // datdba: arbitrary stable owner OID (10)
+        let datdba: Vec<i32> = vec![10; names.len()];
+        // encoding: 6 corresponds to UTF8 in PostgreSQL catalogs
+        let encoding: Vec<i32> = vec![6; names.len()];
+        // locale/collation placeholders
+        let datcollate: Vec<String> = vec!["en_US.UTF-8".into(); names.len()];
+        let datctype: Vec<String> = vec!["en_US.UTF-8".into(); names.len()];
+        // template/connection flags
+        let datistemplate: Vec<bool> = vec![false; names.len()];
+        let datallowconn: Vec<bool> = vec![true; names.len()];
+        // connection limit: -1 = no limit
+        let datconnlimit: Vec<i32> = vec![-1; names.len()];
+
+        let df = DataFrame::new(vec![
+            Series::new("oid".into(), oids).into(),
+            Series::new("datname".into(), names).into(),
+            Series::new("datdba".into(), datdba).into(),
+            Series::new("encoding".into(), encoding).into(),
+            Series::new("datcollate".into(), datcollate).into(),
+            Series::new("datctype".into(), datctype).into(),
+            Series::new("datistemplate".into(), datistemplate).into(),
+            Series::new("datallowconn".into(), datallowconn).into(),
+            Series::new("datconnlimit".into(), datconnlimit).into(),
+        ]).ok();
+        if let Some(ref df) = df {
+            debug!(target: "clarium::system", "system_table_df: matched pg_database rows={}", df.height());
+        } else {
+            debug!(target: "clarium::system", "system_table_df: pg_database build failed");
+        }
+        return df;
+    }
+
     if last1 == "pg_attribute" || last2 == "pg_catalog.pg_attribute" {
         // Provide pg_attribute with columns needed by SQLAlchemy for constraint queries
         // attrelid: OID of the table this column belongs to

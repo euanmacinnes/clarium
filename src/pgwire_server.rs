@@ -505,7 +505,7 @@ async fn handle_query(socket: &mut tokio::net::TcpStream, store: &SharedStore, _
         .filter(|s| !s.is_empty())
         .map(|s| s.to_string())
         .collect();
-    debug!("pgwire simple query: {} statement(s)", parts.len());
+    eprintln!("pgwire simple query: {} statement(s)", parts.len());
     for (idx, stmt) in parts.iter().enumerate() {
         let q_trim = stmt.trim();
         debug!("pgwire simple query [{}]: {}", idx, q_trim);
