@@ -155,11 +155,30 @@ def _can_connect(host: str, port: int, timeout_sec: float = 0.5) -> bool:
 @pytest.fixture(scope="session")
 def engine() -> Engine:
     url = get_db_url()
-    eng = create_engine(url, future=True)
+    host, port = _host_port_from_url(url)
 
-    # Try a bounded wait in case the server is just starting up
+    # If DB is not required, short-circuit quickly when the port is closed
+    require_db = os.getenv("CLARIUM_REQUIRE_DB", "").lower() in ("1", "true", "yes", "on")
+    if not require_db and not _can_connect(host, port, timeout_sec=0.3):
+        pytest.skip(f"Clarium pgwire is not listening on {host}:{port}; skipping tests. Set CLARIUM_REQUIRE_DB=1 to fail instead.")
+
+    # Ensure failed connections don't hang indefinitely when the server isn't up.
+    # libpq honors the 'connect_timeout' parameter (seconds).
+    eng = create_engine(
+        url,
+        future=True,
+        connect_args={"connect_timeout": 2},  # fast-fail if pgwire isn't listening
+        pool_pre_ping=True,
+    )
+
+    # Bounded wait in case the server is just starting up
+    # Defaults are conservative and configurable via env vars
+    max_wait_sec = float(os.getenv("CLARIUM_CONNECT_MAX_SEC", "4"))
+    retry_interval = float(os.getenv("CLARIUM_CONNECT_RETRY_INTERVAL_SEC", "0.3"))
+    deadline = time.time() + max_wait_sec
+
     last_err = None
-    for _ in range(40):  # up to ~12s
+    while time.time() < deadline:
         try:
             with eng.connect() as conn:
                 conn.execute(text("SELECT 1"))
@@ -167,10 +186,14 @@ def engine() -> Engine:
             break
         except OperationalError as e:
             last_err = e
-            time.sleep(0.3)
+            time.sleep(retry_interval)
 
     if last_err is not None:
-        pytest.skip(f"Cannot connect to Clarium pgwire at {url}: {last_err}")
+        msg = f"Cannot connect to Clarium pgwire at {url}: {last_err}"
+        if require_db:
+            pytest.fail(msg)
+        else:
+            pytest.skip(msg)
 
     return eng
 

@@ -126,3 +126,70 @@ fn execute_pg_namespace_with_join_and_regclass_order() {
     assert!(cols.iter().any(|c| c.as_str() == "nspname"), "expected 'nspname' column from n.*");
     assert!(cols.iter().any(|c| c.as_str() == "d.description"), "expected qualified 'd.description' column from join");
 }
+
+#[test]
+fn execute_dbeaver_pg_attribute_query_no_hang() {
+    use crate::query::{parse, Command};
+    use crate::server::exec::run_select;
+    use crate::storage::{Store, SharedStore};
+    use super::udf_common::init_all_test_udfs;
+
+    // Temp store; system catalog tables are synthesized on demand
+    let tmp = tempfile::tempdir().unwrap();
+    let _store = Store::new(tmp.path()).unwrap();
+    let shared = SharedStore::new(tmp.path()).unwrap();
+
+    // Ensure UDFs used by DBeaver metadata queries are available (e.g., pg_catalog.pg_get_expr)
+    init_all_test_udfs();
+
+    // Query reported to hang in DBeaver when reflecting table columns
+    let sql = "SELECT c.relname,a.*,pg_catalog.pg_get_expr(ad.adbin, ad.adrelid, true) as def_value,dsc.description,dep.objid\nFROM pg_catalog.pg_attribute a\nINNER JOIN pg_catalog.pg_class c ON (a.attrelid=c.oid)\nLEFT OUTER JOIN pg_catalog.pg_attrdef ad ON (a.attrelid=ad.adrelid AND a.attnum = ad.adnum)\nLEFT OUTER JOIN pg_catalog.pg_description dsc ON (c.oid=dsc.objoid AND a.attnum = dsc.objsubid)\nLEFT OUTER JOIN pg_depend dep on dep.refobjid = a.attrelid AND dep.deptype = 'i' and dep.refobjsubid = a.attnum and dep.classid = dep.refclassid\nWHERE NOT a.attisdropped AND c.relkind not in ('i','I','c') AND c.oid=('586816'::int8)\nORDER BY a.attnum"
+        .replace("\n", " ")
+        .replace("  ", " ");
+
+    let q = match parse(&sql).expect("DBeaver pg_attribute query should parse") {
+        Command::Select(q) => q,
+        _ => panic!("expected select command"),
+    };
+
+    // Execute; success means it does not hang and returns a DataFrame (may be empty)
+    let df = run_select(&shared, &q).expect("DBeaver pg_attribute query should execute without hanging");
+
+    // No strict expectations about row count; just ensure a valid DataFrame object exists
+    let _ = df.height();
+}
+
+#[test]
+fn execute_pg_roles_with_join_and_order() {
+    use crate::query::{parse, Command};
+    use crate::server::exec::run_select;
+    use crate::storage::{Store, SharedStore};
+    use super::udf_common::init_all_test_udfs;
+
+    // Temp store; system catalog tables are synthesized on demand
+    let tmp = tempfile::tempdir().unwrap();
+    let _store = Store::new(tmp.path()).unwrap();
+    let shared = SharedStore::new(tmp.path()).unwrap();
+
+    // Ensure UDFs landscape is initialized similarly to other DBeaver tests
+    init_all_test_udfs();
+
+    // Query from the issue description (DBeaver: roles and shared descriptions)
+    let sql = "SELECT a.oid,a.*,pd.description FROM pg_catalog.pg_roles a \nleft join pg_catalog.pg_shdescription pd on a.oid = pd.objoid\nORDER BY a.rolname"
+        .replace("\n", " ")
+        .replace("  ", " ");
+
+    let q = match parse(&sql).expect("pg_roles join with shdescription should parse") {
+        Command::Select(q) => q,
+        _ => panic!("expected select command"),
+    };
+
+    // Execute and ensure it succeeds
+    let df = run_select(&shared, &q).expect("pg_roles join with shdescription should execute");
+
+    // Columns: a.* expands to base names (oid, rolname, ...); pd.description remains qualified
+    let cols = df.get_column_names();
+    assert!(cols.iter().any(|c| c.as_str() == "oid"), "expected 'oid' column from a.*");
+    assert!(cols.iter().any(|c| c.as_str() == "rolname"), "expected 'rolname' column from a.*");
+    assert!(cols.iter().any(|c| c.as_str() == "pd.description"), "expected qualified 'pd.description' column from join");
+}

@@ -46,6 +46,7 @@ fn get_or_assign_table_oid(table_dir: &Path, db: &str, schema: &str, table: &str
             return default_oid;
         }
     }
+
     default_oid
 }
 
@@ -527,6 +528,38 @@ pub fn system_table_df(name: &str, store: &SharedStore) -> Option<DataFrame> {
         ]).ok();
     }
 
+    // pg_catalog.pg_roles compatibility (a view in PostgreSQL)
+    if last1 == "pg_roles" || last2 == "pg_catalog.pg_roles" {
+        // Minimal subset of columns commonly used by clients and our tests
+        let oid: Vec<i32> = vec![10];
+        let rolname: Vec<String> = vec!["postgres".into()];
+        let rolsuper: Vec<bool> = vec![true];
+        let rolinherit: Vec<bool> = vec![true];
+        let rolcreaterole: Vec<bool> = vec![true];
+        let rolcreatedb: Vec<bool> = vec![true];
+        let rolcanlogin: Vec<bool> = vec![true];
+        let rolreplication: Vec<bool> = vec![false];
+        let rolconnlimit: Vec<i32> = vec![-1];
+        let rolpassword: Vec<Option<String>> = vec![None];
+        let rolvaliduntil: Vec<Option<String>> = vec![None];
+        let rolbypassrls: Vec<bool> = vec![true];
+
+        return DataFrame::new(vec![
+            Series::new("oid".into(), oid).into(),
+            Series::new("rolname".into(), rolname).into(),
+            Series::new("rolsuper".into(), rolsuper).into(),
+            Series::new("rolinherit".into(), rolinherit).into(),
+            Series::new("rolcreaterole".into(), rolcreaterole).into(),
+            Series::new("rolcreatedb".into(), rolcreatedb).into(),
+            Series::new("rolcanlogin".into(), rolcanlogin).into(),
+            Series::new("rolreplication".into(), rolreplication).into(),
+            Series::new("rolconnlimit".into(), rolconnlimit).into(),
+            Series::new("rolpassword".into(), rolpassword).into(),
+            Series::new("rolvaliduntil".into(), rolvaliduntil).into(),
+            Series::new("rolbypassrls".into(), rolbypassrls).into(),
+        ]).ok();
+    }
+
     // pg_catalog.pg_database compatibility
     if last1 == "pg_database" || last2 == "pg_catalog.pg_database" {
         // Enumerate databases by listing first-level directories under the db root.
@@ -594,6 +627,7 @@ pub fn system_table_df(name: &str, store: &SharedStore) -> Option<DataFrame> {
         let mut attrelid: Vec<i32> = Vec::new();
         let mut attname: Vec<String> = Vec::new();
         let mut attnum: Vec<i32> = Vec::new();
+        let mut attisdropped: Vec<bool> = Vec::new();
         
         for m in metas.iter() {
             let table_oid = get_or_assign_table_oid(&m.dir, &m.db, &m.schema, &m.table);
@@ -606,6 +640,7 @@ pub fn system_table_df(name: &str, store: &SharedStore) -> Option<DataFrame> {
                 attrelid.push(table_oid);
                 attname.push(cname.clone());
                 attnum.push(col_num);
+                attisdropped.push(false);
                 col_num += 1;
             }
         }
@@ -613,6 +648,17 @@ pub fn system_table_df(name: &str, store: &SharedStore) -> Option<DataFrame> {
             Series::new("attrelid".into(), attrelid).into(),
             Series::new("attname".into(), attname).into(),
             Series::new("attnum".into(), attnum).into(),
+            Series::new("attisdropped".into(), attisdropped).into(),
+        ]).ok();
+    }
+
+    // Minimal support for pg_attrdef so JOINs in client metadata queries can resolve
+    if last1 == "pg_attrdef" || last2 == "pg_catalog.pg_attrdef" {
+        // Columns commonly used by clients: adrelid (OID), adnum (int4), adbin (text)
+        return DataFrame::new(vec![
+            Series::new("adrelid".into(), Vec::<i32>::new()).into(),
+            Series::new("adnum".into(), Vec::<i32>::new()).into(),
+            Series::new("adbin".into(), Vec::<String>::new()).into(),
         ]).ok();
     }
     
@@ -766,6 +812,20 @@ pub fn system_table_df(name: &str, store: &SharedStore) -> Option<DataFrame> {
         ]).ok();
     }
 
+    // Minimal support for pg_depend used by some DBeaver queries
+    if last1 == "pg_depend" || last2 == "pg_catalog.pg_depend" {
+        // Provide empty table with expected columns referenced by queries
+        // refobjid OID, refobjsubid int4, classid OID, refclassid OID, objid OID, deptype char/text
+        return DataFrame::new(vec![
+            Series::new("refobjid".into(), Vec::<i32>::new()).into(),
+            Series::new("refobjsubid".into(), Vec::<i32>::new()).into(),
+            Series::new("classid".into(), Vec::<i32>::new()).into(),
+            Series::new("refclassid".into(), Vec::<i32>::new()).into(),
+            Series::new("objid".into(), Vec::<i32>::new()).into(),
+            Series::new("deptype".into(), Vec::<String>::new()).into(),
+        ]).ok();
+    }
+
     if last1 == "pg_class" || last2 == "pg_catalog.pg_class" {
         let metas = enumerate_tables(store);
         let vmetas = enumerate_views(store);
@@ -810,6 +870,16 @@ pub fn system_table_df(name: &str, store: &SharedStore) -> Option<DataFrame> {
             Series::new("oid".into(), oid).into(),
             Series::new("relnamespace".into(), relnamespace).into(),
             Series::new("relpartbound".into(), relpartbound).into(),
+        ]).ok();
+    }
+
+    // Minimal pg_catalog.pg_shdescription (shared descriptions) to support joins from role/database
+    // Columns: objoid OID, classoid OID, description text
+    if last1 == "pg_shdescription" || last2 == "pg_catalog.pg_shdescription" {
+        return DataFrame::new(vec![
+            Series::new("objoid".into(), Vec::<i32>::new()).into(),
+            Series::new("classoid".into(), Vec::<i32>::new()).into(),
+            Series::new("description".into(), Vec::<String>::new()).into(),
         ]).ok();
     }
 

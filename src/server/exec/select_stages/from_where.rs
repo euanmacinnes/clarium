@@ -165,6 +165,19 @@ pub fn from_where(store: &SharedStore, q: &Query, ctx: &mut DataContext) -> Resu
                 tracing::debug!(target: "clarium::exec", "JOIN: left_key='{}', right_key='{}'", lk, rk);
                 let how = join_how(&jc.join_type);
                 let mut joined = df.join(&right_df, vec![lk.as_str()], vec![rk.as_str()], how.into(), None)?;
+                // Preserve both join key columns when they have different qualified names.
+                // Some backends (and clients like DBeaver) reference the right-side key (e.g., c.oid)
+                // in subsequent JOINs. If Polars dropped the right key during the join, recreate it
+                // from the left key column (values are equal for equi-joins).
+                if lk != rk {
+                    let has_rk = joined.get_column_names().iter().any(|c| c.as_str() == rk.as_str());
+                    if !has_rk {
+                        let s_left = joined.column(lk.as_str())?.clone();
+                        let mut s_as_rk = s_left.clone();
+                        s_as_rk.rename(rk.clone().into());
+                        joined.with_column(s_as_rk)?;
+                    }
+                }
                 tracing::debug!(target: "clarium::exec", "JOIN: result cols={:?}", joined.get_column_names());
                 // Apply remainder predicate as filter if present
                 if let Some(rem) = remainder_opt {

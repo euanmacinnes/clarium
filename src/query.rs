@@ -3361,6 +3361,39 @@ fn parse_arith_expr(tokens: &[String]) -> Result<ArithExpr> {
                                 p += ch.len_utf8();
                             }
                             if !buf.trim().is_empty() { args.push(buf.trim().to_string()); }
+                            // Parse-time UDF arity enforcement for known scalar functions.
+                            // This avoids misinterpreting extra arguments (e.g., 'true') as columns later.
+                            fn expected_udf_arity(name: &str) -> Option<(usize, usize)> {
+                                let n = name.to_ascii_lowercase();
+                                match n.as_str() {
+                                    // Standard helpers
+                                    "nullif" => Some((2, 2)),
+                                    "format_type" | "pg_catalog.format_type" => Some((2, 2)),
+                                    // PostgreSQL compatibility UDFs shipped with clarium
+                                    "pg_catalog.pg_get_expr" | "pg_get_expr" => Some((2, 3)), // third arg optional (pretty)
+                                    "pg_catalog.pg_total_relation_size" | "pg_total_relation_size" => Some((1, 1)),
+                                    "pg_catalog.pg_get_partkeydef" | "pg_get_partkeydef" => Some((1, 1)),
+                                    _ => None,
+                                }
+                            }
+                            if let Some((_min, max)) = expected_udf_arity(name) {
+                                // filter out empty arg slots first for count comparison
+                                let provided_count = args.iter().filter(|s| !s.is_empty()).count();
+                                if provided_count > max {
+                                    // Identify the first extra argument (1-based index)
+                                    let extra_index = max + 1;
+                                    // Compute textual representation of that argument if present
+                                    // Note: args may contain empties from stray commas; skip empties when indexing
+                                    let non_empty: Vec<String> = args.iter().filter(|s| !s.is_empty()).cloned().collect();
+                                    let passed_text: String = if extra_index >= 1 && extra_index <= non_empty.len() { non_empty[extra_index - 1].clone() } else { "".to_string() };
+                                    anyhow::bail!(
+                                        "Missing Argument: function '{}' does not define argument {}; received {}",
+                                        name,
+                                        extra_index,
+                                        passed_text
+                                    );
+                                }
+                            }
                             // If the name matches a known aggregate or special function used as a column label, keep it as an identifier token (e.g., COUNT(v))
                             let name_up = name.to_uppercase();
                             let is_agg_label = matches!(name_up.as_str(),
@@ -3370,7 +3403,21 @@ fn parse_arith_expr(tokens: &[String]) -> Result<ArithExpr> {
                                 toks.push(ATok::Val(ArithExpr::Term(ArithTerm::Col { name: full.to_string(), previous: false })));
                                 i = j2; continue;
                             }
-                            let parsed_args: Vec<ArithExpr> = args.into_iter().filter(|s| !s.is_empty()).map(|s| super_parse_arith(&s).unwrap()).collect();
+                            let parsed_args: Vec<ArithExpr> = args
+                                .into_iter()
+                                .filter(|s| !s.is_empty())
+                                .map(|s| {
+                                    let sl = s.to_ascii_lowercase();
+                                    // Treat unquoted true/false as boolean literals in arithmetic contexts
+                                    if sl == "true" {
+                                        ArithExpr::Term(ArithTerm::Number(1.0))
+                                    } else if sl == "false" {
+                                        ArithExpr::Term(ArithTerm::Number(0.0))
+                                    } else {
+                                        super_parse_arith(&s).unwrap()
+                                    }
+                                })
+                                .collect();
                             let mut call = ArithExpr::Call { name: name.to_string(), args: parsed_args };
                             // Optional PostgreSQL ::type cast (possibly chained) after function call: func(...)::type
                             loop {
