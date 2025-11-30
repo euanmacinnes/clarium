@@ -5,6 +5,8 @@ A minimal Rust service for storing and querying time‑series data backed by Par
 Full documentation
 ------------------
 - See docs/README.md for the full docs set, including Getting Started, SQL reference, Time‑series, Views, UDFs, System catalogs, Storage format, Administration, Compatibility, and End‑to‑end Examples.
+- Pgwire error handling: for contributor guidelines on graceful error handling over the PostgreSQL wire protocol, see docs/pgwire-error-handling.md.
+ - Unified error handling across HTTP/WS/pgwire: see docs/error-handling.md for the common error model, mappings, and frontend behaviors.
 
 Quick start
 

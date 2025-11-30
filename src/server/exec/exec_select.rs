@@ -141,8 +141,19 @@ pub fn handle_select_union(store: &SharedStore, queries: &[crate::query::Query],
                 df.with_column(s)?;
             }
         }
-        // Reorder columns to all_cols order
-        let cols: Vec<Column> = all_cols.iter().map(|n| df.column(n.as_str()).unwrap().clone()).collect();
+        // Reorder columns to all_cols order (avoid panics if a column is unexpectedly missing)
+        let cols: Vec<Column> = all_cols
+            .iter()
+            .map(|n| match df.column(n.as_str()) {
+                Ok(c) => c.clone(),
+                Err(_) => {
+                    // Create a null series of the intended dtype and use it
+                    let dtype = col_types.get(n).cloned().unwrap_or(DataType::Null);
+                    let s = Series::new_null(n.as_str().into(), df.height()).cast(&dtype).unwrap_or_else(|_| Series::new_null(n.as_str().into(), df.height()));
+                    s.into()
+                }
+            })
+            .collect();
         aligned.push(DataFrame::new(cols)?);
     }
     let mut out = if aligned.is_empty() { DataFrame::new(Vec::<Column>::new())? } else {

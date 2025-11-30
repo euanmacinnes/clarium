@@ -170,7 +170,11 @@ pub fn build_where_expr(w: &WhereExpr, ctx: &crate::server::data_context::DataCo
                     // Support LIKE when RHS is a literal string pattern by converting to a regex and applying via map
                     if let ArithExpr::Term(ArithTerm::Str(pat)) = right {
                         let regex_text = sql_like_to_regex(pat);
-                        let re = Regex::new(&regex_text).unwrap();
+                        // Compile regex safely; if invalid, produce a false mask rather than panic
+                        let re = match Regex::new(&regex_text) {
+                            Ok(r) => r,
+                            Err(_) => { return lit(false); }
+                        };
                         let pred = l.clone().cast(DataType::String).map(
                             move |col: Column| {
                                 let s = col.as_materialized_series();
@@ -666,7 +670,9 @@ pub fn build_arith_expr(a: &ArithExpr, ctx: &crate::server::data_context::DataCo
                 let chars: Vec<char> = s.chars().collect();
                 let len = chars.len() as i64;
                 let step = step.unwrap_or(1);
-                if step == 0 { panic!("step=0 in string slice"); }
+                // Graceful handling: a zero step is invalid in Python slicing; instead of panicking,
+                // return an empty string to avoid crashing the server.
+                if step == 0 { return String::new(); }
                 // defaults based on step sign
                 let (mut start_idx, mut stop_idx) = if step > 0 {
                     (0i64, len)

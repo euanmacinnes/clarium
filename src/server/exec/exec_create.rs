@@ -5,6 +5,7 @@
 //! `do_create_table`. Future contributors: keep new DDL logic here.
 
 use anyhow::{Context, Result};
+use crate::error::AppError;
 use tracing::{debug, info};
 
 use crate::storage::SharedStore;
@@ -28,7 +29,7 @@ pub fn handle_create_table(store: &SharedStore, table: &str, primary_key: &Optio
     };
     info!(target: "clarium::ddl", "CREATE TABLE requested table='{}' existed_before={}", table, exists_before);
 
-    if table.ends_with(".time") { anyhow::bail!("CREATE TABLE cannot target a .time table"); }
+    if table.ends_with(".time") { return Err(AppError::Ddl { code: "ddl_error".into(), message: "CREATE TABLE cannot target a .time table".into() }.into()); }
 
     // Enforce uniqueness with views: a table cannot be created if a view with the same base name exists
     {
@@ -37,7 +38,7 @@ pub fn handle_create_table(store: &SharedStore, table: &str, primary_key: &Optio
         // For regular table, vp points to .../db/schema/table — convert to .view file
         vp.set_extension("view");
         if vp.exists() {
-            anyhow::bail!(format!("Object name conflict: a VIEW exists with name '{}'. Table names must be unique across views.", table));
+            return Err(AppError::Conflict { code: "name_conflict".into(), message: format!("A VIEW exists with name '{}'. Table names must be unique across views.", table) }.into());
         }
     }
     // Create the table directory and initial schema via store
@@ -81,7 +82,7 @@ pub fn handle_create_table(store: &SharedStore, table: &str, primary_key: &Optio
 
 pub fn handle_drop_table(store: &SharedStore, table: &str, if_exists: bool) -> Result<serde_json::Value> {
     let guard = store.0.lock();
-    if table.ends_with(".time") { anyhow::bail!("DROP TABLE cannot target a .time table"); }
+    if table.ends_with(".time") { return Err(AppError::Ddl { code: "ddl_error".into(), message: "DROP TABLE cannot target a .time table".into() }.into()); }
     // Qualify with session defaults
     let qd = crate::system::current_query_defaults();
     let tableq = crate::ident::qualify_regular_ident(table, &qd);
@@ -94,7 +95,7 @@ pub fn handle_drop_table(store: &SharedStore, table: &str, if_exists: bool) -> R
     }
     // If table doesn't exist and IF EXISTS is not used, return error
     if !exists {
-        anyhow::bail!("Table not found: {}", tableq);
+        return Err(AppError::NotFound { code: "not_found".into(), message: format!("Table not found: {}", tableq) }.into());
     }
     // Otherwise proceed with normal deletion
     guard.delete_table(&tableq)?;
@@ -109,7 +110,7 @@ pub fn handle_rename_table(store: &SharedStore, from: &str, to: &str) -> Result<
     let toq = crate::ident::qualify_regular_ident(to, &qd);
     let src = store.root_path().join(fromq.replace('/', std::path::MAIN_SEPARATOR.to_string().as_str()));
     let dst = store.root_path().join(toq.replace('/', std::path::MAIN_SEPARATOR.to_string().as_str()));
-    if !src.exists() { anyhow::bail!("Source table not found: {}", from); }
+    if !src.exists() { return Err(AppError::NotFound { code: "not_found".into(), message: format!("Source table not found: {}", from) }.into()); }
     if let Some(parent) = dst.parent() { fs::create_dir_all(parent).ok(); }
     fs::rename(&src, &dst)?;
     Ok(serde_json::json!({"status":"ok"}))
@@ -124,14 +125,14 @@ pub fn do_create_table(store: &SharedStore, q: &str) -> Result<()> {
     debug!(target: "clarium::exec", "do_create_table: begin q='{}'", q);
     let mut s = q.trim();
     let up = s.to_uppercase();
-    if !up.starts_with("CREATE TABLE ") { return Err(anyhow!("unsupported CREATE TABLE")); }
+    if !up.starts_with("CREATE TABLE ") { return Err(AppError::Ddl { code: "unsupported_create".into(), message: "Only CREATE TABLE is supported".into() }.into()); }
     s = s["CREATE TABLE ".len()..].trim();
     let s_up = s.to_uppercase();
     if s_up.starts_with("IF NOT EXISTS ") { s = s["IF NOT EXISTS ".len()..].trim(); }
     // Extract identifier up to '(' and the column list inside (...)
-    let p_open = s.find('(').ok_or_else(|| anyhow!("expected ( in CREATE TABLE"))?;
+    let p_open = s.find('(').ok_or_else(|| AppError::Ddl { code: "syntax".into(), message: "expected ( in CREATE TABLE".into() })?;
     let ident = s[..p_open].trim();
-    let p_close = s.rfind(')').ok_or_else(|| anyhow!("expected ) in CREATE TABLE"))?;
+    let p_close = s.rfind(')').ok_or_else(|| AppError::Ddl { code: "syntax".into(), message: "expected ) in CREATE TABLE".into() })?;
     let cols_str = &s[p_open+1 .. p_close];
     // Parse columns and detect constraints
     let mut cols: Vec<(String, String)> = Vec::new();

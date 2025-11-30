@@ -22,6 +22,8 @@ use tracing::{info, error};
 use tokio::sync::RwLock;
 use getrandom::getrandom;
 use anyhow::Context;
+use std::panic::{AssertUnwindSafe};
+use futures_util::FutureExt; // for catch_unwind on async blocks
 
 use crate::{storage::{SharedStore, Record}, query, security};
 pub mod exec;
@@ -689,11 +691,36 @@ async fn query_handler(
         } else { ("clarium".to_string(), "public".to_string()) }
     };
     let defaults = crate::ident::QueryDefaults { current_database: cur_db, current_schema: cur_schema };
-    match crate::server::exec::execute_query_with_defaults(&state.store, &payload.query, &defaults).await {
-        Ok(value) => (StatusCode::OK, Json(serde_json::json!({"status":"ok","results": value}))),
-        Err(e) => {
+    let exec_fut = async {
+        crate::server::exec::execute_query_with_defaults(&state.store, &payload.query, &defaults).await
+    };
+    match AssertUnwindSafe(exec_fut).catch_unwind().await {
+        Ok(Ok(value)) => (StatusCode::OK, Json(serde_json::json!({"status":"ok","results": value}))),
+        Ok(Err(e)) => {
+            // Prefer AppError mapping when available
+            if let Some(app) = e.downcast_ref::<crate::error::AppError>() {
+                let status = app.http_status();
+                return (StatusCode::from_u16(status).unwrap_or(StatusCode::UNPROCESSABLE_ENTITY), Json(serde_json::json!({
+                    "status":"error",
+                    "code": app.code_str(),
+                    "message": app.message()
+                })));
+            }
+            // Treat other execution failures as semantic errors (unprocessable)
             error!("query failed: {e}");
-            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"status":"error","error": e.to_string()})))
+            (StatusCode::UNPROCESSABLE_ENTITY, Json(serde_json::json!({"status":"error","code":"exec_error","message": e.to_string()})))
+        }
+        Err(panic_payload) => {
+            // Convert panics to a 500 error response without crashing the server task
+            let msg = if let Some(s) = panic_payload.downcast_ref::<&str>() { *s }
+                      else if let Some(s) = panic_payload.downcast_ref::<String>() { s.as_str() }
+                      else { "panic" };
+            error!(target: "panic", "HTTP query_handler panic: {}", msg);
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({
+                "status":"error",
+                "code":"internal_panic",
+                "message":"internal server error"
+            })))
         }
     }
 }
@@ -738,12 +765,36 @@ async fn ws_handler(State(state): State<AppState>, headers: HeaderMap, ws: WebSo
                             } else { ("clarium".to_string(), "public".to_string()) }
                         };
                         let defaults = crate::ident::QueryDefaults { current_database: cur_db, current_schema: cur_schema };
-                        match crate::server::exec::execute_query_with_defaults(&state.store, &text, &defaults).await {
-                            Ok(val) => {
+                        let fut = async {
+                            crate::server::exec::execute_query_with_defaults(&state.store, &text, &defaults).await
+                        };
+                        match AssertUnwindSafe(fut).catch_unwind().await {
+                            Ok(Ok(val)) => {
                                 let _ = socket.send(Message::Text(serde_json::json!({"status":"ok","results": val}).to_string().into())).await;
                             }
-                            Err(e) => {
-                                let _ = socket.send(Message::Text(serde_json::json!({"status":"error","error": e.to_string()}).to_string().into())).await;
+                            Ok(Err(e)) => {
+                                // Keep socket alive; prefer AppError mapping when available
+                                if let Some(app) = e.downcast_ref::<crate::error::AppError>() {
+                                    let _ = socket.send(Message::Text(serde_json::json!({
+                                        "status":"error",
+                                        "code": app.code_str(),
+                                        "message": app.message()
+                                    }).to_string().into())).await;
+                                } else {
+                                    let _ = socket.send(Message::Text(serde_json::json!({"status":"error","code":"exec_error","message": e.to_string()}).to_string().into())).await;
+                                }
+                            }
+                            Err(panic_payload) => {
+                                let msg = if let Some(s) = panic_payload.downcast_ref::<&str>() { *s }
+                                          else if let Some(s) = panic_payload.downcast_ref::<String>() { s.as_str() }
+                                          else { "panic" };
+                                error!(target: "panic", "WS handler panic: {}", msg);
+                                let _ = socket.send(Message::Text(serde_json::json!({
+                                    "status":"error",
+                                    "code":"internal_panic",
+                                    "message":"internal server error"
+                                }).to_string().into())).await;
+                                // Decide to keep the socket open; if subsequent operations fail due to state, client may close.
                             }
                         }
                     }

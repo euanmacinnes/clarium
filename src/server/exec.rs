@@ -286,9 +286,13 @@ pub async fn execute_query(store: &SharedStore, text: &str) -> Result<serde_json
             let mut names: Vec<String> = schema.keys().cloned().collect();
             names.sort();
             for name in names {
-                let dt = schema.get(&name).unwrap();
-                let ty = crate::storage::Store::dtype_to_str(dt);
-                rows.push(serde_json::json!({"name": name, "type": ty, "locked": locks.contains(&name)}));
+                if let Some(dt) = schema.get(&name) {
+                    let ty = crate::storage::Store::dtype_to_str(dt);
+                    rows.push(serde_json::json!({"name": name, "type": ty, "locked": locks.contains(&name)}));
+                } else {
+                    // If schema entry is unexpectedly missing, skip gracefully
+                    continue;
+                }
             }
             Ok(serde_json::json!({"schema": rows}))
         }

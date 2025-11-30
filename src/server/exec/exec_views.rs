@@ -9,6 +9,7 @@ use tracing::info;
 use polars::prelude::*;
 
 use crate::{query, storage::SharedStore};
+use crate::error::AppError;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ViewFile {
@@ -67,7 +68,7 @@ fn infer_columns_from_sql(store: &SharedStore, def_sql: &str) -> Result<Vec<(Str
     let df = match cmd {
         Command::Select(q) => crate::server::exec::exec_select::run_select(store, &q)?,
         Command::SelectUnion { queries, all } => crate::server::exec::exec_select::handle_select_union(store, &queries, all)?,
-        other => anyhow::bail!("View definition must be SELECT or SELECT UNION, got: {:?}", other),
+        other => return Err(AppError::Ddl { code: "view_definition".into(), message: format!("View definition must be SELECT or SELECT UNION, got: {:?}", other) }.into()),
     };
     let mut cols: Vec<(String, String)> = Vec::new();
     for n in df.get_column_names() {
@@ -82,7 +83,7 @@ pub fn execute_views(store: &SharedStore, cmd: query::Command) -> Result<serde_j
         query::Command::CreateView { name, or_alter, definition_sql } => {
             let qualified = qualify_view_name(&name);
             let exists = read_view_file(store, &qualified)?.is_some();
-            if exists && !or_alter { anyhow::bail!("View already exists: {}", qualified); }
+            if exists && !or_alter { return Err(AppError::Conflict { code: "name_conflict".into(), message: format!("View already exists: {}", qualified) }.into()); }
             // Enforce uniqueness across objects: a view name must not clash with an existing table folder
             {
                 let root = store.0.lock().root_path().clone();
@@ -92,11 +93,11 @@ pub fn execute_views(store: &SharedStore, cmd: query::Command) -> Result<serde_j
                     std::path::MAIN_SEPARATOR
                 ));
                 if table_dir.is_dir() {
-                    anyhow::bail!(format!("Object name conflict: a TABLE exists with name '{}'. View names must be unique across tables.", qualified));
+                    return Err(AppError::Conflict { code: "name_conflict".into(), message: format!("A TABLE exists with name '{}'. View names must be unique across tables.", qualified) }.into());
                 }
                 if time_dir.is_dir() {
                     // If table is stored as <name>.time directory
-                    anyhow::bail!(format!("Object name conflict: a TIME TABLE exists with base name '{}'. View names must be unique across objects.", qualified));
+                    return Err(AppError::Conflict { code: "name_conflict".into(), message: format!("A TIME TABLE exists with base name '{}'. View names must be unique across objects.", qualified) }.into());
                 }
             }
             // Infer columns by executing the definition
@@ -110,7 +111,7 @@ pub fn execute_views(store: &SharedStore, cmd: query::Command) -> Result<serde_j
             let qualified = qualify_view_name(&name);
             let exists = read_view_file(store, &qualified)?.is_some();
             if !exists && if_exists { return Ok(serde_json::json!({"status":"ok"})); }
-            if !exists { anyhow::bail!("View not found: {}", qualified); }
+            if !exists { return Err(AppError::NotFound { code: "not_found".into(), message: format!("View not found: {}", qualified) }.into()); }
             delete_view_file(store, &qualified)?;
             Ok(serde_json::json!({"status":"ok"}))
         }
@@ -123,8 +124,8 @@ pub fn execute_views(store: &SharedStore, cmd: query::Command) -> Result<serde_j
                 ])?;
                 return Ok(crate::server::exec::exec_helpers::dataframe_to_json(&df));
             }
-            anyhow::bail!("View not found: {}", qualified)
+            return Err(AppError::NotFound { code: "not_found".into(), message: format!("View not found: {}", qualified) }.into());
         }
-        _ => anyhow::bail!("unsupported views command"),
+        _ => return Err(AppError::Ddl { code: "unsupported_views".into(), message: "unsupported views command".into() }.into()),
     }
 }

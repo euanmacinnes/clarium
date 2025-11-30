@@ -5,6 +5,7 @@ pub mod security;
 pub mod scripts;
 pub mod system;
 pub mod ident;
+pub mod error;
 #[cfg(feature = "pgwire")]
 pub mod pgwire_server;
 

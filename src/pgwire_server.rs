@@ -657,7 +657,36 @@ async fn send_error(socket: &mut tokio::net::TcpStream, msg: &str) -> Result<()>
     Ok(())
 }
 
-fn now_ms() -> i64 { use std::time::{SystemTime, UNIX_EPOCH}; SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as i64 }
+// Helper: map AppError (when available) to richer pgwire ErrorResponse fields.
+// Falls back to generic send_error for non-AppError cases.
+async fn send_mapped_error(socket: &mut tokio::net::TcpStream, err: &anyhow::Error) -> Result<()> {
+    if let Some(app) = err.downcast_ref::<crate::error::AppError>() {
+        let (sqlstate, severity, message) = app.pgwire_fields();
+        socket.write_all(b"E").await?;
+        let mut payload = Vec::new();
+        // Severity
+        payload.push(b'S'); payload.extend_from_slice(severity.as_bytes()); payload.push(0);
+        // SQLSTATE code
+        payload.push(b'C'); payload.extend_from_slice(sqlstate.as_bytes()); payload.push(0);
+        // Message
+        payload.push(b'M'); payload.extend_from_slice(message.as_bytes()); payload.push(0);
+        // Terminator
+        payload.push(0);
+        write_i32(socket, (payload.len() + 4) as i32).await?;
+        socket.write_all(&payload).await?;
+        Ok(())
+    } else {
+        send_error(socket, &format!("{}", err)).await
+    }
+}
+
+fn now_ms() -> i64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    match SystemTime::now().duration_since(UNIX_EPOCH) {
+        Ok(d) => d.as_millis() as i64,
+        Err(_) => 0, // extremely unlikely; avoid panic on clock skew
+    }
+}
 
 #[derive(Debug, Clone)]
 struct InsertStmt { database: String, columns: Vec<String>, values: Vec<InsertValue> }
@@ -795,7 +824,7 @@ async fn handle_parse(socket: &mut tokio::net::TcpStream, state: &mut ConnState)
     for _ in 0..ntypes { param_types.push(read_i32_from(&buf, &mut i)?); }
     // If client did not provide parameter types, infer from $n placeholders and casts
     if param_types.is_empty() {
-        let re_dollar = Regex::new(r"\$([1-9][0-9]*)").unwrap();
+        let re_dollar = Regex::new(r"\$([1-9][0-9]*)")?;
         let mut max_idx = 0usize;
         for cap in re_dollar.captures_iter(&sql) {
             if let Some(m) = cap.get(1) {
@@ -806,7 +835,7 @@ async fn handle_parse(socket: &mut tokio::net::TcpStream, state: &mut ConnState)
             // default to TEXT
             param_types = vec![PG_TYPE_TEXT; max_idx];
             // refine using explicit casts like $1::int8, $2::float8, etc.
-            let re_cast = Regex::new(r"\$([1-9][0-9]*)::([A-Za-z0-9_]+)").unwrap();
+            let re_cast = Regex::new(r"\$([1-9][0-9]*)::([A-Za-z0-9_]+)")?;
             for cap in re_cast.captures_iter(&sql) {
                 let idx: usize = cap.get(1).and_then(|m| m.as_str().parse().ok()).unwrap_or(0);
                 let ty = cap.get(2).map(|m| m.as_str().to_ascii_lowercase()).unwrap_or_default();
@@ -926,9 +955,9 @@ async fn handle_bind(socket: &mut tokio::net::TcpStream, state: &mut ConnState) 
             } else {
                 // Fallback heuristics when OID is unknown
                 let s_opt = match bytes.len() {
-                    8 => Some(i64::from_be_bytes(bytes.clone().try_into().unwrap()).to_string()),
-                    4 => Some(i32::from_be_bytes(bytes.clone().try_into().unwrap()).to_string()),
-                    2 => Some(i16::from_be_bytes([bytes[0], bytes[1]]).to_string()),
+                    8 => bytes.clone().try_into().ok().map(|a: [u8;8]| i64::from_be_bytes(a).to_string()),
+                    4 => bytes.clone().try_into().ok().map(|a: [u8;4]| i32::from_be_bytes(a).to_string()),
+                    2 => bytes.clone().try_into().ok().map(|a: [u8;2]| i16::from_be_bytes(a).to_string()),
                     1 => Some((bytes[0] != 0).to_string()),
                     _ => None,
                 };
@@ -961,14 +990,14 @@ fn escape_sql_literal(s: &str) -> String {
 
 fn substitute_placeholders(sql: &str, params: &[Option<String>]) -> Result<String> {
     // Detect named placeholders of the form %(name)s
-    let re_named = Regex::new(r"%\(([A-Za-z0-9_]+)\)s").unwrap();
+    let re_named = Regex::new(r"%\(([A-Za-z0-9_]+)\)s")?;
     let mut out = String::new();
     if re_named.is_match(sql) {
         // Collect order of first occurrence per name
         let mut order: Vec<String> = Vec::new();
         let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
         for cap in re_named.captures_iter(sql) {
-            let name = cap.get(1).unwrap().as_str().to_string();
+            let name = match cap.get(1) { Some(m) => m.as_str().to_string(), None => continue };
             if !seen.contains(&name) { seen.insert(name.clone()); order.push(name); }
         }
         if order.len() != params.len() { bail!("mismatch parameter count: expected {} got {}", order.len(), params.len()); }
@@ -978,8 +1007,12 @@ fn substitute_placeholders(sql: &str, params: &[Option<String>]) -> Result<Strin
         let mut last = 0usize;
         for m in re_named.find_iter(sql) {
             out.push_str(&sql[last..m.start()]);
-            let name = re_named.captures(m.as_str()).unwrap().get(1).unwrap().as_str();
-            match map.get(name).and_then(|v| v.clone()) {
+            let name = re_named
+                .captures(m.as_str())
+                .and_then(|c| c.get(1))
+                .map(|m| m.as_str().to_string())
+                .ok_or_else(|| anyhow!("named placeholder parse error"))?;
+            match map.get(&name).and_then(|v| v.clone()) {
                 None => out.push_str("NULL"),
                 Some(val) => out.push_str(&escape_sql_literal(&val)),
             }
@@ -990,13 +1023,18 @@ fn substitute_placeholders(sql: &str, params: &[Option<String>]) -> Result<Strin
     }
 
     // $n style placeholders (from extended protocol)
-    let re_dollar = Regex::new(r"\$([1-9][0-9]*)").unwrap();
+    let re_dollar = Regex::new(r"\$([1-9][0-9]*)")?;
     if re_dollar.is_match(sql) {
         let mut last = 0usize;
         for m in re_dollar.find_iter(sql) {
             out.push_str(&sql[last..m.start()]);
-            let cap = re_dollar.captures(m.as_str()).unwrap();
-            let idx: usize = cap.get(1).unwrap().as_str().parse::<usize>().unwrap();
+            let cap = re_dollar.captures(m.as_str()).ok_or_else(|| anyhow!("placeholder parse error"))?;
+            let idx: usize = cap
+                .get(1)
+                .ok_or_else(|| anyhow!("missing placeholder index"))?
+                .as_str()
+                .parse::<usize>()
+                .map_err(|_| anyhow!("invalid placeholder index"))?;
             let pos = idx.checked_sub(1).ok_or_else(|| anyhow!("parameter index underflow"))?;
             if pos >= params.len() { bail!("too few parameters: ${} referenced but only {} provided", idx, params.len()); }
             match &params[pos] {
@@ -1147,7 +1185,7 @@ async fn handle_execute(socket: &mut tokio::net::TcpStream, store: &SharedStore,
             // Proactively flush after Execute to ensure client receives frames before Sync
             if let Err(e) = socket.flush().await { error!(target: "pgwire", "flush after Execute failed: {}", e); }
         }
-        Err(e) => { send_error(socket, &format!("{}", e)).await?; state.in_error = true; }
+        Err(e) => { send_mapped_error(socket, &e).await?; state.in_error = true; }
     }
     Ok(())
 }

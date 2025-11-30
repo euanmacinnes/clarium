@@ -102,7 +102,10 @@ pub(crate) fn dataframe_to_json(df: &DataFrame) -> Value {
     for row_idx in 0..df.height() {
         let mut map = serde_json::Map::with_capacity(cols.len());
         for c in &cols {
-            let s = df.column(c).unwrap();
+            let s = match df.column(c) {
+                Ok(col) => col,
+                Err(_) => { map.insert(c.to_string(), Value::Null); continue; }
+            };
             let av = s.get(row_idx);
             let v = match av {
                 Ok(AnyValue::Int64(v)) => serde_json::json!(v),

@@ -884,12 +884,15 @@ impl KvStore {
                 return None;
             }
         }
-        // If expired, remove and return None
+        // Apply reset-on-access before checking expiry to avoid flakiness around the boundary
         let mut w = self.map.write();
+        if let Some((k, new_exp)) = to_reset {
+            if let Some(ent_mut) = w.get_mut(&k) { ent_mut.expires_at = Some(new_exp); }
+        }
+        // If expired (after potential reset), remove and return None
         if let Some(ent) = w.get(key) {
             if let Some(exp) = ent.expires_at { if Instant::now() >= exp { w.remove(key); return None; } }
         } else { return None; }
-        if let Some((k, new_exp)) = to_reset { if let Some(ent_mut) = w.get_mut(&k) { ent_mut.expires_at = Some(new_exp); } }
         w.get(key).map(|e| e.value.clone())
     }
 
