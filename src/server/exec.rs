@@ -16,6 +16,7 @@ pub mod exec_update;    // UPDATE handling
 pub mod exec_delete;    // DELETE COLUMNS handling
 pub mod exec_scripts;   // SCRIPT management (create/drop/rename/load)
 pub mod exec_views;     // VIEW management (create/drop/show)
+pub mod exec_describe;  // DESCRIBE <object> (tables/views)
 
 use anyhow::Result;
 use polars::prelude::*;
@@ -88,6 +89,10 @@ pub async fn execute_query(store: &SharedStore, text: &str) -> Result<serde_json
         | Command::ShowObjects
         | Command::ShowScripts => {
             self::exec_show::execute_show(store, cmd).await
+        }
+        // DESCRIBE <object>
+        Command::DescribeObject { name } => {
+            self::exec_describe::execute_describe(store, &name)
         }
         // USE and SET commands affect only session defaults; update thread-local defaults
         Command::UseDatabase { name } => {

@@ -620,6 +620,7 @@ fn to_ck_and_db(cmd: &query::Command) -> (security::CommandKind, Option<String>)
         query::Command::ListStores { database, .. } => (security::CommandKind::Other, Some(database.clone())),
         query::Command::ListKeys { database, .. } => (security::CommandKind::Other, Some(database.clone())),
         query::Command::DescribeKey { database, .. } => (security::CommandKind::Other, Some(database.clone())),
+        query::Command::DescribeObject { .. } => (security::CommandKind::Other, None),
         // Global session-affecting and SHOW
         query::Command::UseDatabase { .. } | query::Command::UseSchema { .. } | query::Command::Set { .. } => (security::CommandKind::Other, None),
         query::Command::ShowTransactionIsolation

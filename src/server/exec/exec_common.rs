@@ -23,7 +23,7 @@ fn fnv1a32(data: &[u8]) -> u32 {
 }
 
 #[inline]
-fn regclass_oid_with_defaults(name: &str, db: Option<&str>, schema: Option<&str>) -> i32 {
+pub fn regclass_oid_with_defaults(name: &str, db: Option<&str>, schema: Option<&str>) -> i32 {
     // Known system catalogs per PostgreSQL
     let mut ident = name.trim().to_string();
     if ident.starts_with("pg_catalog.") { ident = ident[11..].to_string(); }

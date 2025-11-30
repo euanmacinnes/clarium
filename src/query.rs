@@ -278,6 +278,10 @@ pub enum Command {
     ShowTables,
     ShowObjects,
     ShowScripts,
+    // DESCRIBE <object> (table/view) and DESCRIBE KEY ... (existing)
+    // For backward compatibility, DESCRIBE KEY is parsed specially; otherwise
+    // we treat DESCRIBE <object> as DescribeObject with a possibly unqualified name.
+    DescribeObject { name: String },
     Slice(SlicePlan),
     Insert { table: String, columns: Vec<String>, values: Vec<Vec<ArithTerm>> },
 }
@@ -4501,13 +4505,17 @@ fn parse_list(s: &str) -> Result<Command> {
 
 fn parse_describe(s: &str) -> Result<Command> {
     // DESCRIBE KEY <key> IN <database>.store.<store>
+    // or: DESCRIBE <object>
     let rest = s[9..].trim();
     let up = rest.to_uppercase();
     if up.starts_with("KEY ") {
         let (db, store, key) = parse_key_in_clause(rest)?;
         return Ok(Command::DescribeKey { database: db, store, key });
     }
-    anyhow::bail!("Invalid DESCRIBE syntax")
+    // Fallback: treat the remainder as an object identifier (table or view)
+    if rest.is_empty() { anyhow::bail!("Invalid DESCRIBE syntax: missing object name"); }
+    // Keep the name as provided; qualification is applied at execution time
+    Ok(Command::DescribeObject { name: rest.to_string() })
 }
 
 fn parse_write(s: &str) -> Result<Command> {
