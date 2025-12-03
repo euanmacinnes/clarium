@@ -108,6 +108,46 @@ thread_local! {
 pub fn get_strict_projection() -> bool { TLS_STRICT_PROJECTION.with(|c| c.get()) }
 pub fn set_strict_projection(v: bool) { TLS_STRICT_PROJECTION.with(|c| c.set(v)); }
 
+// ----------------------------
+// Vector search configuration
+// ----------------------------
+// Defaults (can be overridden via CLI/config in future; for now use thread-local with sensible defaults)
+thread_local! {
+    static TLS_VECTOR_EF_SEARCH: Cell<i32> = const { Cell::new(64) };      // query-time HNSW ef_search
+    static TLS_VECTOR_HNSW_M: Cell<i32> = const { Cell::new(32) };         // HNSW M (graph degree)
+    static TLS_VECTOR_HNSW_EF_BUILD: Cell<i32> = const { Cell::new(200) }; // HNSW ef_build
+}
+
+pub fn get_vector_ef_search() -> i32 { TLS_VECTOR_EF_SEARCH.with(|c| c.get()) }
+pub fn set_vector_ef_search(v: i32) { TLS_VECTOR_EF_SEARCH.with(|c| c.set(v)); }
+
+pub fn get_vector_hnsw_m() -> i32 { TLS_VECTOR_HNSW_M.with(|c| c.get()) }
+pub fn set_vector_hnsw_m(v: i32) { TLS_VECTOR_HNSW_M.with(|c| c.set(v)); }
+
+pub fn get_vector_hnsw_ef_build() -> i32 { TLS_VECTOR_HNSW_EF_BUILD.with(|c| c.get()) }
+pub fn set_vector_hnsw_ef_build(v: i32) { TLS_VECTOR_HNSW_EF_BUILD.with(|c| c.set(v)); }
+
+/// Helper to accept common SET variable aliases (case-insensitive) for vector knobs
+pub fn apply_vector_setting(var: &str, val: &str) -> bool {
+    let up = var.to_ascii_lowercase();
+    // Accept both dots and underscores as separators
+    match up.as_str() {
+        "vector.search.ef_search" | "vector_ef_search" | "vector.search.efsearch" => {
+            if let Ok(n) = val.parse::<i32>() { set_vector_ef_search(n); return true; }
+            return false;
+        }
+        "vector.hnsw.m" | "vector_hnsw_m" | "vector.m" => {
+            if let Ok(n) = val.parse::<i32>() { set_vector_hnsw_m(n); return true; }
+            return false;
+        }
+        "vector.hnsw.ef_build" | "vector_hnsw_ef_build" | "vector.ef_build" => {
+            if let Ok(n) = val.parse::<i32>() { set_vector_hnsw_ef_build(n); return true; }
+            return false;
+        }
+        _ => false,
+    }
+}
+
 // Thread-local current database/schema for session-aware qualification (per-thread/session)
 thread_local! {
     static TLS_CURRENT_DB: Cell<Option<String>> = const { Cell::new(None) };

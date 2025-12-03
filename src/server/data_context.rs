@@ -479,6 +479,10 @@ impl DataContext {
     pub fn load_source_df(&self, store: &crate::storage::SharedStore, t: &TableRef) -> anyhow::Result<DataFrame> {
         match t {
             TableRef::Table { name, alias } => {
+                // Graph TVFs as table-like sources: graph_neighbors(...) / graph_paths(...)
+                if let Some(df) = Self::try_graph_tvf(store, name)? {
+                    return Self::prefix_columns(df, t);
+                }
                 // Check CTEs first - they take precedence over everything
                 if let Some(cte_df) = self.cte_tables.get(name) {
                     tracing::debug!(target: "clarium::exec", "load_source_df: CTE hit name='{}' alias={:?}", name, alias);
@@ -552,6 +556,60 @@ impl DataContext {
                 Self::prefix_columns(subquery_df, t)
             }
         }
+    }
+
+    // Detect and evaluate graph TVFs embedded in FROM: graph_neighbors(graph,start,etype,max_hops) or graph_paths(graph,src,dst,max_hops)
+    fn try_graph_tvf(store: &crate::storage::SharedStore, raw: &str) -> anyhow::Result<Option<DataFrame>> {
+        let s = raw.trim();
+        let low = s.to_ascii_lowercase();
+        fn extract_args(fcall: &str) -> Option<Vec<String>> {
+            let open = fcall.find('(')?;
+            if !fcall.ends_with(')') { return None; }
+            let inside = &fcall[open+1..fcall.len()-1];
+            // Split on commas not inside quotes
+            let mut args: Vec<String> = Vec::new();
+            let mut cur = String::new();
+            let mut in_sq = false; let mut in_dq = false; let mut prev_bs = false;
+            for ch in inside.chars() {
+                if ch == '\\' { prev_bs = !prev_bs; cur.push(ch); continue; } else { prev_bs = false; }
+                if ch == '\'' && !in_dq { in_sq = !in_sq; cur.push(ch); continue; }
+                if ch == '"' && !in_sq { in_dq = !in_dq; cur.push(ch); continue; }
+                if ch == ',' && !in_sq && !in_dq { args.push(cur.trim().to_string()); cur.clear(); continue; }
+                cur.push(ch);
+            }
+            if !cur.is_empty() { args.push(cur.trim().to_string()); }
+            Some(args)
+        }
+        fn strip_quotes(x: &str) -> String {
+            let t = x.trim();
+            if (t.starts_with('\'') && t.ends_with('\'')) || (t.starts_with('"') && t.ends_with('"')) {
+                if t.len() >= 2 { return t[1..t.len()-1].to_string(); }
+            }
+            t.to_string()
+        }
+        if low.starts_with("graph_neighbors(") && s.ends_with(')') {
+            if let Some(args) = extract_args(s) {
+                // graph, start, etype, max_hops
+                let graph = args.get(0).map(|a| strip_quotes(a)).unwrap_or_default();
+                let start = args.get(1).map(|a| strip_quotes(a)).unwrap_or_default();
+                let etype = args.get(2).map(|a| strip_quotes(a));
+                let max_hops: i64 = args.get(3).and_then(|a| strip_quotes(a).parse::<i64>().ok()).unwrap_or(1);
+                let df = crate::server::exec::exec_graph_runtime::graph_neighbors_df(store, &graph, &start, etype.as_deref(), max_hops)?;
+                return Ok(Some(df));
+            }
+        }
+        if low.starts_with("graph_paths(") && s.ends_with(')') {
+            if let Some(args) = extract_args(s) {
+                // graph, src, dst, max_hops
+                let graph = args.get(0).map(|a| strip_quotes(a)).unwrap_or_default();
+                let src = args.get(1).map(|a| strip_quotes(a)).unwrap_or_default();
+                let dst = args.get(2).map(|a| strip_quotes(a)).unwrap_or_default();
+                let max_hops: i64 = args.get(3).and_then(|a| strip_quotes(a).parse::<i64>().ok()).unwrap_or(3);
+                let df = crate::server::exec::exec_graph_runtime::graph_paths_df(store, &graph, &src, &dst, max_hops)?;
+                return Ok(Some(df));
+            }
+        }
+        Ok(None)
     }
 
     fn prefix_columns(df: DataFrame, t: &TableRef) -> anyhow::Result<DataFrame> {

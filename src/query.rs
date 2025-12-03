@@ -185,6 +185,8 @@ pub struct Query {
     pub order_by: Option<Vec<(String, bool)>>, // (column/alias, asc=true/desc=false)
     // Optional ANN/EXACT hint attached to ORDER BY clause: "ANN" | "EXACT"
     pub order_by_hint: Option<String>,
+    // Raw ORDER BY items as written (per item text), preserved for advanced planners (e.g., ANN)
+    pub order_by_raw: Option<Vec<(String, bool)>>,
     pub limit: Option<i64>,
     // Optional INTO destination for persisting SELECT results
     pub into_table: Option<String>,
@@ -1457,6 +1459,7 @@ fn parse_select(s: &str) -> Result<Query> {
             rolling_window_ms: None,
             order_by: None,
             order_by_hint: None,
+            order_by_raw: None,
             limit: None,
             into_table: None,
             into_mode: None,
@@ -1486,6 +1489,7 @@ fn parse_select(s: &str) -> Result<Query> {
     let mut order_by: Option<Vec<(String, bool)>> = None;
     let mut limit: Option<i64> = None;
     let mut order_by_hint: Option<String> = None;
+    let mut order_by_raw: Option<Vec<(String, bool)>> = None;
     // Optional INTO target and mode
     let mut into_table: Option<String> = None;
     let mut into_mode: Option<IntoMode> = None;
@@ -1674,6 +1678,7 @@ fn parse_select(s: &str) -> Result<Query> {
                 }
             }
             let mut list: Vec<(String, bool)> = Vec::new();
+            let mut raw_list: Vec<(String, bool)> = Vec::new();
             for raw in inside.split(',') {
                 let p = raw.trim();
                 if p.is_empty() { continue; }
@@ -1687,11 +1692,13 @@ fn parse_select(s: &str) -> Result<Query> {
                     }
                     let normalized_name = crate::ident::normalize_identifier(name.trim());
                     list.push((normalized_name, asc));
+                    raw_list.push((p.to_string(), asc));
                 }
             }
             if list.is_empty() { anyhow::bail!("Invalid ORDER BY: empty list"); }
             if order_by.is_some() { anyhow::bail!("Duplicate ORDER BY clause"); }
             order_by = Some(list);
+            order_by_raw = Some(raw_list);
             t = after[end..].trim_start();
             continue;
         } else if t_up.starts_with("LIMIT ") {
@@ -1785,7 +1792,7 @@ fn parse_select(s: &str) -> Result<Query> {
         anyhow::bail!("BY and GROUP BY cannot be used together");
     }
 
-    Ok(Query { select, by_window_ms, by_slices, group_by_cols, group_by_notnull_cols, where_clause, having_clause, rolling_window_ms, order_by, order_by_hint, limit, into_table, into_mode, base_table, joins, with_ctes, original_sql: s.trim().to_string() })
+    Ok(Query { select, by_window_ms, by_slices, group_by_cols, group_by_notnull_cols, where_clause, having_clause, rolling_window_ms, order_by, order_by_hint, order_by_raw, limit, into_table, into_mode, base_table, joins, with_ctes, original_sql: s.trim().to_string() })
 }
 
 fn split_once_any<'a>(s: &'a str, seps: &[&str]) -> (&'a str, Option<&'a str>) {

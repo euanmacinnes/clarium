@@ -19,6 +19,7 @@ pub mod exec_views;     // VIEW management (create/drop/show)
 pub mod exec_describe;  // DESCRIBE <object> (tables/views)
 pub mod exec_vector_index; // VECTOR INDEX management
 pub mod exec_graph;        // GRAPH catalog management
+pub mod exec_graph_runtime; // Graph TVFs runtime (neighbors/paths)
 
 use anyhow::Result;
 use polars::prelude::*;
@@ -119,7 +120,20 @@ pub async fn execute_query(store: &SharedStore, text: &str) -> Result<serde_json
             crate::system::set_current_schema(&name);
             Ok(serde_json::json!({"status":"ok"}))
         }
-        Command::Set { .. } => { Ok(serde_json::json!({"status":"ok"})) }
+        Command::Set { variable, value } => {
+            // Apply known vector/search settings; ignore unknowns for forward compatibility
+            let mut applied = false;
+            if crate::system::apply_vector_setting(&variable, &value) { applied = true; }
+            // Allow toggling strict projection via SET strict.projection = on|off
+            let vlow = variable.to_ascii_lowercase();
+            if vlow == "strict.projection" || vlow == "projection.strict" {
+                let on = matches!(value.to_ascii_lowercase().as_str(), "on" | "true" | "1");
+                crate::system::set_strict_projection(on);
+                applied = true;
+            }
+            let status = if applied { "ok" } else { "ignored" };
+            Ok(serde_json::json!({"status": status}))
+        }
         Command::Insert { table, columns, values } => {
             crate::server::exec::exec_insert::handle_insert(store, table, columns, values)
         }
