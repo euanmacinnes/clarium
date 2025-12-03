@@ -183,6 +183,8 @@ pub struct Query {
     pub having_clause: Option<WhereExpr>,
     pub rolling_window_ms: Option<i64>,
     pub order_by: Option<Vec<(String, bool)>>, // (column/alias, asc=true/desc=false)
+    // Optional ANN/EXACT hint attached to ORDER BY clause: "ANN" | "EXACT"
+    pub order_by_hint: Option<String>,
     pub limit: Option<i64>,
     // Optional INTO destination for persisting SELECT results
     pub into_table: Option<String>,
@@ -278,6 +280,16 @@ pub enum Command {
     ShowTables,
     ShowObjects,
     ShowScripts,
+    // Vector index catalog
+    CreateVectorIndex { name: String, table: String, column: String, algo: String, options: Vec<(String, String)> },
+    DropVectorIndex { name: String },
+    ShowVectorIndex { name: String },
+    ShowVectorIndexes,
+    // Graph catalog
+    CreateGraph { name: String, nodes: Vec<(String, String)>, edges: Vec<(String, String, String)>, nodes_table: Option<String>, edges_table: Option<String> },
+    DropGraph { name: String },
+    ShowGraph { name: String },
+    ShowGraphs,
     // DESCRIBE <object> (table/view) and DESCRIBE KEY ... (existing)
     // For backward compatibility, DESCRIBE KEY is parsed specially; otherwise
     // we treat DESCRIBE <object> as DescribeObject with a possibly unqualified name.
@@ -493,6 +505,138 @@ fn parse_create(s: &str) -> Result<Command> {
         let normalized_name = crate::ident::normalize_identifier(name);
         return Ok(Command::CreateView { name: normalized_name, or_alter, definition_sql: def_sql.to_string() });
     }
+    if up.starts_with("VECTOR INDEX ") {
+        // CREATE VECTOR INDEX <name> ON <table>(<column>) USING hnsw [WITH (k=v, ...)]
+        let after = &rest["VECTOR INDEX ".len()..];
+        let after = after.trim();
+        // name
+        let (name_tok, mut i) = read_word(after, 0);
+        if name_tok.is_empty() { anyhow::bail!("Invalid CREATE VECTOR INDEX: missing index name"); }
+        let name_norm = crate::ident::normalize_identifier(name_tok);
+        i = skip_ws(after, i);
+        let rem = &after[i..];
+        let rem_up = rem.to_uppercase();
+        if !rem_up.starts_with("ON ") { anyhow::bail!("Invalid CREATE VECTOR INDEX: expected ON <table>(<column>)"); }
+        let mut j = 3; // after ON 
+        // table name until '(' or whitespace
+        let (table_tok, k1) = read_word(rem, j);
+        if table_tok.is_empty() { anyhow::bail!("Invalid CREATE VECTOR INDEX: missing table after ON"); }
+        j = k1; j = skip_ws(rem, j);
+        if j >= rem.len() || rem.as_bytes()[j] as char != '(' { anyhow::bail!("Invalid CREATE VECTOR INDEX: expected (column) after table name"); }
+        j += 1; // past '('
+        // read column until ')'
+        let mut col_end = j;
+        while col_end < rem.len() && rem.as_bytes()[col_end] as char != ')' { col_end += 1; }
+        if col_end >= rem.len() { anyhow::bail!("Invalid CREATE VECTOR INDEX: missing ')' after column"); }
+        let column_tok = rem[j..col_end].trim();
+        if column_tok.is_empty() { anyhow::bail!("Invalid CREATE VECTOR INDEX: missing column name"); }
+        j = col_end + 1;
+        j = skip_ws(rem, j);
+        let rem2 = &rem[j..];
+        let rem2_up = rem2.to_uppercase();
+        if !rem2_up.starts_with("USING ") { anyhow::bail!("Invalid CREATE VECTOR INDEX: expected USING <algo>"); }
+        let mut k = 6; // after USING 
+        let (algo_tok, k2) = read_word(rem2, k);
+        if algo_tok.is_empty() { anyhow::bail!("Invalid CREATE VECTOR INDEX: missing algorithm after USING"); }
+        k = k2; k = skip_ws(rem2, k);
+        let mut options: Vec<(String, String)> = Vec::new();
+        if k < rem2.len() {
+            let rem3 = &rem2[k..];
+            let rem3_up = rem3.to_uppercase();
+            if rem3_up.starts_with("WITH ") {
+                let mut x = 5; // after WITH 
+                x = skip_ws(rem3, x);
+                if x >= rem3.len() || rem3.as_bytes()[x] as char != '(' { anyhow::bail!("Invalid CREATE VECTOR INDEX: expected WITH (k=v,...)"); }
+                x += 1;
+                // parse until closing ')'
+                let mut buf = String::new();
+                let mut depth = 1i32;
+                let mut y = x;
+                while y < rem3.len() {
+                    let ch = rem3.as_bytes()[y] as char;
+                    if ch == '(' { depth += 1; }
+                    else if ch == ')' { depth -= 1; if depth == 0 { break; } }
+                    buf.push(ch);
+                    y += 1;
+                }
+                if depth != 0 { anyhow::bail!("Invalid CREATE VECTOR INDEX: unterminated WITH (...)"); }
+                // split buf on commas into k=v pairs
+                for part in buf.split(',') {
+                    let p = part.trim(); if p.is_empty() { continue; }
+                    if let Some(eq) = p.find('=') {
+                        let k = p[..eq].trim().to_string();
+                        let v = p[eq+1..].trim().trim_matches('\'').to_string();
+                        options.push((k, v));
+                    } else {
+                        anyhow::bail!("Invalid option in WITH: expected k=v, got '{}'", p);
+                    }
+                }
+            }
+        }
+        return Ok(Command::CreateVectorIndex { name: name_norm, table: crate::ident::normalize_identifier(table_tok), column: column_tok.to_string(), algo: algo_tok.to_lowercase(), options });
+    }
+    if up.starts_with("GRAPH ") {
+        // CREATE GRAPH <name> NODES (...) EDGES (...) [USING TABLES (nodes=..., edges=...)]
+        let after = &rest["GRAPH ".len()..];
+        let after = after.trim();
+        let (name_tok, mut i) = read_word(after, 0);
+        if name_tok.is_empty() { anyhow::bail!("Invalid CREATE GRAPH: missing name"); }
+        i = skip_ws(after, i);
+        let rem = &after[i..]; let rem_up = rem.to_uppercase();
+        if !rem_up.starts_with("NODES ") { anyhow::bail!("Invalid CREATE GRAPH: expected NODES (...)"); }
+        let mut j = 6; // after NODES 
+        j = skip_ws(rem, j);
+        if j >= rem.len() || rem.as_bytes()[j] as char != '(' { anyhow::bail!("Invalid CREATE GRAPH: expected '(' after NODES"); }
+        j += 1; let start_nodes = j;
+        let mut depth = 1i32;
+        while j < rem.len() && depth > 0 {
+            let ch = rem.as_bytes()[j] as char; if ch == '(' { depth += 1; } else if ch == ')' { depth -= 1; }
+            j += 1;
+        }
+        if depth != 0 { anyhow::bail!("Invalid CREATE GRAPH: unterminated NODES(...)"); }
+        let nodes_block = &rem[start_nodes..j-1];
+        // parse nodes of form Label KEY(col)
+        let mut nodes: Vec<(String, String)> = Vec::new();
+        for part in nodes_block.split(',') { let p = part.trim(); if p.is_empty() { continue; }
+            let up = p.to_uppercase();
+            if let Some(kpos) = up.find(" KEY(") {
+                let label = p[..kpos].trim();
+                if let Some(rp) = p[kpos+5..].find(')') { let key = p[kpos+5..kpos+5+rp].trim(); nodes.push((label.to_string(), key.to_string())); } else { anyhow::bail!("Invalid NODES entry: expected KEY(...)"); }
+            } else { anyhow::bail!("Invalid NODES entry: expected Label KEY(col)"); }
+        }
+        // After nodes, expect EDGES
+        let rem2 = &rem[j..]; let rem2 = rem2.trim_start(); let rem2_up = rem2.to_uppercase();
+        if !rem2_up.starts_with("EDGES ") { anyhow::bail!("Invalid CREATE GRAPH: expected EDGES (...)"); }
+        let mut k = 6; k = skip_ws(rem2, k);
+        if k >= rem2.len() || rem2.as_bytes()[k] as char != '(' { anyhow::bail!("Invalid CREATE GRAPH: expected '(' after EDGES"); }
+        k += 1; let start_edges = k; let mut d2 = 1i32; while k < rem2.len() && d2 > 0 { let ch = rem2.as_bytes()[k] as char; if ch == '(' { d2 += 1; } else if ch == ')' { d2 -= 1; } k += 1; }
+        if d2 != 0 { anyhow::bail!("Invalid CREATE GRAPH: unterminated EDGES(...)"); }
+        let edges_block = &rem2[start_edges..k-1];
+        // parse edges of form Type FROM A TO B
+        let mut edges: Vec<(String, String, String)> = Vec::new();
+        for part in edges_block.split(',') { let p = part.trim(); if p.is_empty() { continue; }
+            let up = p.to_uppercase();
+            if let Some(fp) = up.find(" FROM ") { if let Some(tp) = up[fp+6..].find(" TO ") {
+                let et = p[..fp].trim();
+                let from = p[fp+6..fp+6+tp].trim();
+                let to = p[fp+6+tp+4..].trim();
+                edges.push((et.to_string(), from.to_string(), to.to_string()));
+            } else { anyhow::bail!("Invalid EDGES entry: expected FROM ... TO ..."); } } else { anyhow::bail!("Invalid EDGES entry: expected Type FROM A TO B"); }
+        }
+        // Optional USING TABLES (nodes=..., edges=...)
+        let rem3 = &rem2[k..]; let rem3 = rem3.trim_start(); let rem3_up = rem3.to_uppercase();
+        let mut nodes_table: Option<String> = None; let mut edges_table: Option<String> = None;
+        if rem3_up.starts_with("USING TABLES ") {
+            let mut x = 13; x = skip_ws(rem3, x);
+            if x >= rem3.len() || rem3.as_bytes()[x] as char != '(' { anyhow::bail!("Invalid USING TABLES: expected (nodes=..., edges=...)"); }
+            x += 1; let mut buf = String::new(); let mut depth3 = 1i32; let mut y = x; while y < rem3.len() { let ch = rem3.as_bytes()[y] as char; if ch == '(' { depth3 += 1; } else if ch == ')' { depth3 -= 1; if depth3 == 0 { break; } } buf.push(ch); y += 1; }
+            if depth3 != 0 { anyhow::bail!("Invalid USING TABLES: unterminated (...) block"); }
+            for part in buf.split(',') { let p = part.trim(); if p.is_empty() { continue; }
+                if let Some(eq) = p.find('=') { let k = p[..eq].trim().to_lowercase(); let v = p[eq+1..].trim(); if k == "nodes" { nodes_table = Some(v.to_string()); } else if k == "edges" { edges_table = Some(v.to_string()); } }
+            }
+        }
+        return Ok(Command::CreateGraph { name: crate::ident::normalize_identifier(name_tok), nodes, edges, nodes_table, edges_table });
+    }
     if up.starts_with("SCRIPT ") {
         // CREATE SCRIPT name AS 'code'
         let after = &rest[7..];
@@ -587,6 +731,19 @@ fn parse_drop(s: &str) -> Result<Command> {
         if tail.is_empty() { anyhow::bail!("Invalid DROP VIEW: missing view name"); }
         let normalized_name = crate::ident::normalize_identifier(tail);
         return Ok(Command::DropView { name: normalized_name, if_exists });
+    }
+    if up.starts_with("VECTOR INDEX ") {
+        // DROP VECTOR INDEX <name>
+        let name = rest["VECTOR INDEX ".len()..].trim();
+        if name.is_empty() { anyhow::bail!("Invalid DROP VECTOR INDEX: missing name"); }
+        let normalized_name = crate::ident::normalize_identifier(name);
+        return Ok(Command::DropVectorIndex { name: normalized_name });
+    }
+    if up.starts_with("GRAPH ") {
+        let name = rest["GRAPH ".len()..].trim();
+        if name.is_empty() { anyhow::bail!("Invalid DROP GRAPH: missing name"); }
+        let normalized_name = crate::ident::normalize_identifier(name);
+        return Ok(Command::DropGraph { name: normalized_name });
     }
     if up.starts_with("DATABASE ") {
         let name = rest[9..].trim();
@@ -1299,6 +1456,7 @@ fn parse_select(s: &str) -> Result<Query> {
             having_clause: None,
             rolling_window_ms: None,
             order_by: None,
+            order_by_hint: None,
             limit: None,
             into_table: None,
             into_mode: None,
@@ -1327,6 +1485,7 @@ fn parse_select(s: &str) -> Result<Query> {
     let mut rolling_window_ms: Option<i64> = None;
     let mut order_by: Option<Vec<(String, bool)>> = None;
     let mut limit: Option<i64> = None;
+    let mut order_by_hint: Option<String> = None;
     // Optional INTO target and mode
     let mut into_table: Option<String> = None;
     let mut into_mode: Option<IntoMode> = None;
@@ -1499,7 +1658,21 @@ fn parse_select(s: &str) -> Result<Query> {
             let mut end = after.len();
             if let Some(i) = after_up.find(" LIMIT ") { end = end.min(i); }
             // Allow ORDER BY to be the last clause, so no further trims
-            let inside = after[..end].trim();
+            let mut inside = after[..end].trim().to_string();
+            // Optional trailing USING ANN|EXACT hint
+            {
+                let up_inside = inside.to_uppercase();
+                if let Some(pos) = up_inside.rfind(" USING ") {
+                    // Ensure it is a trailing hint: only whitespace after ANN|EXACT
+                    let hint_part = inside[pos + 7..].trim(); // after ' USING '
+                    let hint_up = hint_part.to_uppercase();
+                    if hint_up == "ANN" || hint_up == "EXACT" {
+                        order_by_hint = Some(hint_up.to_lowercase());
+                        // strip the hint from inside
+                        inside = inside[..pos].trim_end().to_string();
+                    }
+                }
+            }
             let mut list: Vec<(String, bool)> = Vec::new();
             for raw in inside.split(',') {
                 let p = raw.trim();
@@ -1612,7 +1785,7 @@ fn parse_select(s: &str) -> Result<Query> {
         anyhow::bail!("BY and GROUP BY cannot be used together");
     }
 
-    Ok(Query { select, by_window_ms, by_slices, group_by_cols, group_by_notnull_cols, where_clause, having_clause, rolling_window_ms, order_by, limit, into_table, into_mode, base_table, joins, with_ctes, original_sql: s.trim().to_string() })
+    Ok(Query { select, by_window_ms, by_slices, group_by_cols, group_by_notnull_cols, where_clause, having_clause, rolling_window_ms, order_by, order_by_hint, limit, into_table, into_mode, base_table, joins, with_ctes, original_sql: s.trim().to_string() })
 }
 
 fn split_once_any<'a>(s: &'a str, seps: &[&str]) -> (&'a str, Option<&'a str>) {
@@ -4164,6 +4337,24 @@ fn parse_show(s: &str) -> Result<Command> {
     if up == "SHOW TABLES" { return Ok(Command::ShowTables); }
     if up == "SHOW OBJECTS" { return Ok(Command::ShowObjects); }
     if up == "SHOW SCRIPTS" { return Ok(Command::ShowScripts); }
+    if up.starts_with("SHOW VECTOR INDEXES") { return Ok(Command::ShowVectorIndexes); }
+    if up.starts_with("SHOW VECTOR INDEX ") {
+        let name = s.trim()["SHOW VECTOR INDEX ".len()..].trim();
+        if name.is_empty() { anyhow::bail!("SHOW VECTOR INDEX: missing name"); }
+        let normalized_name = crate::ident::normalize_identifier(name);
+        return Ok(Command::ShowVectorIndex { name: normalized_name });
+    }
+    if up.starts_with("SHOW GRAPH ") {
+        let tail = s.trim()["SHOW GRAPH ".len()..].trim();
+        if tail.eq_ignore_ascii_case("S") || tail.eq_ignore_ascii_case("S;") || tail.eq_ignore_ascii_case("S; ") { /* unlikely */ }
+        // Accept SHOW GRAPHS and SHOW GRAPH <name>
+        if tail.eq_ignore_ascii_case("S") || tail.eq_ignore_ascii_case("GRAPHS") { return Ok(Command::ShowGraphs); }
+        if tail.eq_ignore_ascii_case("RAPHS") { return Ok(Command::ShowGraphs); }
+        if tail.eq_ignore_ascii_case("GRAPHS;") { return Ok(Command::ShowGraphs); }
+        let normalized_name = crate::ident::normalize_identifier(tail);
+        return Ok(Command::ShowGraph { name: normalized_name });
+    }
+    if up.starts_with("SHOW GRAPHS") { return Ok(Command::ShowGraphs); }
     if up.starts_with("SHOW VIEW ") {
         let name = s.trim()["SHOW VIEW ".len()..].trim();
         if name.is_empty() { anyhow::bail!("SHOW VIEW: missing name"); }

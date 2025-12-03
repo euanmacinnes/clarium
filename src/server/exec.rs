@@ -17,6 +17,8 @@ pub mod exec_delete;    // DELETE COLUMNS handling
 pub mod exec_scripts;   // SCRIPT management (create/drop/rename/load)
 pub mod exec_views;     // VIEW management (create/drop/show)
 pub mod exec_describe;  // DESCRIBE <object> (tables/views)
+pub mod exec_vector_index; // VECTOR INDEX management
+pub mod exec_graph;        // GRAPH catalog management
 
 use anyhow::Result;
 use polars::prelude::*;
@@ -93,6 +95,20 @@ pub async fn execute_query(store: &SharedStore, text: &str) -> Result<serde_json
         // DESCRIBE <object>
         Command::DescribeObject { name } => {
             self::exec_describe::execute_describe(store, &name)
+        }
+        // Vector index catalog
+        Command::CreateVectorIndex { .. }
+        | Command::DropVectorIndex { .. }
+        | Command::ShowVectorIndex { .. }
+        | Command::ShowVectorIndexes => {
+            self::exec_vector_index::execute_vector_index(store, cmd)
+        }
+        // Graph catalogs
+        Command::CreateGraph { .. }
+        | Command::DropGraph { .. }
+        | Command::ShowGraph { .. }
+        | Command::ShowGraphs => {
+            self::exec_graph::execute_graph(store, cmd)
         }
         // USE and SET commands affect only session defaults; update thread-local defaults
         Command::UseDatabase { name } => {

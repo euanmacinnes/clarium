@@ -1,0 +1,176 @@
+//! exec_vector_index
+//! ------------------
+//! VECTOR INDEX catalog management: CREATE/DROP/SHOW for sidecar `.vindex` files
+//! stored alongside tables/views under `<db>/<schema>/<name>.vindex`.
+
+use anyhow::Result;
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use tracing::info;
+
+use crate::{query, storage::SharedStore};
+use crate::error::AppError;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VIndexFile {
+    pub version: i32,
+    pub name: String,
+    pub qualified: String,
+    pub table: String,
+    pub column: String,
+    pub algo: String,
+    pub metric: Option<String>,
+    pub dim: Option<i32>,
+    pub params: Option<serde_json::Map<String, serde_json::Value>>, // M, ef_build, ef_search (optional)
+    pub status: Option<serde_json::Map<String, serde_json::Value>>,  // state/last_built_at/rows_indexed
+    pub created_at: Option<String>,
+}
+
+fn qualify_name(name: &str) -> String {
+    let d = crate::system::current_query_defaults();
+    crate::ident::qualify_regular_ident(name, &d)
+}
+
+fn path_for_vindex(store: &SharedStore, qualified: &str) -> std::path::PathBuf {
+    let mut p = store.0.lock().root_path().clone();
+    let local = qualified.replace('/', std::path::MAIN_SEPARATOR.to_string().as_str());
+    p.push(local);
+    p.set_extension("vindex");
+    p
+}
+
+fn read_vindex_file(store: &SharedStore, qualified: &str) -> Result<Option<VIndexFile>> {
+    let path = path_for_vindex(store, qualified);
+    if !path.exists() { return Ok(None); }
+    let text = std::fs::read_to_string(&path)?;
+    let v: VIndexFile = serde_json::from_str(&text)?;
+    Ok(Some(v))
+}
+
+fn write_vindex_file(store: &SharedStore, qualified: &str, vf: &VIndexFile) -> Result<()> {
+    let path = path_for_vindex(store, qualified);
+    if let Some(parent) = path.parent() { std::fs::create_dir_all(parent).ok(); }
+    std::fs::write(&path, serde_json::to_string_pretty(vf)?)?;
+    Ok(())
+}
+
+fn delete_vindex_file(store: &SharedStore, qualified: &str) -> Result<()> {
+    let path = path_for_vindex(store, qualified);
+    if path.exists() { std::fs::remove_file(&path).ok(); }
+    Ok(())
+}
+
+fn now_iso() -> String { chrono::Utc::now().to_rfc3339() }
+
+fn table_exists(store: &SharedStore, qualified_table: &str) -> bool {
+    let mut p = store.0.lock().root_path().clone();
+    let local = qualified_table.replace('/', std::path::MAIN_SEPARATOR.to_string().as_str());
+    p.push(local);
+    p.is_dir() && p.join("schema.json").exists()
+}
+
+fn list_vector_indexes(store: &SharedStore) -> Result<Value> {
+    let root = store.0.lock().root_path().clone();
+    let mut out: Vec<serde_json::Value> = Vec::new();
+    if let Ok(dbs) = std::fs::read_dir(&root) {
+        for db_ent in dbs.flatten() {
+            let db_path = db_ent.path(); if !db_path.is_dir() { continue; }
+            if let Ok(sd) = std::fs::read_dir(&db_path) {
+                for schema_dir in sd.flatten().filter(|e| e.path().is_dir()) {
+                    let sp = schema_dir.path();
+                    if let Ok(td) = std::fs::read_dir(&sp) {
+                        for tentry in td.flatten() {
+                            let tp = tentry.path();
+                            if tp.is_file() && tp.extension().and_then(|s| s.to_str()) == Some("vindex") {
+                                if let Ok(text) = std::fs::read_to_string(&tp) {
+                                    if let Ok(v) = serde_json::from_str::<VIndexFile>(&text) {
+                                        out.push(serde_json::json!({
+                                            "name": v.name,
+                                            "table": v.table,
+                                            "column": v.column,
+                                            "algo": v.algo,
+                                            "metric": v.metric,
+                                            "dim": v.dim
+                                        }));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Ok(Value::Array(out))
+}
+
+pub fn execute_vector_index(store: &SharedStore, cmd: query::Command) -> Result<Value> {
+    match cmd {
+        query::Command::CreateVectorIndex { name, table, column, algo, options } => {
+            if algo.to_lowercase() != "hnsw" { return Err(AppError::Ddl { code: "vector_algo".into(), message: format!("Only HNSW is supported for now, got '{}'.", algo) }.into()); }
+            let qualified = qualify_name(&name);
+            if read_vindex_file(store, &qualified)?.is_some() {
+                return Err(AppError::Conflict { code: "name_conflict".into(), message: format!("Vector index already exists: {}", qualified) }.into());
+            }
+            let qtable = crate::ident::qualify_regular_ident(&table, &crate::system::current_query_defaults());
+            if !table_exists(store, &qtable) {
+                return Err(AppError::NotFound { code: "table_not_found".into(), message: format!("Table not found: {}", qtable) }.into());
+            }
+            // Build params map from options
+            let mut params = serde_json::Map::new();
+            let mut metric: Option<String> = None;
+            let mut dim: Option<i32> = None;
+            for (k, v) in options.into_iter() {
+                let kl = k.to_lowercase();
+                if kl == "metric" { metric = Some(v.trim_matches('\'').to_string()); continue; }
+                if kl == "dim" { dim = v.parse::<i32>().ok(); continue; }
+                params.insert(k, serde_json::Value::String(v));
+            }
+            let vf = VIndexFile {
+                version: 1,
+                name: qualified.clone(),
+                qualified: qualified.clone(),
+                table: qtable,
+                column,
+                algo: "hnsw".to_string(),
+                metric,
+                dim,
+                params: if params.is_empty() { None } else { Some(params) },
+                status: None,
+                created_at: Some(now_iso()),
+            };
+            write_vindex_file(store, &qualified, &vf)?;
+            info!(target: "clarium::ddl", "CREATE VECTOR INDEX saved '{}.vindex'", qualified);
+            Ok(serde_json::json!({"status":"ok"}))
+        }
+        query::Command::DropVectorIndex { name } => {
+            let qualified = qualify_name(&name);
+            if read_vindex_file(store, &qualified)?.is_none() {
+                return Err(AppError::NotFound { code: "not_found".into(), message: format!("Vector index not found: {}", qualified) }.into());
+            }
+            delete_vindex_file(store, &qualified)?;
+            Ok(serde_json::json!({"status":"ok"}))
+        }
+        query::Command::ShowVectorIndex { name } => {
+            let qualified = qualify_name(&name);
+            if let Some(vf) = read_vindex_file(store, &qualified)? {
+                let row = serde_json::json!({
+                    "name": vf.name,
+                    "table": vf.table,
+                    "column": vf.column,
+                    "algo": vf.algo,
+                    "metric": vf.metric,
+                    "dim": vf.dim,
+                    "params": vf.params,
+                    "status": vf.status
+                });
+                return Ok(serde_json::json!([row]));
+            }
+            return Err(AppError::NotFound { code: "not_found".into(), message: format!("Vector index not found: {}", qualified) }.into());
+        }
+        query::Command::ShowVectorIndexes => {
+            list_vector_indexes(store)
+        }
+        _ => Err(AppError::Ddl { code: "unsupported_vector_index".into(), message: "unsupported vector index command".into() }.into()),
+    }
+}
