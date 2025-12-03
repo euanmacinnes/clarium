@@ -1188,7 +1188,7 @@ fn parse_select(s: &str) -> Result<Query> {
     let s_up = s.to_uppercase();
     if s_up.trim_start().starts_with("WITH ") {
         // Extract WITH clause and main SELECT
-        let with_start = s.trim_start().find("WITH ").unwrap();
+        let with_start = s_up.trim_start().find("WITH ").unwrap();
         let after_with = &s[with_start + 5..].trim();
         
         // Find the main SELECT that follows the CTE definitions
