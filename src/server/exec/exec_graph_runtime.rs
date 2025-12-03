@@ -82,17 +82,56 @@ fn load_edges_df(
     let src_col = e.src_column.clone().unwrap_or_else(|| "src".to_string());
     let dst_col = e.dst_column.clone().unwrap_or_else(|| "dst".to_string());
     let cost_col = e.cost_column.clone();
+    // Only apply temporal filtering if a time_column is configured in the catalog
     let time_col = e.time_column.clone();
     let guard = store.0.lock();
     let df = guard.read_df(&table)?;
     Ok((df, src_col, dst_col, cost_col, time_col))
 }
 
-/// Materialize graph_neighbors(graph, start, etype, max_hops)
-pub fn graph_neighbors_df(store: &SharedStore, graph: &str, start: &str, etype: Option<&str>, max_hops: i64) -> Result<DataFrame> {
+/// Materialize graph_neighbors(graph, start, etype, max_hops[, time_start, time_end])
+/// time_start/time_end are optional ISO8601 strings or integer epoch millis; if provided and a time_column exists in the catalog,
+/// only edges within [time_start, time_end] (inclusive) are considered.
+pub fn graph_neighbors_df(
+    store: &SharedStore,
+    graph: &str,
+    start: &str,
+    etype: Option<&str>,
+    max_hops: i64,
+    time_start: Option<&str>,
+    time_end: Option<&str>,
+) -> Result<DataFrame> {
     let qname = qualify_graph_name(graph);
     let gf = read_graph_file(store, &qname)?;
-    let (edges_df, src_col, dst_col, _cost, _time) = load_edges_df(store, &gf, etype)?;
+    let (mut edges_df, src_col, dst_col, _cost, time_col_opt) = load_edges_df(store, &gf, etype)?;
+    // Optional temporal filter: apply if at least one bound is supplied and time column exists
+    if let Some(time_col) = time_col_opt.clone() {
+        if time_start.is_some() || time_end.is_some() {
+            let t0 = time_start.and_then(parse_time_to_i64);
+            let t1 = time_end.and_then(parse_time_to_i64);
+            if t0.is_some() || t1.is_some() {
+                if let Ok(col) = edges_df.column(&time_col) {
+                    let mask = col
+                        .iter()
+                        .map(|v| {
+                            let val = match v.try_extract::<i64>() {
+                                Ok(n) => Some(n),
+                                Err(_) => match v.try_extract::<&str>() { Ok(s) => parse_time_to_i64(s), Err(_) => None },
+                            };
+                            if let Some(n) = val {
+                                let ge = t0.map(|a| n >= a).unwrap_or(true);
+                                let le = t1.map(|b| n <= b).unwrap_or(true);
+                                Some(ge && le)
+                            } else { Some(false) }
+                        })
+                        .collect::<Vec<Option<bool>>>();
+                    let bools: Vec<bool> = mask.into_iter().map(|o| o.unwrap_or(false)).collect();
+                    let s = polars::prelude::BooleanChunked::from_slice("__mask", &bools);
+                    edges_df = edges_df.filter(&s)?;
+                }
+            }
+        }
+    }
     // For robustness, accept Utf8 or general string-like columns via `to_string` fallback
     let src_series = edges_df.column(&src_col)?;
     let dst_series = edges_df.column(&dst_col)?;
@@ -140,11 +179,48 @@ pub fn graph_neighbors_df(store: &SharedStore, graph: &str, start: &str, etype: 
     ])?)
 }
 
-/// Materialize graph_paths(graph, src, dst, max_hops[, etype]) – returns one cheapest (by cost if available, else shortest hops) path (if any)
-pub fn graph_paths_df(store: &SharedStore, graph: &str, src_id: &str, dst_id: &str, max_hops: i64, etype: Option<&str>) -> Result<DataFrame> {
+/// Materialize graph_paths(graph, src, dst, max_hops[, etype[, time_start, time_end]]) –
+/// returns one cheapest (by cost if available, else shortest hops) path (if any). Optional temporal window behaves like in neighbors.
+pub fn graph_paths_df(
+    store: &SharedStore,
+    graph: &str,
+    src_id: &str,
+    dst_id: &str,
+    max_hops: i64,
+    etype: Option<&str>,
+    time_start: Option<&str>,
+    time_end: Option<&str>,
+) -> Result<DataFrame> {
     let qname = qualify_graph_name(graph);
     let gf = read_graph_file(store, &qname)?;
-    let (edges_df, src_col, dst_col, cost_col_opt, _time_col) = load_edges_df(store, &gf, etype)?;
+    let (mut edges_df, src_col, dst_col, cost_col_opt, time_col_opt) = load_edges_df(store, &gf, etype)?;
+    if let Some(time_col) = time_col_opt.clone() {
+        if time_start.is_some() || time_end.is_some() {
+            let t0 = time_start.and_then(parse_time_to_i64);
+            let t1 = time_end.and_then(parse_time_to_i64);
+            if t0.is_some() || t1.is_some() {
+                if let Ok(col) = edges_df.column(&time_col) {
+                    let mask = col
+                        .iter()
+                        .map(|v| {
+                            let val = match v.try_extract::<i64>() {
+                                Ok(n) => Some(n),
+                                Err(_) => match v.try_extract::<&str>() { Ok(s) => parse_time_to_i64(s), Err(_) => None },
+                            };
+                            if let Some(n) = val {
+                                let ge = t0.map(|a| n >= a).unwrap_or(true);
+                                let le = t1.map(|b| n <= b).unwrap_or(true);
+                                Some(ge && le)
+                            } else { Some(false) }
+                        })
+                        .collect::<Vec<Option<bool>>>();
+                    let bools: Vec<bool> = mask.into_iter().map(|o| o.unwrap_or(false)).collect();
+                    let s = polars::prelude::BooleanChunked::from_slice("__mask", &bools);
+                    edges_df = edges_df.filter(&s)?;
+                }
+            }
+        }
+    }
     // Extract columns as strings and optional costs
     let src_series = edges_df.column(&src_col)?;
     let dst_series = edges_df.column(&dst_col)?;
@@ -258,4 +334,15 @@ pub fn graph_paths_df(store: &SharedStore, graph: &str, src_id: &str, dst_id: &s
             Series::new("ord", ord),
         ])?)
     }
+}
+
+/// Parse ISO8601 string or integer text into epoch milliseconds (i64)
+fn parse_time_to_i64(s: &str) -> Option<i64> {
+    // First try integer parse
+    if let Ok(n) = s.trim().parse::<i64>() { return Some(n); }
+    // Try RFC3339/ISO8601 via chrono
+    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(s.trim()) {
+        return Some(dt.timestamp_millis());
+    }
+    None
 }

@@ -558,7 +558,9 @@ impl DataContext {
         }
     }
 
-    // Detect and evaluate graph TVFs embedded in FROM: graph_neighbors(graph,start,etype,max_hops) or graph_paths(graph,src,dst,max_hops)
+    // Detect and evaluate graph TVFs embedded in FROM:
+    // graph_neighbors(graph,start,etype,max_hops[, time_start, time_end])
+    // graph_paths(graph,src,dst,max_hops[, etype[, time_start, time_end]])
     fn try_graph_tvf(store: &crate::storage::SharedStore, raw: &str) -> anyhow::Result<Option<DataFrame>> {
         let s = raw.trim();
         let low = s.to_ascii_lowercase();
@@ -589,23 +591,32 @@ impl DataContext {
         }
         if low.starts_with("graph_neighbors(") && s.ends_with(')') {
             if let Some(args) = extract_args(s) {
-                // graph, start, etype, max_hops
+                // graph, start, etype, max_hops [, time_start, time_end]
                 let graph = args.get(0).map(|a| strip_quotes(a)).unwrap_or_default();
                 let start = args.get(1).map(|a| strip_quotes(a)).unwrap_or_default();
                 let etype = args.get(2).map(|a| strip_quotes(a));
                 let max_hops: i64 = args.get(3).and_then(|a| strip_quotes(a).parse::<i64>().ok()).unwrap_or(1);
-                let df = crate::server::exec::exec_graph_runtime::graph_neighbors_df(store, &graph, &start, etype.as_deref(), max_hops)?;
+                let time_start = args.get(4).map(|a| strip_quotes(a)).filter(|s| !s.is_empty());
+                let time_end = args.get(5).map(|a| strip_quotes(a)).filter(|s| !s.is_empty());
+                let df = crate::server::exec::exec_graph_runtime::graph_neighbors_df(
+                    store, &graph, &start, etype.as_deref(), max_hops, time_start.as_deref(), time_end.as_deref()
+                )?;
                 return Ok(Some(df));
             }
         }
         if low.starts_with("graph_paths(") && s.ends_with(')') {
             if let Some(args) = extract_args(s) {
-                // graph, src, dst, max_hops
+                // graph, src, dst, max_hops [, etype [, time_start, time_end]]
                 let graph = args.get(0).map(|a| strip_quotes(a)).unwrap_or_default();
                 let src = args.get(1).map(|a| strip_quotes(a)).unwrap_or_default();
                 let dst = args.get(2).map(|a| strip_quotes(a)).unwrap_or_default();
                 let max_hops: i64 = args.get(3).and_then(|a| strip_quotes(a).parse::<i64>().ok()).unwrap_or(3);
-                let df = crate::server::exec::exec_graph_runtime::graph_paths_df(store, &graph, &src, &dst, max_hops)?;
+                let etype = args.get(4).map(|a| strip_quotes(a)).filter(|s| !s.is_empty());
+                let time_start = args.get(5).map(|a| strip_quotes(a)).filter(|s| !s.is_empty());
+                let time_end = args.get(6).map(|a| strip_quotes(a)).filter(|s| !s.is_empty());
+                let df = crate::server::exec::exec_graph_runtime::graph_paths_df(
+                    store, &graph, &src, &dst, max_hops, etype.as_deref(), time_start.as_deref(), time_end.as_deref()
+                )?;
                 return Ok(Some(df));
             }
         }
