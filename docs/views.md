@@ -16,13 +16,15 @@ Creating and altering views
 ```
 -- honors session defaults (USE DATABASE/SCHEMA)
 CREATE VIEW hourly_hot AS
-  SELECT BY 1h, AVG(temperature) AS avg_temp
+  SELECT AVG(temperature) AS avg_temp
   FROM sensors.time
+  BY 1h
   WHERE temperature >= 30;
 
 -- re-create or update in place
 CREATE OR ALTER VIEW hourly_hot AS
-  SELECT BY 1h, MAX(temperature) AS max_temp
+  SELECT MAX(temperature) AS max_temp
+  BY 1h
   FROM sensors.time;
 ```
 

@@ -58,8 +58,9 @@ Time windows with BY
 --------------------
 Fixed windows over `_time` for time tables:
 ```
-SELECT BY 5m, COUNT(*) AS n, AVG(temp) AS avg_temp
+SELECT COUNT(*) AS n, AVG(temp) AS avg_temp
 FROM sensors.time
+BY 5m
 ORDER BY _time;
 ```
 

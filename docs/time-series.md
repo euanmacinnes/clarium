@@ -36,8 +36,9 @@ Windowed aggregation with BY
 ----------------------------
 `BY` groups records into fixed windows by `_time` (ms, s, m, h, d):
 ```
-SELECT BY 5m, COUNT(*) AS n, AVG(temp) AS avg_temp
+SELECT COUNT(*) AS n, AVG(temp) AS avg_temp
 FROM metrics.time
+BY 5m
 ORDER BY _time;
 ```
 

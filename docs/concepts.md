@@ -27,7 +27,7 @@ Qualification and naming
   USE DATABASE analytics;
   USE SCHEMA raw;
   SELECT * FROM events.time LIMIT 1; -- resolves to analytics/raw/events.time
-  CREATE VIEW hourly AS SELECT BY 1h, COUNT(*) AS n FROM events.time; -- saved under analytics/raw/hourly.view
+  CREATE VIEW hourly AS SELECT COUNT(*) AS n FROM events.time BY 1h; -- saved under analytics/raw/hourly.view
   ```
 
 Uniqueness and collisions
