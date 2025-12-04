@@ -1,4 +1,4 @@
-use crate::query::{self, Command};
+use crate::server::query::{self, Command};
 use crate::server::exec::exec_views::read_view_file;
 use crate::server::exec::exec_vector_index::VIndexFile;
 use crate::server::exec::exec_select::run_select;
