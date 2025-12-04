@@ -458,31 +458,34 @@ fn ann_order_dataframe(
     let mut scores: Vec<f64> = Vec::with_capacity(df.height());
     // Iterate row-wise and read vectors from either native List(Float64/Int64) cells or fallback string encodings
     for i in 0..col_series.len() {
-        let av = col_series.get(i);
-        // Prefer native list extraction for robustness across Polars versions
-        let v: Vec<f64> = match av {
-            AnyValue::List(inner) => {
+        // Polars 0.51+ guideline: use Series::get(i) and AnyValue conversion
+        let v: Vec<f64> = match col_series.get(i) {
+            Ok(AnyValue::List(inner)) => {
                 let ser = inner;
                 let mut out: Vec<f64> = Vec::with_capacity(ser.len());
                 for li in 0..ser.len() {
-                    let av2 = ser.get(li);
-                    match av2 {
-                        AnyValue::Float64(f) => out.push(*f),
-                        AnyValue::Int64(iv) => out.push(*iv as f64),
-                        AnyValue::Float32(f) => out.push(*f as f64),
-                        AnyValue::Int32(iv) => out.push(*iv as f64),
-                        _ => out.push(0.0),
+                    match ser.get(li) {
+                        Ok(AnyValue::Float64(f)) => out.push(f),
+                        Ok(AnyValue::Int64(iv)) => out.push(iv as f64),
+                        Ok(AnyValue::Float32(f)) => out.push(f as f64),
+                        Ok(AnyValue::Int32(iv)) => out.push(iv as f64),
+                        Ok(other) => {
+                            let s_owned = other.to_string();
+                            let mut parsed = parse_vec_literal(&s_owned).unwrap_or_default();
+                            if parsed.is_empty() { out.push(0.0); } else { out.append(&mut parsed); }
+                        }
+                        Err(_) => out.push(0.0),
                     }
                 }
                 out
             }
-            AnyValue::String(s) => parse_vec_literal(s).unwrap_or_default(),
-            AnyValue::StringOwned(s) => parse_vec_literal(s.as_str()).unwrap_or_default(),
-            other => {
-                // Fallback: stringify and parse literal like "[1,2,3]" or "1 2 3"
+            Ok(AnyValue::String(s)) => parse_vec_literal(s).unwrap_or_default(),
+            Ok(AnyValue::StringOwned(s)) => parse_vec_literal(s.as_str()).unwrap_or_default(),
+            Ok(other) => {
                 let s_owned = other.to_string();
                 parse_vec_literal(&s_owned).unwrap_or_default()
             }
+            Err(_) => Vec::new(),
         };
         let score = match func {
             f if f.eq_ignore_ascii_case("vec_l2") => l2_distance(&v, &qvec),

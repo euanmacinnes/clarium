@@ -646,7 +646,7 @@ fn to_ck_and_db(cmd: &query::Command) -> (security::CommandKind, Option<String>)
         | query::Command::DropVectorIndex { .. }
         | query::Command::ShowVectorIndex { .. }
         | query::Command::ShowVectorIndexes => (security::CommandKind::Database, None),
-        // Graph catalog
+        // Graph catalog and graph-related commands
         query::Command::CreateGraph { .. }
         | query::Command::DropGraph { .. }
         | query::Command::ShowGraph { .. }
@@ -654,7 +654,9 @@ fn to_ck_and_db(cmd: &query::Command) -> (security::CommandKind, Option<String>)
         | query::Command::ShowGraphStatus { .. }
         | query::Command::UseGraph { .. }
         | query::Command::UnsetGraph
-        | query::Command::ShowCurrentGraph => (security::CommandKind::Other, None),
+        | query::Command::ShowCurrentGraph
+        | query::Command::GcGraph { .. }
+        | query::Command::MatchRewrite { .. } => (security::CommandKind::Other, None),
         // Global session-affecting and SHOW
         query::Command::UseDatabase { .. } | query::Command::UseSchema { .. } | query::Command::Set { .. } => (security::CommandKind::Other, None),
         query::Command::ShowTransactionIsolation

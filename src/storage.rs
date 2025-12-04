@@ -324,22 +324,11 @@ impl Store {
         for (name, dt) in schema.iter() {
             if name == "_time" { continue; }
             if !df.get_column_names().iter().any(|c| c.as_str() == name) {
-                // add null column with correct dtype
+                // add null column; avoid nested Vec<Option<Vec<_>>> constructions that are not supported uniformly across Polars
+                // Prefer nullable Utf8 for most types except Int64 where we can use nullable i64
                 let s = match dt {
-                    DataType::String => Series::new(name.clone().into(), vec![Option::<String>::None; df.height()]),
                     DataType::Int64 => Series::new(name.clone().into(), vec![Option::<i64>::None; df.height()]),
-                    DataType::List(inner) => {
-                        // For vector/list columns, create a null list column (Vec<Option<Vec<_>>>)
-                        if matches!(**inner, DataType::Float64) {
-                            Series::new(name.clone().into(), vec![Option::<Vec<f64>>::None; df.height()])
-                        } else if matches!(**inner, DataType::Int64) {
-                            Series::new(name.clone().into(), vec![Option::<Vec<i64>>::None; df.height()])
-                        } else {
-                            // Fallback to null strings to keep schema alignment
-                            Series::new(name.clone().into(), vec![Option::<String>::None; df.height()])
-                        }
-                    }
-                    _ => Series::new(name.clone().into(), vec![Option::<f64>::None; df.height()]),
+                    _ => Series::new(name.clone().into(), vec![Option::<String>::None; df.height()]),
                 };
                 df.with_column(s)?;
             } else {
@@ -673,20 +662,10 @@ impl Store {
             for (name, dt) in expected.clone() { // clone to iterate
                 if name == "_time" { continue; }
                 if !df.get_column_names().iter().any(|c| c.as_str() == name) {
-                    // add null column
+                    // add null column (prefer Utf8 for portability; use Int64 where appropriate)
                     let s = match dt {
-                        DataType::String => Series::new(name.clone().into(), vec![Option::<String>::None; df.height()]),
                         DataType::Int64 => Series::new(name.clone().into(), vec![Option::<i64>::None; df.height()]),
-                        DataType::List(inner) => {
-                            if matches!(**inner, DataType::Float64) {
-                                Series::new(name.clone().into(), vec![Option::<Vec<f64>>::None; df.height()])
-                            } else if matches!(**inner, DataType::Int64) {
-                                Series::new(name.clone().into(), vec![Option::<Vec<i64>>::None; df.height()])
-                            } else {
-                                Series::new(name.clone().into(), vec![Option::<String>::None; df.height()])
-                            }
-                        }
-                        _ => Series::new(name.clone().into(), vec![Option::<f64>::None; df.height()]),
+                        _ => Series::new(name.clone().into(), vec![Option::<String>::None; df.height()]),
                     };
                     df.with_column(s)?;
                 } else {
