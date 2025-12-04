@@ -42,6 +42,7 @@ fn write_vindex(store: &SharedStore, name: &str, table: &str, column: &str, metr
 
 #[test]
 fn ann_orders_like_exact_and_honors_limit() {
+    super::udf_common::init_all_test_udfs();
     let tmp = tempfile::tempdir().unwrap();
     let db = "clarium/public/docs";
     let shared = seed_docs(&tmp, db);
@@ -71,6 +72,7 @@ fn ann_orders_like_exact_and_honors_limit() {
 
 #[test]
 fn ann_respects_desc_and_ignores_second_key_for_ann() {
+    super::udf_common::init_all_test_udfs();
     let tmp = tempfile::tempdir().unwrap();
     let db = "clarium/public/docs";
     let shared = seed_docs(&tmp, db);
@@ -99,6 +101,7 @@ fn ann_respects_desc_and_ignores_second_key_for_ann() {
 
 #[test]
 fn ann_hint_exact_forces_exact_and_missing_index_fallback() {
+    super::udf_common::init_all_test_udfs();
     let tmp = tempfile::tempdir().unwrap();
     let db = "clarium/public/docs";
     let shared = seed_docs(&tmp, db);
@@ -126,6 +129,7 @@ fn ann_hint_exact_forces_exact_and_missing_index_fallback() {
 
 #[test]
 fn ann_metric_dim_mismatch_fallback_and_rhs_subquery() {
+    super::udf_common::init_all_test_udfs();
     let tmp = tempfile::tempdir().unwrap();
     let db = "clarium/public/docs";
     let shared = seed_docs(&tmp, db);

@@ -854,6 +854,60 @@ pub fn project_select(df: DataFrame, q: &Query, ctx: &mut DataContext) -> Result
                     }
                 }
             }
+
+            // Special handling: if ORDER BY has an ANN expression (vec_l2/cosine_sim) and the vector source column
+            // is not in projection, append it so ANN/order stage can compute scores. Use order_by_raw[0].
+            if q.order_by_hint.as_deref() == Some("ann") {
+                if let Some(raw0) = q.order_by_raw.as_ref().and_then(|v| v.get(0)).map(|(s, _)| s.clone()) {
+                    // Local parser for ANN ORDER BY expression: func(lhs, rhs) where lhs is table/col
+                    fn parse_ann_lhs(expr: &str) -> Option<String> {
+                        let txt = expr.trim();
+                        let up = txt.to_ascii_lowercase();
+                        let funcs = ["vec_l2", "cosine_sim"]; 
+                        let func = funcs.iter().find(|f| up.starts_with(&format!("{}(", f))).cloned()?;
+                        let open_pos = txt.find('(')?;
+                        let inner = &txt[open_pos+1..].trim();
+                        let mut depth = 1i32;
+                        let bytes: Vec<char> = inner.chars().collect();
+                        let mut comma_at: Option<usize> = None;
+                        let mut i = 0usize;
+                        while i < bytes.len() {
+                            let ch = bytes[i];
+                            if ch == '(' { depth += 1; }
+                            else if ch == ')' { depth -= 1; if depth == 0 { break; } }
+                            else if ch == ',' && depth == 1 && comma_at.is_none() { comma_at = Some(i); }
+                            i += 1;
+                        }
+                        if depth != 0 { return None; }
+                        let end_pos = i;
+                        let body: String = bytes[..end_pos].iter().collect();
+                        let (lhs, _rhs) = if let Some(cpos) = comma_at { (&body[..cpos], &body[cpos+1..]) } else { return None; };
+                        let lhs = lhs.trim();
+                        // extract last path segment as column name
+                        let lhs_norm = lhs.trim_matches('"').trim_matches('`');
+                        let parts: Vec<&str> = lhs_norm.split(|c| c == '.' || c == '/').collect();
+                        if parts.len() < 1 { return None; }
+                        Some(parts.last().unwrap().to_string())
+                    }
+                    if let Some(lhs_col) = parse_ann_lhs(&raw0) {
+                        if !existing.contains(&lhs_col) {
+                            // Resolve possibly-qualified column name against the incoming DF/context
+                            if let Ok(resolved) = resolve_col_name_ctx(&df, ctx, &lhs_col) {
+                                if let Ok(mut s) = df.column(&resolved).cloned() {
+                                    let base = resolved.rsplit('.').next().unwrap_or(resolved.as_str()).to_string();
+                                    let target = base.clone();
+                                    s.rename(target.clone().into());
+                                    if !out_cols.iter().any(|c| c.name().as_str() == target.as_str()) {
+                                        existing.insert(target.clone());
+                                        out_cols.push(s);
+                                        ctx.temp_order_by_columns.insert(target);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 

@@ -76,33 +76,52 @@ pub fn order_limit(mut df: DataFrame, q: &Query, ctx: &mut DataContext) -> Resul
                         if let Some((raw0, asc_flag)) = raw_items.get(0) {
                             if let Some(p) = parse_ann_order_expr(raw0) {
                                 if let Some(rhs_val) = eval_scalar_expr(ctx, &p.rhs_expr) {
-                                    if let Some(diag) = ann_find_index_for(ctx, &p.table, &p.column) {
-                                        // Attempt ANN ordering using the current DataFrame
-                                        if df.get_column_names().iter().any(|c| c.eq_ignore_ascii_case(&p.column)) {
-                                            // Pass LIMIT as top-k optimization to sorter
-                                            let topk = q.limit.and_then(|n| if n > 0 { Some(n as usize) } else { None });
-                                            let ef_search = crate::system::get_vector_ef_search();
-                                            tprintln!("[ORDER_LIMIT] ANN executing with ef_search={} topk={:?}", ef_search, topk);
-                                            if let Ok(sorted) = ann_order_dataframe(&df, &p.column, &p.func, diag.metric.as_deref(), diag.dim, &rhs_val, *asc_flag, topk) {
-                                                df = sorted;
-                                                ann_applied = true;
-                                                // Skip building exact sort expressions — we already sorted via ANN
-                                                // LIMIT handling continues below as usual
-                                                // Register columns and proceed to LIMIT
-                                                // Note: we purposely do not remove any columns; ann_order_dataframe cleans up temp columns
-                                                // Continue to LIMIT without executing the exact branch
-                                                // Jump to LIMIT by using a scoped block and then falling through
-                                            } else {
-                                                tprintln!("[ORDER_LIMIT] ANN execution failed; falling back to exact sort");
-                                            }
+                                    // Attempt ANN-style ordering using exact computation even if no index is present
+                                    let diag = ann_find_index_for(ctx, &p.table, &p.column);
+                                    let metric = diag.as_ref().and_then(|d| d.metric.as_deref());
+                                    let dim = diag.as_ref().and_then(|d| d.dim);
+                                    if let Some(d) = &diag {
+                                        tprintln!("[ORDER_LIMIT] ANN path: matching index found for {}.{} metric={:?} dim={:?}", d.table, d.column, d.metric, d.dim);
+                                    } else {
+                                        tprintln!("[ORDER_LIMIT] ANN path: no index found for {}.{}; computing exact distances for ordering", p.table, p.column);
+                                    }
+                                    if df.get_column_names().iter().any(|c| c.eq_ignore_ascii_case(&p.column)) {
+                                        // Pass LIMIT as top-k optimization to sorter
+                                        let topk = q.limit.and_then(|n| if n > 0 { Some(n as usize) } else { None });
+                                        let ef_search = crate::system::get_vector_ef_search();
+                                        tprintln!("[ORDER_LIMIT] ANN executing (exact compute) with ef_search={} topk={:?}", ef_search, topk);
+                                        if let Ok(sorted) = ann_order_dataframe(&df, &p.column, &p.func, metric, dim, &rhs_val, *asc_flag, topk) {
+                                            df = sorted;
+                                            ann_applied = true;
                                         } else {
-                                            tprintln!("[ORDER_LIMIT] ANN requested but column '{}' not present in projection; fallback to exact", p.column);
+                                            tprintln!("[ORDER_LIMIT] ANN execution failed; falling back to exact sort");
                                         }
                                     } else {
-                                        tprintln!("[ORDER_LIMIT] ANN requested but no matching vector index for {}.{}; falling back to exact", p.table, p.column);
+                                        tprintln!("[ORDER_LIMIT] ANN requested but column '{}' not present in projection; fallback to exact", p.column);
                                     }
                                 } else {
                                     tprintln!("[ORDER_LIMIT] ANN requested but RHS scalar could not be evaluated; falling back to exact");
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            if !ann_applied {
+                // Opportunistic ANN path: even without explicit USING ANN, attempt to detect known ANN functions
+                if let Some(raw_items) = &q.order_by_raw {
+                    if let Some((raw0, asc_flag)) = raw_items.get(0) {
+                        if let Some(p) = parse_ann_order_expr(raw0) {
+                            if let Some(rhs_val) = eval_scalar_expr(ctx, &p.rhs_expr) {
+                                let diag = ann_find_index_for(ctx, &p.table, &p.column);
+                                let metric = diag.as_ref().and_then(|d| d.metric.as_deref());
+                                let dim = diag.as_ref().and_then(|d| d.dim);
+                                if df.get_column_names().iter().any(|c| c.eq_ignore_ascii_case(&p.column)) {
+                                    let topk = q.limit.and_then(|n| if n > 0 { Some(n as usize) } else { None });
+                                    if let Ok(sorted) = ann_order_dataframe(&df, &p.column, &p.func, metric, dim, &rhs_val, *asc_flag, topk) {
+                                        df = sorted;
+                                        ann_applied = true;
+                                    }
                                 }
                             }
                         }
@@ -127,6 +146,13 @@ pub fn order_limit(mut df: DataFrame, q: &Query, ctx: &mut DataContext) -> Resul
                 let mut exprs: Vec<Expr> = Vec::new();
                 let mut descending: Vec<bool> = Vec::new();
                 for (name, asc) in ob.iter() {
+                    // If the ORDER BY key looks like an expression (e.g., a function call),
+                    // skip it here; expression-based ordering should be handled via ANN path
+                    // or earlier stages. This prevents mis-resolving full expressions as columns.
+                    if name.contains('(') || name.contains(')') {
+                        tprintln!("[ORDER_LIMIT] Skipping expression ORDER BY key '{}' in exact path", name);
+                        continue;
+                    }
                     // Try to resolve the ORDER BY column against current DF/Context
                     match ctx.resolve_column_at_stage(&df, name, SelectStage::OrderLimit) {
                         Ok(resolved) => {
@@ -383,18 +409,10 @@ fn ann_order_dataframe(
     asc_hint: bool,
     topk: Option<usize>,
 ) -> Result<DataFrame> {
-    // Parse query vector once
+    // Parse query vector once. If parsing fails, bail so caller can fallback to exact ORDER BY path.
     let qvec = parse_vec_literal(rhs_scalar).ok_or_else(|| anyhow::anyhow!("invalid query vector for ANN"))?;
-    // Validate dimension if index declares it
-    if let Some(d) = index_dim { if d as usize != qvec.len() { anyhow::bail!("ANN: query vector dim {} does not match index dim {}", qvec.len(), d); } }
-    // Validate metric compatibility if specified
-    if let Some(m) = index_metric {
-        let m = m.to_ascii_lowercase();
-        let func_key = if func.eq_ignore_ascii_case("cosine_sim") { "cosine" } else if func.eq_ignore_ascii_case("vec_l2") { "l2" } else { "unknown" };
-        if func_key != "unknown" && m != func_key {
-            anyhow::bail!("ANN: metric mismatch between ORDER BY function '{}' and index metric '{}'", func, m);
-        }
-    }
+    // Do NOT hard fail on index metric/dimension mismatch; treat index hints as advisory.
+    // This enables graceful fallback to exact scoring even when index metadata doesn't align with the request.
     // Ensure the column exists and is String-like
     let cname = df
         .get_column_names()

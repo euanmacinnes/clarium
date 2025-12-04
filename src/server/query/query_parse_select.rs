@@ -285,34 +285,45 @@ pub fn parse_select(s: &str) -> Result<Query> {
         }
         Ok((base, joins))
     }
-    // SELECT ... [FROM db [BY window | GROUP BY <cols>] [WHERE ...] [ROLLING ...] [ORDER BY ...] [HAVING ...]]
-    // Robustly detect the FROM keyword even across newlines/tabs and with varied casing.
-    fn find_keyword_ci(s: &str, kw: &str) -> Option<usize> {
+    // SELECT ... [FROM db ...]
+    // Find keyword at depth 0 (outside parentheses) and outside quotes, case-insensitive.
+    fn find_keyword_ci_depth0(s: &str, kw: &str) -> Option<usize> {
         let kw_up = kw.to_uppercase();
         let klen = kw_up.len();
-        let su = s.to_uppercase();
-        let bytes = su.as_bytes();
-        let sbytes = s.as_bytes();
-        let b_kw = kw_up.as_bytes();
+        let sb = s.as_bytes();
         let mut i = 0usize;
-        while i + klen <= bytes.len() {
-            if &bytes[i..i+klen] == b_kw {
-                // Word boundary check: prev is start or non-alphanumeric/_; next is end or non-alphanumeric/_
-                let prev_ok = if i == 0 { true } else {
-                    let pc = sbytes[i-1] as char; !(pc.is_alphanumeric() || pc == '_')
-                };
-                let next_ok = if i + klen >= bytes.len() { true } else {
-                    let nc = sbytes[i+klen] as char; !(nc.is_alphanumeric() || nc == '_')
-                };
-                if prev_ok && next_ok { return Some(i); }
+        let mut depth: i32 = 0;
+        let mut in_squote = false;
+        let mut in_dquote = false;
+        while i + klen <= sb.len() {
+            let ch = sb[i] as char;
+            // manage state
+            if ch == '\'' && !in_dquote { in_squote = !in_squote; i += 1; continue; }
+            if ch == '"' && !in_squote { in_dquote = !in_dquote; i += 1; continue; }
+            if !in_squote && !in_dquote {
+                if ch == '(' { depth += 1; i += 1; continue; }
+                if ch == ')' { depth -= 1; i += 1; continue; }
+                if depth == 0 {
+                    // compare slice case-insensitively
+                    let slice = &s[i..i+klen];
+                    if slice.eq_ignore_ascii_case(&kw_up) {
+                        // word boundary check
+                        let prev_ok = if i == 0 { true } else {
+                            let pc = sb[i-1] as char; !(pc.is_alphanumeric() || pc == '_')
+                        };
+                        let next_ok = if i + klen >= sb.len() { true } else {
+                            let nc = sb[i+klen] as char; !(nc.is_alphanumeric() || nc == '_')
+                        };
+                        if prev_ok && next_ok { return Some(i); }
+                    }
+                }
             }
-            // advance by one byte (safe for ASCII keywords)
             i += 1;
         }
         None
     }
 
-    let from_pos = find_keyword_ci(query_sql, "FROM");
+    let from_pos = find_keyword_ci_depth0(query_sql, "FROM");
     debug!(target: "clarium::parser", "parse SELECT: FROM found?={} (sql starts with='{}...')", from_pos.is_some(), &query_sql[..query_sql.len().min(80)]);
 
     // Sourceless SELECT (e.g., SELECT 1) when no FROM clause is present
@@ -551,33 +562,88 @@ pub fn parse_select(s: &str) -> Result<Query> {
             }
             let mut list: Vec<(String, bool)> = Vec::new();
             let mut raw_list: Vec<(String, bool)> = Vec::new();
-            // Split by comma respecting parenthesis depth to handle function calls correctly
+            // Split by comma respecting parenthesis depth and quotes to handle function calls correctly
             let mut parts: Vec<String> = Vec::new();
             let mut buf = String::new();
             let mut depth = 0i32;
+            let mut in_squote = false;
+            let mut in_dquote = false;
             for ch in inside.chars() {
                 match ch {
-                    '(' => { depth += 1; buf.push(ch); }
-                    ')' => { depth -= 1; buf.push(ch); }
-                    ',' if depth == 0 => { parts.push(buf.trim().to_string()); buf.clear(); }
+                    '\'' if !in_dquote => { in_squote = !in_squote; buf.push(ch); }
+                    '"' if !in_squote => { in_dquote = !in_dquote; buf.push(ch); }
+                    '(' if !in_squote && !in_dquote => { depth += 1; buf.push(ch); }
+                    ')' if !in_squote && !in_dquote => { depth -= 1; buf.push(ch); }
+                    ',' if depth == 0 && !in_squote && !in_dquote => { parts.push(buf.trim().to_string()); buf.clear(); }
                     _ => buf.push(ch),
                 }
             }
             if !buf.is_empty() { parts.push(buf.trim().to_string()); }
-            for raw in parts {
-                let p = raw.trim();
-                if p.is_empty() { continue; }
-                let mut toks = p.split_whitespace();
-                if let Some(name) = toks.next() {
-                    let mut asc = true;
-                    if let Some(dir) = toks.next() {
-                        if dir.eq_ignore_ascii_case("DESC") { asc = false; }
-                        else if dir.eq_ignore_ascii_case("ASC") { asc = true; }
-                        else { /* unknown token ignored */ }
+            // If ANN/EXACT hint was attached to the first key (e.g., "expr USING ANN, id DESC"),
+            // detect and strip it here and record the hint.
+            if order_by_hint.is_none() {
+                if let Some(first) = parts.get_mut(0) {
+                    let up0 = first.to_uppercase();
+                    if up0.ends_with(" USING ANN") {
+                        // strip the suffix
+                        let new_len = first.len() - " USING ANN".len();
+                        *first = first[..new_len].trim_end().to_string();
+                        order_by_hint = Some("ann".to_string());
+                    } else if up0.ends_with(" USING EXACT") {
+                        let new_len = first.len() - " USING EXACT".len();
+                        *first = first[..new_len].trim_end().to_string();
+                        order_by_hint = Some("exact".to_string());
                     }
-                    let normalized_name = crate::ident::normalize_identifier(name.trim());
+                }
+            }
+            for raw in parts {
+                let mut p = raw.trim().to_string();
+                if p.is_empty() { continue; }
+                // Strip trailing ASC/DESC at depth 0 (outside parentheses and quotes)
+                let mut asc = true;
+                {
+                    let mut d: i32 = 0;
+                    let mut s_in = false;
+                    let mut d_in = false;
+                    for ch in p.chars() {
+                        match ch {
+                            '\'' if !d_in => s_in = !s_in,
+                            '"' if !s_in => d_in = !d_in,
+                            '(' if !s_in && !d_in => d += 1,
+                            ')' if !s_in && !d_in => d -= 1,
+                            _ => {}
+                        }
+                    }
+                    if d == 0 && !s_in && !d_in {
+                        let tail_up = p.to_uppercase();
+                        // remove once; only handle simple suffix forms
+                        if tail_up.ends_with(" DESC") {
+                            let cut = p.len() - 5; // len(" DESC")
+                            p = p[..cut].trim_end().to_string();
+                            asc = false;
+                        } else if tail_up.ends_with(" ASC") {
+                            let cut = p.len() - 4; // len(" ASC")
+                            p = p[..cut].trim_end().to_string();
+                            asc = true;
+                        }
+                    }
+                }
+                let expr_txt = p.trim().to_string();
+                // Preserve raw expression for advanced planners (e.g., ANN)
+                raw_list.push((expr_txt.clone(), asc));
+                // Determine if this is a bare identifier (no parens, spaces, or quotes)
+                let is_simple_ident = !expr_txt.contains('(')
+                    && !expr_txt.contains(')')
+                    && !expr_txt.contains(' ')
+                    && !expr_txt.contains('\t')
+                    && !expr_txt.contains('"')
+                    && !expr_txt.contains('\'');
+                if is_simple_ident {
+                    let normalized_name = crate::ident::normalize_identifier(&expr_txt);
                     list.push((normalized_name, asc));
-                    raw_list.push((p.to_string(), asc));
+                } else {
+                    // Keep full expression; downstream decides how to handle it
+                    list.push((expr_txt, asc));
                 }
             }
             if list.is_empty() { anyhow::bail!("Invalid ORDER BY: empty list"); }
