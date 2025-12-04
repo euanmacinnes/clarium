@@ -60,8 +60,8 @@ fn paths_unweighted_shortest_and_no_path() {
     let q = match query::parse(sql).unwrap() { Command::Select(q) => q, _ => unreachable!() };
     let df = run_select(&store, &q).unwrap();
     assert_eq!(df.height(), 3);
-    assert_eq!(df.column("node_id").unwrap().get(0).unwrap().to_string(), "A");
-    assert_eq!(df.column("node_id").unwrap().get(2).unwrap().to_string(), "C");
+    assert_eq!(df.column("node_id").unwrap().get(0).unwrap().get_str().unwrap(), "A");
+    assert_eq!(df.column("node_id").unwrap().get(2).unwrap().get_str().unwrap(), "C");
 
     // No path within 1 hop
     let sql2 = "SELECT * FROM graph_paths('clarium/public/g_simple','A','C',1)";
@@ -92,7 +92,7 @@ fn paths_weighted_dijkstra_prefers_cheaper_route() {
     let q = match query::parse(sql).unwrap() { Command::Select(q) => q, _ => unreachable!() };
     let df = run_select(&store, &q).unwrap();
     assert_eq!(df.height(), 3);
-    assert_eq!(df.column("node_id").unwrap().get(1).unwrap().to_string(), "toolA");
+    assert_eq!(df.column("node_id").unwrap().get(1).unwrap().get_str().unwrap(), "toolA");
 }
 
 #[test]

@@ -754,18 +754,32 @@ pub fn parse_arith_expr(tokens: &[String]) -> Result<ArithExpr> {
                             }
                             // inside arguments between ( and )
                             let inside = &src[k+1..j2-1];
-                            // split on commas at top-level depth
+                            // split on commas at top-level depth, respecting parentheses and single-quoted strings
                             let mut args: Vec<String> = Vec::new();
                             let mut buf = String::new();
                             let mut d = 0i32;
+                            let mut in_str = false;
                             let mut p = 0usize;
-                            while p < inside.len() {
-                                let ch = inside[p..].chars().next().unwrap();
-                                if ch == '(' { d += 1; buf.push(ch); }
-                                else if ch == ')' { d -= 1; buf.push(ch); }
-                                else if ch == ',' && d == 0 { args.push(buf.trim().to_string()); buf.clear(); }
-                                else { buf.push(ch); }
-                                p += ch.len_utf8();
+                            let chars: Vec<char> = inside.chars().collect();
+                            let n = chars.len();
+                            while p < n {
+                                let ch = chars[p];
+                                if in_str {
+                                    if ch == '\'' {
+                                        // handle escaped '' inside string
+                                        if p + 1 < n && chars[p + 1] == '\'' { buf.push('\''); p += 2; continue; }
+                                        in_str = false; buf.push(ch); p += 1; continue;
+                                    }
+                                    buf.push(ch); p += 1; continue;
+                                }
+                                match ch {
+                                    '\'' => { in_str = true; buf.push(ch); }
+                                    '(' => { d += 1; buf.push(ch); }
+                                    ')' => { d -= 1; buf.push(ch); }
+                                    ',' if d == 0 => { args.push(buf.trim().to_string()); buf.clear(); }
+                                    _ => buf.push(ch),
+                                }
+                                p += 1;
                             }
                             if !buf.trim().is_empty() { args.push(buf.trim().to_string()); }
                             // Parse-time UDF arity enforcement for known scalar functions.

@@ -519,6 +519,14 @@ pub fn build_arith_expr(a: &ArithExpr, ctx: &crate::server::data_context::DataCo
                     let s = col.as_materialized_series();
                     let sc = s.struct_()?;
                     let fields = sc.fields_as_series();
+                    // Diagnostics: log struct field count and dtypes for UDF args
+                    if udf_name_eval == "cosine_sim" || udf_name_eval == "vec_l2" || udf_name_eval == "vec_ip" {
+                        let mut info: Vec<String> = Vec::new();
+                        for fs in &fields {
+                            info.push(format!("{}:{:?}", fs.name(), fs.dtype()));
+                        }
+                        crate::tprintln!("[UDF] struct fields: name='{}' count={} schema=[{}]", udf_name_eval, fields.len(), info.join(", "));
+                    }
                     let len = sc.len();
                     
                     let null_on_err = crate::system::get_null_on_error();
@@ -627,6 +635,10 @@ pub fn build_arith_expr(a: &ArithExpr, ctx: &crate::server::data_context::DataCo
                                 }
                                 DataType::Float64 => {
                                     let mut vals: Vec<Option<f64>> = Vec::with_capacity(len);
+                                    // For diagnostics: preview a few rows of arguments for vector UDFs
+                                    let is_vec_name = udf_name_eval == "cosine_sim" || udf_name_eval == "vec_l2" || udf_name_eval == "vec_ip";
+                                    let mut preview_printed = 0usize;
+                                    let preview_limit = 3usize;
                                     for row_idx in 0..len {
                                         let mut mvals = MultiValue::new();
                                         for f in fields.iter().rev() {
@@ -659,6 +671,15 @@ pub fn build_arith_expr(a: &ArithExpr, ctx: &crate::server::data_context::DataCo
                                                 _ => LVal::Nil,
                                             };
                                             mvals.push_front(lv);
+                                        }
+                                        if is_vec_name && preview_printed < preview_limit {
+                                            let mut ivals: Vec<String> = Vec::with_capacity(fields.len());
+                                            for f in fields.iter() {
+                                                let av = f.get(row_idx).unwrap_or(polars::prelude::AnyValue::Null);
+                                                ivals.push(format!("{:?}", av));
+                                            }
+                                            crate::tprintln!("[UDF] args preview: name='{}' row={} args={:?}", udf_name_eval, row_idx, ivals);
+                                            preview_printed += 1;
                                         }
                                         let outv_result = func.call::<_, LVal>(mvals);
                                         let outv = if null_on_err {

@@ -13,13 +13,13 @@ fn to_vec_parsing_variants_and_invalid() {
     let q = match query::parse(q).unwrap() { Command::Select(q) => q, _ => unreachable!() };
     let df = run_select(&store, &q).unwrap();
     let s = df.column("v").unwrap();
-    assert_eq!(s.get(0).unwrap().to_string(), "1,2,3");
+    assert_eq!(s.get(0).unwrap().get_str().unwrap(), "1,2,3");
 
     // Mixed separators and whitespace
     let q = "SELECT to_vec('1; 2 |3  4') AS v";
     let q = match query::parse(q).unwrap() { Command::Select(q) => q, _ => unreachable!() };
     let df = run_select(&store, &q).unwrap();
-    assert_eq!(df.column("v").unwrap().get(0).unwrap().to_string(), "1,2,3,4");
+    assert_eq!(df.column("v").unwrap().get(0).unwrap().get_str().unwrap(), "1,2,3,4");
 
     // Invalid tokens → NULL
     let q = "SELECT to_vec('1, a, 3') AS v";
