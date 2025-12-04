@@ -123,7 +123,8 @@ pub fn execute_describe(store: &SharedStore, name: &str) -> Result<serde_json::V
         }
     }
 
-    // Query pg_attribute for columns of this table
+    // Query pg_attribute for columns of this table. If system catalogs are unavailable
+    // (e.g., in lightweight/temp stores), fall back to schema.json contents.
     let attr_df_opt = crate::system::system_table_df("pg_catalog.pg_attribute", store);
     let mut columns: Vec<(i32, String, String)> = Vec::new(); // (attnum, name, type_key)
     if let Some(attr_df) = attr_df_opt {
@@ -144,10 +145,19 @@ pub fn execute_describe(store: &SharedStore, name: &str) -> Result<serde_json::V
             }
         }
     }
+    // Fallback: if no columns were found via pg_attribute, synthesize from schema.json
+    if columns.is_empty() {
+        let mut keys: Vec<String> = type_map.keys().cloned().collect();
+        keys.sort();
+        for (i, k) in keys.into_iter().enumerate() {
+            let ty = type_map.get(&k).cloned().unwrap_or_default();
+            columns.push(((i as i32) + 1, k, ty));
+        }
+    }
     // Sort by attnum to preserve natural order
     columns.sort_by_key(|t| t.0);
 
-    // Query pg_constraint_columns for PK membership
+    // Query pg_constraint_columns for PK membership (best-effort). If unavailable, leave empty.
     let mut pk_attnums: std::collections::BTreeSet<i32> = std::collections::BTreeSet::new();
     if let Some(cc_df) = crate::system::system_table_df("pg_catalog.pg_constraint_columns", store) {
         let conrelid = cc_df.column("conrelid").ok().and_then(|c| c.i32().ok());

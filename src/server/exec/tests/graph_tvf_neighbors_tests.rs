@@ -17,6 +17,7 @@ fn setup_graph(store: &SharedStore) {
 
 #[test]
 fn neighbors_one_and_two_hops_with_etype() {
+    super::udf_common::init_all_test_udfs();
     let tmp = tempfile::tempdir().unwrap();
     let store = new_store(&tmp);
     setup_graph(&store);
@@ -26,7 +27,7 @@ fn neighbors_one_and_two_hops_with_etype() {
     let q1 = match query::parse(sql1).unwrap() { Command::Select(q) => q, _ => unreachable!() };
     let df1 = run_select(&store, &q1).unwrap();
     assert_eq!(df1.height(), 1);
-    assert_eq!(df1.column("node_id").unwrap().get(0).unwrap().to_string(), "toolA");
+    assert_eq!(df1.column("node_id").unwrap().get(0).unwrap().get_str().unwrap(), "toolA");
     assert_eq!(df1.column("hop").unwrap().get(0).unwrap().try_extract::<i64>().unwrap(), 1);
 
     // Two hops from planner should include executor at hop=2
@@ -40,6 +41,7 @@ fn neighbors_one_and_two_hops_with_etype() {
 
 #[test]
 fn neighbors_join_nodes_semantic_affinity() {
+    super::udf_common::init_all_test_udfs();
     let tmp = tempfile::tempdir().unwrap();
     let store = new_store(&tmp);
     setup_graph(&store);
@@ -60,6 +62,7 @@ fn neighbors_join_nodes_semantic_affinity() {
 
 #[test]
 fn neighbors_temporal_window_inclusive_and_single_bound() {
+    super::udf_common::init_all_test_udfs();
     let tmp = tempfile::tempdir().unwrap();
     let store = new_store(&tmp);
     // Seed time-aware edges: place one edge inside window and one outside

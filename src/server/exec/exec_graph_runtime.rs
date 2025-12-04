@@ -54,6 +54,19 @@ fn unquote(mut s: &str) -> String {
     s.to_string()
 }
 
+// Some upstream conversions (e.g., AnyValue::to_string on older/newer polars) may yield
+// JSON-escaped strings like \"toolA\". Normalize by unescaping common sequences first,
+// then stripping surrounding quotes repeatedly.
+fn unescape_and_unquote(s: &str) -> String {
+    let mut t = s.replace("\\\"", "\"");
+    // Unescape double backslashes last to avoid interfering with the quote unescape
+    t = t.replace("\\\\", "\\");
+    let mut u = unquote(&t);
+    // As a last resort, strip any stray quotes and backslashes that may have leaked through
+    u.retain(|ch| ch != '"' && ch != '\\');
+    u
+}
+
 fn path_for_graph(store: &SharedStore, qualified: &str) -> PathBuf {
     let mut p = store.0.lock().root_path().clone();
     let local = qualified.replace('/', std::path::MAIN_SEPARATOR_STR);
@@ -173,13 +186,13 @@ pub fn graph_neighbors_df(
             Ok(v) => v.get_str().map(|x| unquote(x)).unwrap_or_else(|| unquote(&v.to_string())),
             Err(_) => String::new(),
         };
-        src.push(unquote(&s));
-        dst.push(unquote(&d));
+        src.push(s);
+        dst.push(d);
     }
     // Build adjacency list
     let mut adj: HashMap<String, Vec<String>> = HashMap::new();
     for (s, d) in src.iter().zip(dst.iter()) {
-        adj.entry(unquote(s)).or_default().push(unquote(d));
+        adj.entry(s.clone()).or_default().push(d.clone());
     }
     // BFS up to max_hops
     let mut out_node: Vec<String> = Vec::new();
@@ -191,8 +204,8 @@ pub fn graph_neighbors_df(
     seen.insert(start.to_string(), 0);
     while let Some((node, prev, hop)) = q.pop_front() {
         if hop >= 1 { // exclude the start node from output
-            out_node.push(unquote(&node));
-            out_prev.push(prev.map(|p| unquote(&p)).unwrap_or_default());
+            out_node.push(node.clone());
+            out_prev.push(prev.clone().unwrap_or_default());
             out_hop.push(hop);
         }
         if hop >= max_hops { continue; }
@@ -205,14 +218,11 @@ pub fn graph_neighbors_df(
             }
         }
     }
-    // Final normalization: ensure no stray quotes remain in identifiers
-    let out_node: Vec<String> = out_node.into_iter().map(|s| unquote(&s)).collect();
-    let out_prev: Vec<String> = out_prev.into_iter().map(|s| unquote(&s)).collect();
-    Ok(DataFrame::new(vec![
-        Series::new("node_id".into(), out_node).into(),
-        Series::new("prev_id".into(), out_prev).into(),
-        Series::new("hop".into(), out_hop).into(),
-    ])?)
+    // Build series as Utf8/I64. Values have been normalized to avoid embedded quotes.
+    let node_s = Series::new("node_id".into(), out_node);
+    let prev_s = Series::new("prev_id".into(), out_prev);
+    let hop_s = Series::new("hop".into(), out_hop);
+    Ok(DataFrame::new(vec![node_s.into(), prev_s.into(), hop_s.into()])?)
 }
 
 /// Materialize graph_paths(graph, src, dst, max_hops[, etype[, time_start, time_end]]) –
