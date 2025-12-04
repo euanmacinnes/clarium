@@ -111,23 +111,26 @@ pub fn graph_neighbors_df(
             let t1 = time_end.and_then(parse_time_to_i64);
             if t0.is_some() || t1.is_some() {
                 if let Ok(col) = edges_df.column(&time_col) {
-                    let mask = col
-                        .iter()
-                        .map(|v| {
-                            let val = match v.try_extract::<i64>() {
-                                Ok(n) => Some(n),
-                                Err(_) => match v.try_extract::<&str>() { Ok(s) => parse_time_to_i64(s), Err(_) => None },
-                            };
-                            if let Some(n) = val {
-                                let ge = t0.map(|a| n >= a).unwrap_or(true);
-                                let le = t1.map(|b| n <= b).unwrap_or(true);
-                                Some(ge && le)
-                            } else { Some(false) }
-                        })
-                        .collect::<Vec<Option<bool>>>();
-                    let bools: Vec<bool> = mask.into_iter().map(|o| o.unwrap_or(false)).collect();
-                    let s = polars::prelude::BooleanChunked::from_slice("__mask", &bools);
-                    edges_df = edges_df.filter(&s)?;
+                    let mut bools: Vec<bool> = Vec::with_capacity(col.len());
+                    for i in 0..col.len() {
+                        let val: Option<i64> = match col.get(i) {
+                            Ok(av) => {
+                                if let Ok(n) = av.try_extract::<i64>() {
+                                    Some(n)
+                                } else {
+                                    parse_time_to_i64(&av.to_string())
+                                }
+                            }
+                            Err(_) => None,
+                        };
+                        if let Some(n) = val {
+                            let ge = t0.map(|a| n >= a).unwrap_or(true);
+                            let le = t1.map(|b| n <= b).unwrap_or(true);
+                            bools.push(ge && le);
+                        } else { bools.push(false); }
+                    }
+                    let mask_series = Series::new("__mask".into(), bools);
+                    edges_df = edges_df.filter(mask_series.bool()?)?;
                 }
             }
         }
@@ -135,14 +138,18 @@ pub fn graph_neighbors_df(
     // For robustness, accept Utf8 or general string-like columns via `to_string` fallback
     let src_series = edges_df.column(&src_col)?;
     let dst_series = edges_df.column(&dst_col)?;
-    let src: Vec<String> = match src_series.utf8() {
-        Ok(ca) => ca.into_no_null_iter().map(|s| s.to_string()).collect(),
-        Err(_) => src_series.iter().map(|v| v.to_string()).collect(),
-    };
-    let dst: Vec<String> = match dst_series.utf8() {
-        Ok(ca) => ca.into_no_null_iter().map(|s| s.to_string()).collect(),
-        Err(_) => dst_series.iter().map(|v| v.to_string()).collect(),
-    };
+    // Build src/dst string vectors in a version-agnostic way without relying on utf8()/iter() on Series
+    let len = src_series.len().min(dst_series.len());
+    let mut src: Vec<String> = Vec::with_capacity(len);
+    let mut dst: Vec<String> = Vec::with_capacity(len);
+    for i in 0..len {
+        let s_val = src_series.get(i);
+        let d_val = dst_series.get(i);
+        let s = match s_val { Ok(v) => v.to_string(), Err(_) => String::new() };
+        let d = match d_val { Ok(v) => v.to_string(), Err(_) => String::new() };
+        src.push(s);
+        dst.push(d);
+    }
     // Build adjacency list
     let mut adj: HashMap<String, Vec<String>> = HashMap::new();
     for (s, d) in src.iter().zip(dst.iter()) {
@@ -173,9 +180,9 @@ pub fn graph_neighbors_df(
         }
     }
     Ok(DataFrame::new(vec![
-        Series::new("node_id", out_node),
-        Series::new("prev_id", out_prev),
-        Series::new("hop", out_hop),
+        Series::new("node_id".into(), out_node).into(),
+        Series::new("prev_id".into(), out_prev).into(),
+        Series::new("hop".into(), out_hop).into(),
     ])?)
 }
 
@@ -200,23 +207,26 @@ pub fn graph_paths_df(
             let t1 = time_end.and_then(parse_time_to_i64);
             if t0.is_some() || t1.is_some() {
                 if let Ok(col) = edges_df.column(&time_col) {
-                    let mask = col
-                        .iter()
-                        .map(|v| {
-                            let val = match v.try_extract::<i64>() {
-                                Ok(n) => Some(n),
-                                Err(_) => match v.try_extract::<&str>() { Ok(s) => parse_time_to_i64(s), Err(_) => None },
-                            };
-                            if let Some(n) = val {
-                                let ge = t0.map(|a| n >= a).unwrap_or(true);
-                                let le = t1.map(|b| n <= b).unwrap_or(true);
-                                Some(ge && le)
-                            } else { Some(false) }
-                        })
-                        .collect::<Vec<Option<bool>>>();
-                    let bools: Vec<bool> = mask.into_iter().map(|o| o.unwrap_or(false)).collect();
-                    let s = polars::prelude::BooleanChunked::from_slice("__mask", &bools);
-                    edges_df = edges_df.filter(&s)?;
+                    let mut bools: Vec<bool> = Vec::with_capacity(col.len());
+                    for i in 0..col.len() {
+                        let val: Option<i64> = match col.get(i) {
+                            Ok(av) => {
+                                if let Ok(n) = av.try_extract::<i64>() {
+                                    Some(n)
+                                } else {
+                                    parse_time_to_i64(&av.to_string())
+                                }
+                            }
+                            Err(_) => None,
+                        };
+                        if let Some(n) = val {
+                            let ge = t0.map(|a| n >= a).unwrap_or(true);
+                            let le = t1.map(|b| n <= b).unwrap_or(true);
+                            bools.push(ge && le);
+                        } else { bools.push(false); }
+                    }
+                    let mask_series = Series::new("__mask".into(), bools);
+                    edges_df = edges_df.filter(mask_series.bool()?)?;
                 }
             }
         }
@@ -224,19 +234,30 @@ pub fn graph_paths_df(
     // Extract columns as strings and optional costs
     let src_series = edges_df.column(&src_col)?;
     let dst_series = edges_df.column(&dst_col)?;
-    let src: Vec<String> = match src_series.utf8() {
-        Ok(ca) => ca.into_no_null_iter().map(|s| s.to_string()).collect(),
-        Err(_) => src_series.iter().map(|v| v.to_string()).collect(),
-    };
-    let dst: Vec<String> = match dst_series.utf8() {
-        Ok(ca) => ca.into_no_null_iter().map(|s| s.to_string()).collect(),
-        Err(_) => dst_series.iter().map(|v| v.to_string()).collect(),
-    };
+    let mut src: Vec<String> = Vec::with_capacity(src_series.len());
+    for i in 0..src_series.len() {
+        let s_val = src_series.get(i);
+        let s = match s_val {
+            Ok(v) => v.to_string(),
+            Err(_) => String::new(),
+        };
+        src.push(s);
+    }
+    // Build src/dst vectors with string conversion independent of utf8 API
+    let len_sd = dst_series.len();
+    let mut dst: Vec<String> = Vec::with_capacity(len_sd);
+    for i in 0..len_sd {
+        let d_val = dst_series.get(i);
+        let d = match d_val { Ok(v) => v.to_string(), Err(_) => String::new() };
+        dst.push(d);
+    }
     let costs: Option<Vec<f64>> = if let Some(cc) = &cost_col_opt {
         let cser = edges_df.column(cc)?;
         let mut out: Vec<f64> = Vec::with_capacity(cser.len());
-        for v in cser.iter() {
-            match v.try_extract::<f64>() { Ok(n) => out.push(n), Err(_) => out.push(1.0) }
+        for i in 0..cser.len() {
+            let cv = cser.get(i);
+            let n = match cv { Ok(v) => v.try_extract::<f64>().unwrap_or(1.0), Err(_) => 1.0 };
+            out.push(n);
         }
         Some(out)
     } else { None };
@@ -282,7 +303,7 @@ pub fn graph_paths_df(
                 }
             }
         }
-        if !dist.contains_key(dst_id) { return Ok(DataFrame::new(vec![Series::new("path_id", Vec::<i64>::new()).into()])?); }
+        if !dist.contains_key(dst_id) { return Ok(DataFrame::new(vec![Series::new("path_id".into(), Vec::<i64>::new()).into()])?); }
         // Reconstruct path
         let mut nodes: Vec<String> = Vec::new();
         let mut cur = dst_id.to_string();
@@ -292,9 +313,9 @@ pub fn graph_paths_df(
         let ord: Vec<i64> = (0..nodes.len() as i64).collect();
         let path_id: Vec<i64> = vec![1; nodes.len()];
         return Ok(DataFrame::new(vec![
-            Series::new("path_id", path_id),
-            Series::new("node_id", nodes),
-            Series::new("ord", ord),
+            Series::new("path_id".into(), path_id).into(),
+            Series::new("node_id".into(), nodes).into(),
+            Series::new("ord".into(), ord).into(),
         ])?);
     } else {
         // Unweighted BFS shortest hops
@@ -319,7 +340,7 @@ pub fn graph_paths_df(
             }
             if found { break; }
         }
-        if !found { return Ok(DataFrame::new(vec![Series::new("path_id", Vec::<i64>::new()).into()])?); }
+        if !found { return Ok(DataFrame::new(vec![Series::new("path_id".into(), Vec::<i64>::new()).into()])?); }
         // Reconstruct path
         let mut nodes: Vec<String> = Vec::new();
         let mut cur = dst_id.to_string();
@@ -329,9 +350,9 @@ pub fn graph_paths_df(
         let ord: Vec<i64> = (0..nodes.len() as i64).collect();
         let path_id: Vec<i64> = vec![1; nodes.len()];
         Ok(DataFrame::new(vec![
-            Series::new("path_id", path_id),
-            Series::new("node_id", nodes),
-            Series::new("ord", ord),
+            Series::new("path_id".into(), path_id).into(),
+            Series::new("node_id".into(), nodes).into(),
+            Series::new("ord".into(), ord).into(),
         ])?)
     }
 }

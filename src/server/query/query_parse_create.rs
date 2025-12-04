@@ -41,7 +41,7 @@ pub fn parse_create(s: &str) -> Result<Command> {
         // name
         let (name_tok, mut i) = read_word(after, 0);
         if name_tok.is_empty() { anyhow::bail!("Invalid CREATE VECTOR INDEX: missing index name"); }
-        let name_norm = crate::ident::normalize_identifier(name_tok);
+        let name_norm = crate::ident::normalize_identifier(&name_tok);
         i = skip_ws(after, i);
         let rem = &after[i..];
         let rem_up = rem.to_uppercase();
@@ -102,7 +102,7 @@ pub fn parse_create(s: &str) -> Result<Command> {
                 }
             }
         }
-        return Ok(Command::CreateVectorIndex { name: name_norm, table: crate::ident::normalize_identifier(table_tok), column: column_tok.to_string(), algo: algo_tok.to_lowercase(), options });
+        return Ok(Command::CreateVectorIndex { name: name_norm, table: crate::ident::normalize_identifier(&table_tok), column: column_tok.to_string(), algo: algo_tok.to_lowercase(), options });
     }
     if up.starts_with("GRAPH ") {
         // CREATE GRAPH <name> NODES (...) EDGES (...) [USING TABLES (nodes=..., edges=...)]
@@ -164,7 +164,7 @@ pub fn parse_create(s: &str) -> Result<Command> {
                 if let Some(eq) = p.find('=') { let k = p[..eq].trim().to_lowercase(); let v = p[eq+1..].trim(); if k == "nodes" { nodes_table = Some(v.to_string()); } else if k == "edges" { edges_table = Some(v.to_string()); } }
             }
         }
-        return Ok(Command::CreateGraph { name: crate::ident::normalize_identifier(name_tok), nodes, edges, nodes_table, edges_table });
+        return Ok(Command::CreateGraph { name: crate::ident::normalize_identifier(&name_tok), nodes, edges, nodes_table, edges_table });
     }
     if up.starts_with("SCRIPT ") {
         // CREATE SCRIPT name AS 'code'

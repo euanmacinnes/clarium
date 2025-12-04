@@ -159,7 +159,7 @@ mod exec_like_and_rowdesc_tests {
         let tmp = tempfile::tempdir().unwrap();
         let shared = crate::storage::SharedStore::new(tmp.path()).unwrap();
         let qtext = "SELECT 'a' AS first_col, 'b' AS second_col";
-        let q = match crate::query::parse(qtext).unwrap() { crate::query::Command::Select(q) => q, _ => unreachable!() };
+        let q = match crate::server::query::parse(qtext).unwrap() { crate::server::query::Command::Select(q) => q, _ => unreachable!() };
         let df = crate::server::exec::execute_select_df(&shared, &q).unwrap();
         let cols = df.get_column_names();
         assert_eq!(cols.len(), 2);
@@ -174,7 +174,7 @@ mod exec_like_and_rowdesc_tests {
         // Build SQL via pgwire-style substitution, then execute through the regular engine
         let sql = "SELECT %s LIKE %s AS ok";
         let substituted = substitute_placeholders(sql, &[Some("New York".into()), Some("New%".into())]).unwrap();
-        let q = match crate::query::parse(&substituted).unwrap() { crate::query::Command::Select(q) => q, _ => unreachable!() };
+        let q = match crate::server::query::parse(&substituted).unwrap() { crate::server::query::Command::Select(q) => q, _ => unreachable!() };
         let df = crate::server::exec::execute_select_df(&shared, &q).unwrap();
         assert_eq!(df.height(), 1);
         let col = df.column("ok").unwrap();
@@ -189,7 +189,7 @@ mod exec_like_and_rowdesc_tests {
         // Named placeholders: %(s)s and %(p)s should map in order of first appearance
         let sql = "SELECT %(s)s LIKE %(p)s AS ok";
         let substituted = substitute_placeholders(sql, &[Some("New York".into()), Some("New%".into())]).unwrap();
-        let q = match crate::query::parse(&substituted).unwrap() { crate::query::Command::Select(q) => q, _ => unreachable!() };
+        let q = match crate::server::query::parse(&substituted).unwrap() { crate::server::query::Command::Select(q) => q, _ => unreachable!() };
         let df = crate::server::exec::execute_select_df(&shared, &q).unwrap();
         let ok = df.column("ok").unwrap().bool().unwrap().get(0);
         assert_eq!(ok, Some(true));

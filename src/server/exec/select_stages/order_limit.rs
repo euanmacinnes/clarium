@@ -405,26 +405,20 @@ fn ann_order_dataframe(
     let col_series = df.column(&cname)?;
     // Create score series
     let mut scores: Vec<f64> = Vec::with_capacity(df.height());
-    match col_series.dtype() {
-        DataType::String => {
-            let sref = col_series.as_materialized_series();
-            let ca = sref.utf8().map_err(|_| anyhow::anyhow!("vector column '{}' must be String/Utf8", cname))?;
-            for opt in ca.into_iter() {
-                let s = opt.unwrap_or("");
-                let v = parse_vec_literal(s).unwrap_or_default();
-                let score = match func {
-                    f if f.eq_ignore_ascii_case("vec_l2") => l2_distance(&v, &qvec),
-                    f if f.eq_ignore_ascii_case("cosine_sim") => cosine_similarity(&v, &qvec),
-                    _ => l2_distance(&v, &qvec),
-                };
-                scores.push(score);
-            }
-        }
-        _ => {
-            // Attempt to stringify other types
-            // to_string() prints the whole column; that's not usable. Fail gracefully
-            return Err(anyhow::anyhow!("vector column '{}' has unsupported dtype {:?}", cname, col_series.dtype()));
-        }
+    // Iterate row-wise and attempt to read string values regardless of underlying dtype
+    for i in 0..col_series.len() {
+        let cell = col_series.get(i);
+        let s_owned: String = match cell {
+            Ok(v) => v.get_str().map(|x| x.to_string()).unwrap_or_default(),
+            Err(_) => String::new(),
+        };
+        let v = parse_vec_literal(&s_owned).unwrap_or_default();
+        let score = match func {
+            f if f.eq_ignore_ascii_case("vec_l2") => l2_distance(&v, &qvec),
+            f if f.eq_ignore_ascii_case("cosine_sim") => cosine_similarity(&v, &qvec),
+            _ => l2_distance(&v, &qvec),
+        };
+        scores.push(score);
     }
     // Determine final sort direction:
     // For cosine_sim: higher is better (DESC by default). For vec_l2: lower is better (ASC by default).
@@ -433,10 +427,10 @@ fn ann_order_dataframe(
     // We combine by using the user's flag as the final direction.
     let final_desc = !asc_hint; // true means DESC
     // Attach score column
-    let score_series = Series::new("__ann_score", scores);
+    let score_series = Series::new("__ann_score".into(), scores);
     let mut df2 = df.clone();
     df2.with_column(score_series)?;
-    let opts = polars::prelude::SortMultipleOptions { descending: vec![final_desc], nulls_last: vec![true], maintain_order: true, multithreaded: true, limit: topk };
+    let opts = polars::prelude::SortMultipleOptions { descending: vec![final_desc], nulls_last: vec![true], maintain_order: true, multithreaded: true, limit: topk.map(|v| v as polars::prelude::IdxSize) };
     let orig_cols: Vec<_> = df.get_column_names().iter().map(|s| col(s.as_str())).collect();
     let df_sorted = df2.lazy().sort_by_exprs(vec![col("__ann_score")], opts).select(&orig_cols).collect()?;
     Ok(df_sorted)
