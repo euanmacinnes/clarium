@@ -32,7 +32,7 @@ fn test_by_column_missing_and_udf_not_found() {
     let e1 = run_select(&shared, &q1).err();
     assert!(e1.is_some());
     let m1 = format!("{}", e1.unwrap());
-    assert!(m1.contains("Column not found in BY:"), "unexpected: {}", m1);
+    assert!(m1.contains("Column nope not found in BY:"), "unexpected: {}", m1);
 
     // BY with unknown UDF
     let q2 = format!("SELECT nosuch(a) FROM {} BY 1s", db);
@@ -114,7 +114,7 @@ fn test_select_expr_missing_column_and_udf_not_found() {
     let e1 = run_select(&shared, &q1).err();
     assert!(e1.is_some());
     let m1 = format!("{}", e1.unwrap());
-    assert!(m1.contains("Column not found in SELECT:"), "unexpected: {}", m1);
+    assert!(m1.contains("Column nope not found in SELECT:"), "unexpected: {}", m1);
 
     // UDF not found in SELECT expression
     let q2 = format!("SELECT nosuch(x) FROM {}", db);
@@ -139,7 +139,7 @@ fn test_order_by_missing_column_message() {
     let e = run_select(&shared, &q).err();
     assert!(e.is_some());
     let msg = format!("{}", e.unwrap());
-    assert!(msg.contains("Column not found in ORDER BY:"), "unexpected: {}", msg);
+    assert!(msg.contains("Column nope not found in ORDER BY:"), "unexpected: {}", msg);
 }
 
 
