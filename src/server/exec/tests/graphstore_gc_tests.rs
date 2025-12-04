@@ -94,7 +94,9 @@ fn gc_graph_triggers_compaction() {
     { let mut w = DeltaLogWriter::open_append(&dpath).unwrap(); w.append_edge(&EdgeDeltaRec{ txn_id: 1, op_index: 0, op: 0, src: 0, dst: 2 }).unwrap(); }
 
     // Run GC DDL
-    let resp = crate::server::exec::execute_query(&store, "GC GRAPH clarium/public/know").unwrap();
+    // execute_query is async; run it on a tokio runtime
+    let rt = tokio::runtime::Runtime::new().unwrap();
+    let resp = rt.block_on(crate::server::exec::execute_query(&store, "GC GRAPH clarium/public/know")).unwrap();
     assert!(resp.get("status").is_some());
 
     // Verify epoch bumped to 2 and new adj segment exists
@@ -114,7 +116,7 @@ fn show_graph_status_reports_fields() {
     let df = graphstore_status_df(&store, qname).unwrap();
     let cols = df.get_column_names();
     for must in ["graph","epoch","partitions","delta_adds","delta_tombstones","bfs_calls","wal_commits","recoveries"] {
-        assert!(cols.iter().any(|c| c == must), "missing status column: {}", must);
+        assert!(cols.iter().any(|c| c.as_str() == must), "missing status column: {}", must);
     }
 }
 

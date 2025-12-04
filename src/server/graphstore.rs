@@ -392,7 +392,7 @@ struct PartitionState {
 impl GraphHandle {
     /// Load immutable segments (dictionary and latest adjacency per partition) lazily.
     /// Safe to call multiple times; subsequent calls are no-ops if already loaded.
-    fn ensure_loaded(&mut self) -> Result<()> {
+    pub fn ensure_loaded(&mut self) -> Result<()> {
         if self.dict.is_some() && self.parts.is_some() { return Ok(()); }
 
         // Load dictionary (use the last segment if multiple are listed)

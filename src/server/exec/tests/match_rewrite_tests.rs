@@ -22,12 +22,20 @@ fn match_neighbors_rewrite_equivalence() {
     }, _ => panic!("expected match rewrite") };
     let df = run_select(&store, &q).unwrap();
     assert_eq!(df.height(), 2);
-    let n0 = df.column("node_id").unwrap().get(0).unwrap().get_str().unwrap();
+    let n0 = {
+        let av = df.column("node_id").unwrap().get(0).unwrap();
+        av.get_str().map(|s| s.to_string()).unwrap_or_else(|| av.to_string())
+    };
     let h0 = df.column("hop").unwrap().get(0).unwrap().try_extract::<i64>().unwrap();
-    let n1 = df.column("node_id").unwrap().get(1).unwrap().get_str().unwrap();
+    let n1 = {
+        let av = df.column("node_id").unwrap().get(1).unwrap();
+        av.get_str().map(|s| s.to_string()).unwrap_or_else(|| av.to_string())
+    };
     let h1 = df.column("hop").unwrap().get(1).unwrap().try_extract::<i64>().unwrap();
-    assert_eq!((n0, h0), ("toolA", 1));
-    assert_eq!((n1, h1), ("executor", 2));
+    assert_eq!(n0.as_str(), "toolA");
+    assert_eq!(h0, 1i64);
+    assert_eq!(n1.as_str(), "executor");
+    assert_eq!(h1, 2i64);
 }
 
 #[test]
@@ -52,6 +60,9 @@ fn match_shortest_paths_weighted() {
     let q = match cmd { Command::MatchRewrite { sql } => match query::parse(&sql).unwrap() { Command::Select(q2) => q2, _ => panic!("expected select") }, _ => panic!("expected match rewrite") };
     let df = run_select(&store, &q).unwrap();
     assert_eq!(df.height(), 3);
-    let mid = df.column("node_id").unwrap().get(1).unwrap().get_str().unwrap();
-    assert_eq!(mid, "toolA");
+    let mid = {
+        let av = df.column("node_id").unwrap().get(1).unwrap();
+        av.get_str().map(|s| s.to_string()).unwrap_or_else(|| av.to_string())
+    };
+    assert_eq!(mid.as_str(), "toolA");
 }
