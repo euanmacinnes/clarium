@@ -6,6 +6,7 @@ use crate::server::exec::tests::fixtures::*;
 // Score = 0.7*semantic + 0.3*(1.0/cost_sum) with safe defaults when cost missing.
 #[test]
 fn hybrid_ann_plus_graph_expansion_with_fallbacks() {
+    super::udf_common::init_all_test_udfs();
     let tmp = tempfile::tempdir().unwrap();
     let store = new_store(&tmp);
 

@@ -13,6 +13,7 @@ use tracing::debug;
 use serde::Deserialize;
 use std::fs;
 use std::path::Path;
+use std::collections::HashMap;
 
 pub fn order_limit(mut df: DataFrame, q: &Query, ctx: &mut DataContext) -> Result<DataFrame> {
     // Resolve ORDER BY columns. When strict projection is disabled, tolerate
@@ -130,31 +131,63 @@ pub fn order_limit(mut df: DataFrame, q: &Query, ctx: &mut DataContext) -> Resul
             }
             if !ann_applied {
                 // In strict mode, validate that no ORDER BY columns are temporary (not in original SELECT)
+                // If a temporary ORDER BY column has an equivalent projected column (e.g., 'id' vs 'd.id'),
+                // transparently remap ORDER BY to the projected column instead of erroring.
+                let mut ob_overrides: HashMap<String, String> = HashMap::new();
                 if strict && !ctx.temp_order_by_columns.is_empty() {
                     for (name, _asc) in ob.iter() {
                         if ctx.temp_order_by_columns.contains(name) {
-                            return Err(
-                                crate::server::data_context::DataContext::column_not_found_error(
-                                    name,
-                                    "ORDER BY",
-                                    &df,
-                                ),
-                            );
+                            // Find candidates in the DataFrame whose last segment matches `name`,
+                            // but are not exactly the temporary column itself.
+                            let mut candidates: Vec<String> = df
+                                .get_column_names()
+                                .iter()
+                                .filter_map(|c| {
+                                    let s = c.as_str();
+                                    let last = s.rsplit('.').next().unwrap_or(s);
+                                    if last.eq_ignore_ascii_case(name) && s != name { Some(s.to_string()) } else { None }
+                                })
+                                .collect();
+                            // Prefer a single qualified candidate if available
+                            if candidates.len() == 1 {
+                                ob_overrides.insert(name.clone(), candidates.remove(0));
+                            } else if candidates.is_empty() {
+                                // No equivalent projected column found → keep existing strict behavior
+                                return Err(
+                                    crate::server::data_context::DataContext::column_not_found_error(
+                                        name,
+                                        "ORDER BY",
+                                        &df,
+                                    ),
+                                );
+                            } else {
+                                // Multiple candidates; if all are identical references, we could pick one.
+                                // For now, be conservative and require disambiguation.
+                                return Err(
+                                    crate::server::data_context::DataContext::column_not_found_error(
+                                        name,
+                                        "ORDER BY",
+                                        &df,
+                                    ),
+                                );
+                            }
                         }
                     }
                 }
                 let mut exprs: Vec<Expr> = Vec::new();
                 let mut descending: Vec<bool> = Vec::new();
                 for (name, asc) in ob.iter() {
+                    // Apply any override established during strict temp validation
+                    let effective_name: &str = if let Some(n) = ob_overrides.get(name) { n.as_str() } else { name.as_str() };
                     // If the ORDER BY key looks like an expression (e.g., a function call),
                     // skip it here; expression-based ordering should be handled via ANN path
                     // or earlier stages. This prevents mis-resolving full expressions as columns.
-                    if name.contains('(') || name.contains(')') {
-                        tprintln!("[ORDER_LIMIT] Skipping expression ORDER BY key '{}' in exact path", name);
+                    if effective_name.contains('(') || effective_name.contains(')') {
+                        tprintln!("[ORDER_LIMIT] Skipping expression ORDER BY key '{}' in exact path", effective_name);
                         continue;
                     }
                     // Try to resolve the ORDER BY column against current DF/Context
-                    match ctx.resolve_column_at_stage(&df, name, SelectStage::OrderLimit) {
+                    match ctx.resolve_column_at_stage(&df, effective_name, SelectStage::OrderLimit) {
                         Ok(resolved) => {
                             exprs.push(col(resolved.as_str()));
                             descending.push(!asc);
@@ -165,7 +198,7 @@ pub fn order_limit(mut df: DataFrame, q: &Query, ctx: &mut DataContext) -> Resul
                             if strict {
                                 return Err(
                                     crate::server::data_context::DataContext::column_not_found_error(
-                                        name,
+                                        effective_name,
                                         "ORDER BY",
                                         &df,
                                     ),
@@ -174,7 +207,7 @@ pub fn order_limit(mut df: DataFrame, q: &Query, ctx: &mut DataContext) -> Resul
                                 // Best-effort diagnostic to help track behavior during tests
                                 tprintln!(
                                     "[ORDER_LIMIT] Skipping unknown ORDER BY key '{}' (strict_projection=false)",
-                                    name
+                                    effective_name
                                 );
                                 continue;
                             }
