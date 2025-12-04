@@ -25,7 +25,8 @@ use anyhow::Context;
 use std::panic::{AssertUnwindSafe};
 use futures_util::FutureExt; // for catch_unwind on async blocks
 
-use crate::{storage::{SharedStore, Record}, query, security};
+use crate::{storage::{SharedStore, Record}, security};
+pub mod query;
 pub mod exec;
 pub mod data_context;
 use serde_json::json;
@@ -621,6 +622,16 @@ fn to_ck_and_db(cmd: &query::Command) -> (security::CommandKind, Option<String>)
         query::Command::ListKeys { database, .. } => (security::CommandKind::Other, Some(database.clone())),
         query::Command::DescribeKey { database, .. } => (security::CommandKind::Other, Some(database.clone())),
         query::Command::DescribeObject { .. } => (security::CommandKind::Other, None),
+        // Vector index catalog
+        query::Command::CreateVectorIndex { .. }
+        | query::Command::DropVectorIndex { .. }
+        | query::Command::ShowVectorIndex { .. }
+        | query::Command::ShowVectorIndexes => (security::CommandKind::Database, None),
+        // Graph catalog
+        query::Command::CreateGraph { .. }
+        | query::Command::DropGraph { .. }
+        | query::Command::ShowGraph { .. }
+        | query::Command::ShowGraphs => (security::CommandKind::Other, None),
         // Global session-affecting and SHOW
         query::Command::UseDatabase { .. } | query::Command::UseSchema { .. } | query::Command::Set { .. } => (security::CommandKind::Other, None),
         query::Command::ShowTransactionIsolation

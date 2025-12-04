@@ -23,7 +23,6 @@ pub mod exec_graph_runtime; // Graph TVFs runtime (neighbors/paths)
 
 use anyhow::Result;
 use polars::prelude::*;
-use crate::{query, query::Command};
 use crate::storage::{SharedStore, KvValue};
 use crate::ident::QueryDefaults;
 use crate::scripts::get_script_registry;

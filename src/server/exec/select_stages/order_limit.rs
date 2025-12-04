@@ -395,14 +395,20 @@ fn ann_order_dataframe(
             anyhow::bail!("ANN: metric mismatch between ORDER BY function '{}' and index metric '{}'", func, m);
         }
     }
-    // Ensure the column exists and is Utf8-like
-    let cname = df.get_column_names().iter().find(|c| c.eq_ignore_ascii_case(&col_name)).cloned().unwrap_or(col_name.to_string());
+    // Ensure the column exists and is String-like
+    let cname = df
+        .get_column_names()
+        .iter()
+        .find(|c| c.eq_ignore_ascii_case(&col_name))
+        .map(|c| c.to_string())
+        .unwrap_or_else(|| col_name.to_string());
     let col_series = df.column(&cname)?;
     // Create score series
     let mut scores: Vec<f64> = Vec::with_capacity(df.height());
     match col_series.dtype() {
-        DataType::Utf8 | DataType::String => {
-            let ca = col_series.utf8().map_err(|_| anyhow::anyhow!("vector column '{}' must be Utf8", cname))?;
+        DataType::String => {
+            let sref = col_series.as_materialized_series();
+            let ca = sref.utf8().map_err(|_| anyhow::anyhow!("vector column '{}' must be String/Utf8", cname))?;
             for opt in ca.into_iter() {
                 let s = opt.unwrap_or("");
                 let v = parse_vec_literal(s).unwrap_or_default();
@@ -416,7 +422,6 @@ fn ann_order_dataframe(
         }
         _ => {
             // Attempt to stringify other types
-            let s = col_series.to_string();
             // to_string() prints the whole column; that's not usable. Fail gracefully
             return Err(anyhow::anyhow!("vector column '{}' has unsupported dtype {:?}", cname, col_series.dtype()));
         }
@@ -432,7 +437,7 @@ fn ann_order_dataframe(
     let mut df2 = df.clone();
     df2.with_column(score_series)?;
     let opts = polars::prelude::SortMultipleOptions { descending: vec![final_desc], nulls_last: vec![true], maintain_order: true, multithreaded: true, limit: topk };
-    let orig_cols: Vec<_> = df.get_column_names().iter().map(|s| col(s)).collect();
+    let orig_cols: Vec<_> = df.get_column_names().iter().map(|s| col(s.as_str())).collect();
     let df_sorted = df2.lazy().sort_by_exprs(vec![col("__ann_score")], opts).select(&orig_cols).collect()?;
     Ok(df_sorted)
 }

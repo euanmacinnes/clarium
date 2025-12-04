@@ -1,6 +1,5 @@
 pub mod server;
 pub mod storage;
-pub mod query;
 pub mod security;
 pub mod scripts;
 pub mod system;

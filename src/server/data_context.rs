@@ -8,7 +8,6 @@ use anyhow::Result;
 use polars::prelude::DataFrame;
 use tracing::debug;
 
-use crate::query::TableRef;
 
 /// Execution pipeline stages for SELECT processing
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
