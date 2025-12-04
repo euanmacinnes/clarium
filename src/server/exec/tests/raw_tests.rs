@@ -1,4 +1,4 @@
-use crate::query::{self, Command};
+use crate::server::query::{self, Command};
 use crate::server::data_context::DataContext;
 use crate::server::exec::select_stages::from_where::from_where as stage_from_where;
 use crate::server::exec::select_stages::project_select::project_select as stage_project_select;

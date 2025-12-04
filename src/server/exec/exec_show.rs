@@ -3,7 +3,7 @@ use serde_json::Value;
 use std::collections::BTreeSet;
 use std::path::Path;
 
-use crate::query::Command;
+use crate::server::query::Command;
 use crate::scripts::scripts_dir_for;
 use crate::storage::SharedStore;
 

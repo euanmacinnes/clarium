@@ -6,7 +6,7 @@
 //! - Using a single global registry shared across all threads
 
 use super::super::run_select;
-use crate::query::{self, Command};
+use crate::server::query::{self, Command};
 use crate::storage::{Store, SharedStore, Record};
 use crate::system;
 use polars::prelude::AnyValue;

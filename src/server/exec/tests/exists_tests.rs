@@ -1,4 +1,4 @@
-use crate::query::{self, Command};
+use crate::server::query::{self, Command};
 use crate::server::exec::exec_select::run_select;
 use crate::storage::{Record, SharedStore, Store};
 use crate::tprintln;

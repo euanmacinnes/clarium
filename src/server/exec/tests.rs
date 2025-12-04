@@ -136,7 +136,7 @@ mod windowing_tests;
 
 mod partitioned_table_tests {
     use super::super::{run_select};
-    use crate::query::{self, Command};
+    use crate::server::query::{self, Command};
     use crate::storage::{Store, SharedStore, Record};
     use serde_json::json;
 
@@ -187,7 +187,7 @@ mod partitioned_table_tests {
 
 mod group_by_notnull_tests {
     use super::super::run_select;
-    use crate::query::{self, Command};
+    use crate::server::query::{self, Command};
     use crate::storage::{Store, SharedStore, Record};
     use serde_json::json;
 
@@ -237,7 +237,7 @@ mod group_by_notnull_tests {
 
 mod date_func_tests {
     use super::super::run_select;
-    use crate::query::{self, Command};
+    use crate::server::query::{self, Command};
     use crate::storage::{Store, SharedStore, Record};
 
     #[test]
@@ -273,7 +273,7 @@ mod date_func_tests {
 
 mod project_tests {
     use super::super::run_select;
-    use crate::query::{self, Command};
+    use crate::server::query::{self, Command};
     use crate::storage::{Store, SharedStore, Record};
     use serde_json::json;
 
@@ -307,7 +307,7 @@ mod project_tests {
 
 mod error_tests {
     use super::super::run_select;
-    use crate::query::{self, Command};
+    use crate::server::query::{self, Command};
     use crate::storage::{Store, SharedStore, Record};
     use serde_json::json;
 
@@ -358,7 +358,7 @@ mod error_tests {
 
 mod time_label_tests {
     use super::super::run_select;
-    use crate::query::{self, Command};
+    use crate::server::query::{self, Command};
     use crate::storage::{Store, SharedStore, Record};
     use serde_json::json;
 
@@ -388,7 +388,7 @@ mod time_label_tests {
 
 mod sourceless_tests {
     use super::super::run_select;
-    use crate::query::{self, Command};
+    use crate::server::query::{self, Command};
     use crate::storage::SharedStore;
 
     #[test]
@@ -414,7 +414,7 @@ mod sourceless_tests {
 // New tests for regular (non-time) tables
 mod regular_table_tests {
     use super::super::run_select;
-    use crate::query::{self, Command};
+    use crate::server::query::{self, Command};
     use crate::storage::{Store, SharedStore};
     use polars::prelude::*;
 
@@ -457,7 +457,7 @@ mod regular_table_tests {
 
 mod select_wildcard_tests {
     use super::super::run_select;
-    use crate::query::{self, Command};
+    use crate::server::query::{self, Command};
     use crate::storage::{Store, SharedStore, Record};
     use serde_json::json;
 
@@ -516,7 +516,7 @@ mod select_wildcard_tests {
 
 mod order_limit_tests {
     use super::super::run_select;
-    use crate::query::{self, Command};
+    use crate::server::query::{self, Command};
     use crate::storage::{Store, SharedStore, Record};
     use serde_json::json;
     use polars::prelude::*;
@@ -646,7 +646,7 @@ mod order_limit_tests {
 
 mod by_slice_tests {
     use super::super::run_select;
-    use crate::query::{self, Command};
+    use crate::server::query::{self, Command};
     use crate::storage::{Store, SharedStore, Record};
     use serde_json::json;
 
@@ -712,7 +712,7 @@ mod by_slice_tests {
 
 mod by_slice_labels_tests {
     use super::super::run_select;
-    use crate::query::{self, Command};
+    use crate::server::query::{self, Command};
     use crate::storage::{Store, SharedStore, Record};
     use serde_json::json;
 
@@ -755,7 +755,7 @@ mod by_slice_labels_tests {
 
 mod complex_select_integration_tests {
     use super::super::run_select;
-    use crate::query::{self, Command};
+    use crate::server::query::{self, Command};
     use crate::storage::{Store, SharedStore, Record};
     use serde_json::json;
     use std::time::Instant;
@@ -942,7 +942,7 @@ mod complex_select_integration_tests {
 
 mod where_literal_tests {
     use super::super::run_select;
-    use crate::query::{self, Command};
+    use crate::server::query::{self, Command};
     use crate::storage::{Store, SharedStore, Record};
     use serde_json::json;
 
@@ -999,7 +999,7 @@ mod where_literal_tests {
 mod fstring_tests {
     
     use super::super::run_select;
-    use crate::query::{self, Command};
+    use crate::server::query::{self, Command};
     use crate::storage::{Store, SharedStore, Record};
     use serde_json::json;
 

@@ -8,6 +8,8 @@ use crate::{
             server::exec::exec_common::{build_where_expr, collect_where_columns},
              storage::{ SharedStore}};
 
+use crate::server::query::{query_common::{ArithExpr, ArithOp, ArithTerm, CompOp, WhereExpr, SqlType, DateFunc, DatePart, StrSliceBound, SliceSource, SlicePlan, SliceOp}};             
+
 // Helper: compute simple stats for interval lists for logging
 fn interval_stats(v: &Vec<(i64,i64)>) -> (usize, i64, i64) {
     if v.is_empty() { return (0, 0, 0); }
@@ -53,8 +55,7 @@ fn fmt_intervals_labeled(v: &Vec<(i64,i64,Vec<Option<String>>)>, labels: &Vec<St
 }
 
 // --- SLICE evaluation ---
-fn derive_labels_from_plan(plan: &crate::query::SlicePlan) -> Option<Vec<String>> {
-    use crate::query::SliceSource;
+fn derive_labels_from_plan(plan: &SlicePlan) -> Option<Vec<String>> {    
     fn collect(src: &SliceSource, names: &mut Vec<String>, max_unnamed: &mut usize) {
         match src {
             SliceSource::Plan(p) => {
@@ -87,8 +88,7 @@ fn derive_labels_from_plan(plan: &crate::query::SlicePlan) -> Option<Vec<String>
     Some(names)
 }
 
-pub fn run_slice(store: &SharedStore, plan: &crate::query::SlicePlan, ctx: &crate::server::data_context::DataContext) -> Result<DataFrame> {
-    use crate::query::SliceOp;
+pub fn run_slice(store: &SharedStore, plan: &SlicePlan, ctx: &crate::server::data_context::DataContext) -> Result<DataFrame> {    
     // Determine label names: explicit plan labels or derive from manual sources
     let derived = derive_labels_from_plan(plan);
     if let Some(label_names) = plan.labels.as_ref().or(derived.as_ref()) {
@@ -146,15 +146,15 @@ pub fn run_slice(store: &SharedStore, plan: &crate::query::SlicePlan, ctx: &crat
     Ok(df)
 }
 
-fn eval_slice_source(store: &SharedStore, src: &crate::query::SliceSource, ctx: &crate::server::data_context::DataContext) -> Result<Vec<(i64,i64)>> {
+fn eval_slice_source(store: &SharedStore, src: &SliceSource, ctx: &crate::server::data_context::DataContext) -> Result<Vec<(i64,i64)>> {
     match src {
-        crate::query::SliceSource::Plan(p) => run_slice(store, p, ctx).map(|df| df_to_intervals(&df)),
-        crate::query::SliceSource::Manual { rows } => {
+        SliceSource::Plan(p) => run_slice(store, p, ctx).map(|df| df_to_intervals(&df)),
+        SliceSource::Manual { rows } => {
             let mut out: Vec<(i64,i64)> = rows.iter().filter_map(|r| if r.end >= r.start { Some((r.start, r.end)) } else { None }).collect();
             out.sort_by(|a,b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
             Ok(merge_overlaps(out))
         }
-        crate::query::SliceSource::Table { database, start_col, end_col, where_clause, .. } => {
+        SliceSource::Table { database, start_col, end_col, where_clause, .. } => {
             let sc = start_col.as_deref().unwrap_or("_start_date");
             let ec = end_col.as_deref().unwrap_or("_end_date");
             // Load only needed columns plus where columns
@@ -186,9 +186,9 @@ fn eval_slice_source(store: &SharedStore, src: &crate::query::SliceSource, ctx: 
 }
 
 // Labeled SLICE source evaluation
-fn eval_slice_source_labeled(store: &SharedStore, src: &crate::query::SliceSource, label_names: &Vec<String>, ctx: &crate::server::data_context::DataContext) -> Result<Vec<(i64,i64,Vec<Option<String>>)>> {
+fn eval_slice_source_labeled(store: &SharedStore, src: &SliceSource, label_names: &Vec<String>, ctx: &crate::server::data_context::DataContext) -> Result<Vec<(i64,i64,Vec<Option<String>>)>> {
     match src {
-        crate::query::SliceSource::Plan(p) => {
+        SliceSource::Plan(p) => {
             let df = run_slice(store, p, ctx)?;
             // Expect df contains _start_date/_end_date and possibly label columns matching label_names
             let base = df_to_intervals(&df);
@@ -219,7 +219,7 @@ fn eval_slice_source_labeled(store: &SharedStore, src: &crate::query::SliceSourc
             }
             Ok(out)
         }
-        crate::query::SliceSource::Manual { rows } => {
+        SliceSource::Manual { rows } => {
             use std::collections::HashMap;
             // map name -> index
             let mut name_idx: HashMap<&str, usize> = HashMap::new();
@@ -252,7 +252,7 @@ fn eval_slice_source_labeled(store: &SharedStore, src: &crate::query::SliceSourc
             out.sort_by(|a,b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)).then(a.2.cmp(&b.2)));
             Ok(merge_overlaps_labeled(out))
         }
-        crate::query::SliceSource::Table { database, start_col, end_col, where_clause, label_values } => {
+        SliceSource::Table { database, start_col, end_col, where_clause, label_values } => {
             let sc = start_col.as_deref().unwrap_or("_start_date");
             let ec = end_col.as_deref().unwrap_or("_end_date");
             // Collect required columns: start/end, where columns, and LABEL(...) referenced columns (non-quoted, non-NULL)

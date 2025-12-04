@@ -7,7 +7,7 @@
 use anyhow::Result;
 use polars::prelude::*;
 
-use crate::{query, server::exec::{where_subquery::{eval_where_mask, where_contains_subquery}, exec_common::build_where_expr, df_utils::read_df_or_kv}};
+use crate::{server::query, server::exec::{where_subquery::{eval_where_mask, where_contains_subquery}, exec_common::build_where_expr, df_utils::read_df_or_kv}};
 use crate::storage::SharedStore;
 
 pub fn handle_update(store: &SharedStore, table: String, assignments: Vec<(String, query::ArithTerm)>, where_clause: Option<query::WhereExpr>) -> Result<serde_json::Value> {

@@ -1,8 +1,16 @@
 use anyhow::Result;
 use polars::prelude::*;
 use crate::tprintln;
-
-use crate::query::WhereExpr;
+use crate::server::query::query_common::Query;
+use crate::server::query::query_common::WhereExpr;
+use crate::server::query::query_common::CompOp;
+use crate::server::query::query_common::ArithExpr as AE;
+use crate::server::query::query_common::ArithTerm as AT;
+use crate::server::query::query_common::WhereExpr as WE;
+use crate::server::query::query_common::ArithExpr;
+use crate::server::query::query_common::DateFunc;
+use crate::server::query::query_common::StrSliceBound;
+use crate::server::query::query_common::JoinType;
 use crate::server::exec::exec_common::{build_where_expr, collect_where_columns};
 use crate::scripts::get_script_registry;
 
@@ -31,8 +39,7 @@ fn resolve_name_in_df(df: &DataFrame, name: &str) -> anyhow::Result<String> {
     anyhow::bail!(format!("Ambiguous column '{}'; qualify with table alias", name));
 }
 
-fn qualify_having_arith(df: &DataFrame, a: &crate::query::ArithExpr) -> crate::query::ArithExpr {
-    use crate::query::{ArithExpr as AE, ArithTerm as AT};
+fn qualify_having_arith(df: &DataFrame, a: &ArithExpr) -> ArithExpr {    
     match a {
         AE::Term(AT::Col { name, previous: false }) => {
             let qn = resolve_name_in_df(df, name).unwrap_or_else(|_| name.to_string());
@@ -45,16 +52,14 @@ fn qualify_having_arith(df: &DataFrame, a: &crate::query::ArithExpr) -> crate::q
         AE::BinOp { left, op, right } => AE::BinOp { left: Box::new(qualify_having_arith(df, left)), op: op.clone(), right: Box::new(qualify_having_arith(df, right)) },
         AE::Concat(parts) => AE::Concat(parts.iter().map(|p| qualify_having_arith(df, p)).collect()),
         AE::Call { name, args } => AE::Call { name: name.clone(), args: args.iter().map(|p| qualify_having_arith(df, p)).collect() },
-        AE::Func(dfm) => {
-            use crate::query::DateFunc;
+        AE::Func(dfm) => {            
             match dfm {
                 DateFunc::DatePart(part, a1) => AE::Func(DateFunc::DatePart(part.clone(), Box::new(qualify_having_arith(df, a1)))),
                 DateFunc::DateAdd(part, a1, a2) => AE::Func(DateFunc::DateAdd(part.clone(), Box::new(qualify_having_arith(df, a1)), Box::new(qualify_having_arith(df, a2)))),
                 DateFunc::DateDiff(part, a1, a2) => AE::Func(DateFunc::DateDiff(part.clone(), Box::new(qualify_having_arith(df, a1)), Box::new(qualify_having_arith(df, a2)))),
             }
         }
-        AE::Slice { base, start, stop, step } => {
-            use crate::query::StrSliceBound;
+        AE::Slice { base, start, stop, step } => {            
             let qbase = Box::new(qualify_having_arith(df, base));
             let qstart = match start {
                 Some(StrSliceBound::Pattern { expr, include }) => Some(StrSliceBound::Pattern { expr: Box::new(qualify_having_arith(df, expr)), include: *include }),
@@ -78,8 +83,7 @@ fn qualify_having_arith(df: &DataFrame, a: &crate::query::ArithExpr) -> crate::q
         }
     }
 }
-fn qualify_having_where(df: &DataFrame, w: &WhereExpr) -> WhereExpr {
-    use crate::query::WhereExpr as WE;
+fn qualify_having_where(df: &DataFrame, w: &WhereExpr) -> WhereExpr {    
     match w {
         WE::Comp { left, op, right } => WE::Comp { left: qualify_having_arith(df, left), op: op.clone(), right: qualify_having_arith(df, right) },
         WE::And(a, b) => WE::And(Box::new(qualify_having_where(df, a)), Box::new(qualify_having_where(df, b))),
@@ -220,8 +224,7 @@ pub fn try_apply_having_eager(df: &DataFrame, _h: &WhereExpr) -> Result<Option<D
 
 // --- helpers (local) ---
 // Minimal UDF name collector mirroring exec_select.rs behavior for HAVING validation
-fn collect_udf_names_arith(a: &crate::query::ArithExpr, out: &mut Vec<String>) {
-    use crate::query::ArithExpr as AE;
+fn collect_udf_names_arith(a: &ArithExpr, out: &mut Vec<String>) {    
     match a {
         AE::Call { name, args } => { out.push(name.clone()); for x in args { collect_udf_names_arith(x, out); } },
         AE::BinOp { left, right, .. } => { collect_udf_names_arith(left, out); collect_udf_names_arith(right, out); },
@@ -229,8 +232,7 @@ fn collect_udf_names_arith(a: &crate::query::ArithExpr, out: &mut Vec<String>) {
         _ => {}
     }
 }
-fn collect_udf_names_where(w: &WhereExpr, out: &mut Vec<String>) {
-    use crate::query::WhereExpr as WE;
+fn collect_udf_names_where(w: &WhereExpr, out: &mut Vec<String>) {    
     match w {
         WE::Comp { left, right, .. } => { collect_udf_names_arith(left, out); collect_udf_names_arith(right, out); }
         WE::And(a, b) | WE::Or(a, b) => { collect_udf_names_where(a, out); collect_udf_names_where(b, out); }

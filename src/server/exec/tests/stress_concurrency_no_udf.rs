@@ -4,7 +4,7 @@
 //! to exercise the executor under concurrent load without involving the Lua registry.
 
 use super::super::run_select;
-use crate::query::{self, Command};
+use crate::server::query::{self, Command};
 use crate::storage::{Store, SharedStore, Record};
 use crate::system;
 use polars::prelude::AnyValue;

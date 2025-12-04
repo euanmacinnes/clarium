@@ -4,8 +4,7 @@ use polars::prelude::Column;
 use regex::Regex;
 
 
-use crate::{query::{ArithExpr, ArithOp, ArithTerm, CompOp, WhereExpr, SqlType}};
-
+use crate::server::query::{query_common::{ArithExpr, ArithOp, ArithTerm, CompOp, WhereExpr, SqlType, DateFunc, DatePart, StrSliceBound, Query}};
 
 
 #[inline]
@@ -60,8 +59,7 @@ pub fn regclass_oid_with_defaults(name: &str, db: Option<&str>, schema: Option<&
 
 pub fn build_where_expr(w: &WhereExpr, ctx: &crate::server::data_context::DataContext) -> Expr {
     match w {
-        WhereExpr::Comp { left, op, right } => {
-            use crate::query::{ArithExpr, ArithTerm};
+        WhereExpr::Comp { left, op, right } => {            
             // Helper: detect boolean-returning UDF call using registry metadata from context
             let is_boolean_udf_call = |a: &ArithExpr| -> bool {
                 if let ArithExpr::Call { name, .. } = a {
@@ -88,13 +86,13 @@ pub fn build_where_expr(w: &WhereExpr, ctx: &crate::server::data_context::DataCo
             // Special-case: support bare boolean predicates parsed as `<expr> = 1`
             // Trigger when LEFT is an explicit predicate OR a boolean-returning UDF call.
             // Handle LEFT = 1/0 pattern
-            if let (crate::query::CompOp::Eq, Some(n)) = (op, const_number(right)) {
+            if let (CompOp::Eq, Some(n)) = (op, const_number(right)) {
                 if let Some(be) = to_bool_expr(left) {
                     return if (n - 1.0).abs() < f64::EPSILON { be } else { be.not() };
                 }
             }
             // Handle 1/0 = RIGHT pattern
-            if let (crate::query::CompOp::Eq, Some(n)) = (op, const_number(left)) {
+            if let (CompOp::Eq, Some(n)) = (op, const_number(left)) {
                 if let Some(be) = to_bool_expr(right) {
                     return if (n - 1.0).abs() < f64::EPSILON { be } else { be.not() };
                 }
@@ -102,8 +100,7 @@ pub fn build_where_expr(w: &WhereExpr, ctx: &crate::server::data_context::DataCo
             // Handle ordered comparisons between boolean predicate and 0/1
             // Map to equivalent boolean masks to avoid numeric-vs-string coercions.
             if let Some(n) = const_number(right) {
-                if let Some(be) = to_bool_expr(left) {
-                    use crate::query::CompOp;
+                if let Some(be) = to_bool_expr(left) {                    
                     match op {
                         CompOp::Gt | CompOp::Ge => {
                             // b > 0  or b >= 1  => b == true, else for n<=0 treat as b == true for Ge(1) only
@@ -120,8 +117,7 @@ pub fn build_where_expr(w: &WhereExpr, ctx: &crate::server::data_context::DataCo
                 }
             }
             if let Some(n) = const_number(left) {
-                if let Some(be) = to_bool_expr(right) {
-                    use crate::query::CompOp;
+                if let Some(be) = to_bool_expr(right) {                    
                     match op {
                         CompOp::Lt | CompOp::Le => {
                             // 0 < b or 0 <= b  (with b in {0,1}) => b == true
@@ -624,8 +620,7 @@ pub fn build_arith_expr(a: &ArithExpr, ctx: &crate::server::data_context::DataCo
                 }
             )
         }
-        ArithExpr::Func(df) => {
-            use crate::query::{DateFunc, DatePart};
+        ArithExpr::Func(df) => {            
             // Helper to ms unit multiplier
             fn unit_ms(p: &DatePart) -> i64 {
                 match p { DatePart::Millisecond => 1, DatePart::Second => 1000, DatePart::Minute => 60_000, DatePart::Hour => 3_600_000, DatePart::Day => 86_400_000, DatePart::Month => 2_592_000_000, DatePart::Year => 31_536_000_000 }
@@ -658,8 +653,7 @@ pub fn build_arith_expr(a: &ArithExpr, ctx: &crate::server::data_context::DataCo
                 }
             }
         }
-        ArithExpr::Slice { base, start, stop, step } => {
-            use crate::query::StrSliceBound;
+        ArithExpr::Slice { base, start, stop, step } => {            
             let base_e = build_arith_expr(base, ctx).cast(DataType::String);
             let start_b = start.clone();
             let stop_b = stop.clone();
@@ -802,8 +796,7 @@ pub fn collect_from_arith(a: &ArithExpr, out: &mut Vec<String>) {
         ArithExpr::Term(ArithTerm::Null) => {},
         ArithExpr::Cast { expr, .. } => { collect_from_arith(expr, out); }
         ArithExpr::BinOp { left, right, .. } => { collect_from_arith(left, out); collect_from_arith(right, out); }
-        ArithExpr::Func(df) => {
-            use crate::query::DateFunc;
+        ArithExpr::Func(df) => {            
             match df {
                 DateFunc::DatePart(_, a1) => collect_from_arith(a1, out),
                 DateFunc::DateAdd(_, n, d) => { collect_from_arith(n, out); collect_from_arith(d, out); }
@@ -813,8 +806,7 @@ pub fn collect_from_arith(a: &ArithExpr, out: &mut Vec<String>) {
         ArithExpr::Slice { base, start, stop, .. } => {
             // collect from base expression
             collect_from_arith(base, out);
-            // if bounds are dynamic expressions (non-literals), collect from them too
-            use crate::query::StrSliceBound;
+            // if bounds are dynamic expressions (non-literals), collect from them too            
             if let Some(StrSliceBound::Pattern { expr, .. }) = start { collect_from_arith(expr, out); }
             if let Some(StrSliceBound::Pattern { expr, .. }) = stop { collect_from_arith(expr, out); }
         }

@@ -17,6 +17,36 @@ pub enum ArithTerm {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct Query {
+    pub select: Vec<SelectItem>,
+    pub by_window_ms: Option<i64>,
+    pub by_slices: Option<SlicePlan>,
+    pub group_by_cols: Option<Vec<String>>,
+    // Columns within group_by that use NOTNULL run-based grouping semantics
+    pub group_by_notnull_cols: Option<Vec<String>>,
+    pub where_clause: Option<WhereExpr>,
+    pub having_clause: Option<WhereExpr>,
+    pub rolling_window_ms: Option<i64>,
+    pub order_by: Option<Vec<(String, bool)>>, // (column/alias, asc=true/desc=false)
+    // Optional ANN/EXACT hint attached to ORDER BY clause: "ANN" | "EXACT"
+    pub order_by_hint: Option<String>,
+    // Raw ORDER BY items as written (per item text), preserved for advanced planners (e.g., ANN)
+    pub order_by_raw: Option<Vec<(String, bool)>>,
+    pub limit: Option<i64>,
+    // Optional INTO destination for persisting SELECT results
+    pub into_table: Option<String>,
+    pub into_mode: Option<IntoMode>,
+    // JOIN support (optional). When present, JOINs take precedence over `base_table`.
+    pub base_table: Option<TableRef>,
+    pub joins: Option<Vec<JoinClause>>,
+    // CTEs (Common Table Expressions) defined by WITH clause
+    pub with_ctes: Option<Vec<CTE>>,
+    // Full original SQL text for this query, preserved for diagnostics/debugging/reference
+    pub original_sql: String,
+}
+
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum DatePart { Year, Month, Day, Hour, Minute, Second, Millisecond }
 
 #[derive(Debug, Clone, PartialEq)]

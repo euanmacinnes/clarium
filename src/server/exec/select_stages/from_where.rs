@@ -4,7 +4,17 @@ use anyhow::Result;
 use polars::prelude::*;
 
 use crate::server::data_context::{DataContext, SelectStage};
-use crate::query::{Query, WhereExpr, ArithExpr, ArithTerm, JoinType};
+use crate::server::query::query_common::Query;
+use crate::server::query::query_common::WhereExpr;
+use crate::server::query::query_common::CompOp;
+use crate::server::query::query_common::ArithExpr as AE;
+use crate::server::query::query_common::ArithTerm as AT;
+use crate::server::query::query_common::WhereExpr as WE;
+use crate::server::query::query_common::ArithTerm;
+use crate::server::query::query_common::ArithExpr;
+use crate::server::query::query_common::DateFunc;
+use crate::server::query::query_common::StrSliceBound;
+use crate::server::query::query_common::JoinType;
 use crate::storage::SharedStore;
 use crate::server::exec::exec_common::{build_where_expr};
 use crate::server::exec::where_subquery::{eval_where_mask};
@@ -13,7 +23,7 @@ use crate::tprintln;
 fn extract_simple_equi_with_remainder(on: &WhereExpr) -> Option<((String, String), Option<WhereExpr>)> {
     match on {
         WhereExpr::Comp { left, op, right } => {
-            if *op != crate::query::CompOp::Eq { return None; }
+            if *op != CompOp::Eq { return None; }
             let l = match left { ArithExpr::Term(ArithTerm::Col { name, previous: false }) => Some(name.clone()), _ => None }?;
             let r = match right { ArithExpr::Term(ArithTerm::Col { name, previous: false }) => Some(name.clone()), _ => None }?;
             Some(((l, r), None))
@@ -63,8 +73,7 @@ pub fn from_where(store: &SharedStore, q: &Query, ctx: &mut DataContext) -> Resu
     }
 
     // Helpers to qualify columns in expressions using DataContext against a concrete DF
-    fn qualify_arith_ctx(df: &DataFrame, ctx: &DataContext, a: &ArithExpr, clause: &str) -> anyhow::Result<ArithExpr> {
-        use crate::query::{ArithExpr as AE, ArithTerm as AT};
+    fn qualify_arith_ctx(df: &DataFrame, ctx: &DataContext, a: &ArithExpr, clause: &str) -> anyhow::Result<ArithExpr> {        
         Ok(match a {
             AE::Term(AT::Col { name, previous: false }) => {
                 let qn = ctx.resolve_column(df, name).map_err(|_| DataContext::column_not_found_error(name, clause, df))?;
@@ -81,16 +90,14 @@ pub fn from_where(store: &SharedStore, q: &Query, ctx: &mut DataContext) -> Resu
             },
             AE::Concat(parts) => AE::Concat(parts.iter().map(|p| qualify_arith_ctx(df, ctx, p, clause)).collect::<anyhow::Result<Vec<_>>>()?),
             AE::Call { name, args } => AE::Call { name: name.clone(), args: args.iter().map(|p| qualify_arith_ctx(df, ctx, p, clause)).collect::<anyhow::Result<Vec<_>>>()? },
-            AE::Func(dfm) => {
-                use crate::query::DateFunc;
+            AE::Func(dfm) => {                
                 match dfm {
                     DateFunc::DatePart(part, a1) => AE::Func(DateFunc::DatePart(part.clone(), Box::new(qualify_arith_ctx(df, ctx, a1, clause)?))),
                     DateFunc::DateAdd(part, a1, a2) => AE::Func(DateFunc::DateAdd(part.clone(), Box::new(qualify_arith_ctx(df, ctx, a1, clause)?), Box::new(qualify_arith_ctx(df, ctx, a2, clause)?))),
                     DateFunc::DateDiff(part, a1, a2) => AE::Func(DateFunc::DateDiff(part.clone(), Box::new(qualify_arith_ctx(df, ctx, a1, clause)?), Box::new(qualify_arith_ctx(df, ctx, a2, clause)?))),
                 }
             }
-            AE::Slice { base, start, stop, step } => {
-                use crate::query::StrSliceBound;
+            AE::Slice { base, start, stop, step } => {                
                 let qbase = Box::new(qualify_arith_ctx(df, ctx, base, clause)?);
                 let qstart = match start {
                     Some(StrSliceBound::Pattern { expr, include }) => Some(StrSliceBound::Pattern { expr: Box::new(qualify_arith_ctx(df, ctx, expr, clause)?), include: *include }),
@@ -115,7 +122,7 @@ pub fn from_where(store: &SharedStore, q: &Query, ctx: &mut DataContext) -> Resu
         })
     }
     fn qualify_where_ctx(df: &DataFrame, ctx: &DataContext, w: &WhereExpr, clause: &str) -> anyhow::Result<WhereExpr> {
-        use crate::query::WhereExpr as WE;
+        
         Ok(match w {
             WE::Comp { left, op, right } => WE::Comp { left: qualify_arith_ctx(df, ctx, left, clause)?, op: op.clone(), right: qualify_arith_ctx(df, ctx, right, clause)? },
             WE::And(a, b) => WE::And(Box::new(qualify_where_ctx(df, ctx, a, clause)?), Box::new(qualify_where_ctx(df, ctx, b, clause)?)),
@@ -355,9 +362,7 @@ pub fn from_where(store: &SharedStore, q: &Query, ctx: &mut DataContext) -> Resu
     if let Some(w) = &q.where_clause {
         eprintln!("[FROM/WHERE dbg] where_clause present: true, before rows={}", df.height());
         // Validate UDF presence in WHERE expressions
-        fn collect_udf_names_where(w: &crate::query::WhereExpr, out: &mut Vec<String>) {
-            use crate::query::WhereExpr as WE;
-            use crate::query::ArithExpr as AE;
+        fn collect_udf_names_where(w: &WhereExpr, out: &mut Vec<String>) {            
             match w {
                 WE::Comp { left, right, .. } => {
                     fn collect_from_arith(a: &AE, out: &mut Vec<String>) {

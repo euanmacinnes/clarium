@@ -6,8 +6,9 @@
 use anyhow::Result;
 use polars::prelude::*;
 use crate::storage::SharedStore;
+use crate::server::query::{query_common::{ArithExpr, ArithOp, ArithTerm, CompOp, WhereExpr, SqlType, DateFunc, DatePart, StrSliceBound, Query}};
 
-pub fn handle_calculate(store: &SharedStore, target_sensor: &str, q: &crate::query::Query) -> Result<serde_json::Value> {
+pub fn handle_calculate(store: &SharedStore, target_sensor: &str, q: &Query) -> Result<serde_json::Value> {
     // run select
     let df = crate::server::exec::exec_select::run_select(store, q)?;
     // Expect columns: _time and one value column

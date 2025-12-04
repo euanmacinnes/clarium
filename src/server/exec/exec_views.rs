@@ -8,7 +8,8 @@ use serde::{Deserialize, Serialize};
 use tracing::info;
 use polars::prelude::*;
 
-use crate::{query, storage::SharedStore};
+use crate::server::query;
+use crate::storage::SharedStore;
 use crate::error::AppError;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -6,7 +6,7 @@
 use anyhow::Result;
 use polars::prelude::*;
 
-use crate::{query, storage::SharedStore};
+use crate::{server::query, storage::SharedStore};
 
 pub fn handle_insert(store: &SharedStore, table: String, columns: Vec<String>, values: Vec<Vec<query::ArithTerm>>) -> Result<serde_json::Value> {
     // Convert dot notation (schema.table) to slash notation (schema/table) for storage

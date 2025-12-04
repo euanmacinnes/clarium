@@ -3,7 +3,7 @@
 
 #[test]
 fn parse_pg_type_query_with_qualified_wildcard() {
-    use crate::query::{parse, Command};
+    use crate::server::query::{parse, Command};
 
     let sql = "SELECT t.oid,t.*,c.relkind,format_type(nullif(t.typbasetype, 0), t.typtypmod) as base_type_name, d.description \
 FROM pg_catalog.pg_type t \
@@ -26,7 +26,7 @@ AND (c.relkind IS NULL OR c.relkind = 'c') AND (et.typcategory IS NULL OR et.typ
 
 #[test]
 fn execute_full_pg_type_query_with_qualified_wildcard() {
-    use crate::query::{parse, Command};
+    use crate::server::query::{parse, Command};
     use crate::server::exec::run_select;
     use crate::storage::{Store, SharedStore};
     use super::udf_common::init_all_test_udfs;
@@ -52,7 +52,7 @@ fn execute_full_pg_type_query_with_qualified_wildcard() {
     assert!(q.base_table.is_some(), "parser did not set base_table for DBeaver query");
     // base alias should be 't'
     match q.base_table.as_ref().unwrap() {
-        crate::query::TableRef::Table { name: _, alias } => {
+        crate::server::query::TableRef::Table { name: _, alias } => {
             assert_eq!(alias.as_deref(), Some("t"), "expected base alias 't' for pg_catalog.pg_type");
         }
         other => panic!("expected base table, got {:?}", other),
@@ -90,7 +90,7 @@ fn execute_full_pg_type_query_with_qualified_wildcard() {
 
 #[test]
 fn execute_pg_namespace_with_join_and_regclass_order() {
-    use crate::query::{parse, Command};
+    use crate::server::query::{parse, Command};
     use crate::server::exec::run_select;
     use crate::storage::{Store, SharedStore};
     use super::udf_common::init_all_test_udfs;
@@ -129,7 +129,7 @@ fn execute_pg_namespace_with_join_and_regclass_order() {
 
 #[test]
 fn execute_dbeaver_pg_attribute_query_no_hang() {
-    use crate::query::{parse, Command};
+    use crate::server::query::{parse, Command};
     use crate::server::exec::run_select;
     use crate::storage::{Store, SharedStore};
     use super::udf_common::init_all_test_udfs;
@@ -161,7 +161,7 @@ fn execute_dbeaver_pg_attribute_query_no_hang() {
 
 #[test]
 fn execute_pg_roles_with_join_and_order() {
-    use crate::query::{parse, Command};
+    use crate::server::query::{parse, Command};
     use crate::server::exec::run_select;
     use crate::storage::{Store, SharedStore};
     use super::udf_common::init_all_test_udfs;

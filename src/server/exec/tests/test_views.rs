@@ -1,5 +1,5 @@
 #![allow(unused_imports)]
-use crate::{server::exec::exec_select::run_select, server::exec, storage::{Store, SharedStore}, query, query::Command};
+use crate::{server::exec::exec_select::run_select, server::exec, storage::{Store, SharedStore}, server::query, server::query::Command};
 use polars::prelude::*;
 
 #[test]

@@ -52,7 +52,7 @@ pub(crate) fn read_df_or_kv(store: &SharedStore, name: &str) -> anyhow::Result<D
     }
 }
 
-pub(crate) fn apply_order_and_limit(mut df: DataFrame, q: &crate::query::Query) -> Result<DataFrame> {
+pub(crate) fn apply_order_and_limit(mut df: DataFrame, q: &Query) -> Result<DataFrame> {
     if let Some(ob) = &q.order_by {
         if !ob.is_empty() {
             // Strict ORDER BY: all specified columns must be present in the DataFrame at this point.

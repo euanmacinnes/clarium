@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tracing::info;
 
-use crate::{query, storage::SharedStore};
+use crate::{server::query, storage::SharedStore};
 use crate::error::AppError;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

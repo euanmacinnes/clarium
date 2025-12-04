@@ -2,7 +2,7 @@ use anyhow::Result;
 use serde_json::Value;
 use std::path::Path;
 
-use system::query::Command;
+use crate::server::query::Command;
 use crate::scripts::{get_script_registry, scripts_dir_for};
 use crate::storage::SharedStore;
 

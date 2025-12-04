@@ -4,8 +4,8 @@ use anyhow::Result;
 use polars::prelude::*;
 use crate::tprintln;
 
-use crate::query::Query;
-use crate::query;
+use crate::server::query::query_common::Query;
+use crate::server::query;
 use crate::server::exec::exec_select::run_select_with_context;
 use crate::server::data_context::{DataContext, SelectStage};
 use crate::system; // for strict_projection flag

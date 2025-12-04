@@ -1,5 +1,5 @@
 use super::super::run_select;
-use crate::query::{self, Command};
+use crate::server::query::{self, Command};
 use crate::storage::{Store, SharedStore, Record};
 
 // System catalogs should be queryable without any user tables created.

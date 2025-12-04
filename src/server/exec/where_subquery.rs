@@ -2,7 +2,17 @@
 use anyhow::Result;
 use polars::prelude::*;
 
-use crate::query::WhereExpr;
+use crate::server::query::query_common::Query;
+use crate::server::query::query_common::WhereExpr;
+use crate::server::query::query_common::CompOp;
+use crate::server::query::query_common::ArithExpr as AE;
+use crate::server::query::query_common::ArithTerm as AT;
+use crate::server::query::query_common::WhereExpr as WE;
+use crate::server::query::query_common::ArithTerm;
+use crate::server::query::query_common::ArithExpr;
+use crate::server::query::query_common::DateFunc;
+use crate::server::query::query_common::StrSliceBound;
+use crate::server::query::query_common::JoinType;
 use crate::server::data_context::DataContext;
 use crate::storage::SharedStore;
 use crate::server::exec::exec_common::{build_where_expr};
@@ -21,7 +31,7 @@ pub(crate) fn where_contains_subquery(w: &WhereExpr) -> bool {
 /// Evaluate a WHERE expression into a boolean mask Series over df, with support for subqueries.
 /// The expression should already be qualified if needed by the caller.
 pub(crate) fn eval_where_mask(df: &DataFrame, ctx: &DataContext, store: &SharedStore, w: &WhereExpr) -> Result<BooleanChunked> {
-    use crate::query::WhereExpr as WE;
+    use crate::server::query::WhereExpr as WE;
     match w {
         WE::And(a, b) => {
             // If neither child contains subqueries, delegate the entire AND to Polars
@@ -112,7 +122,7 @@ pub(crate) fn eval_where_mask(df: &DataFrame, ctx: &DataContext, store: &SharedS
     }
 }
 
-fn eval_any_all(lhs: &polars::prelude::AnyValue, op: crate::query::CompOp, vals: &Vec<polars::prelude::AnyValue>, is_all: bool) -> Option<bool> {
+fn eval_any_all(lhs: &polars::prelude::AnyValue, op: CompOp, vals: &Vec<polars::prelude::AnyValue>, is_all: bool) -> Option<bool> {
     // SQL semantics:
     // ANY: true if any comparison is true; false if none true (empty -> false)
     // ALL: true if all comparisons are true; true for empty set; false if any false
@@ -134,7 +144,7 @@ fn eval_any_all(lhs: &polars::prelude::AnyValue, op: crate::query::CompOp, vals:
     } else if any_true { Some(true) } else { Some(false) }
 }
 
-fn compare_anyvalue(a: &polars::prelude::AnyValue, op: &crate::query::CompOp, b: &polars::prelude::AnyValue) -> Option<bool> {
+fn compare_anyvalue(a: &polars::prelude::AnyValue, op: &CompOp, b: &polars::prelude::AnyValue) -> Option<bool> {
     
     use polars::prelude::AnyValue as AV;
     match (a, b) {
@@ -156,13 +166,11 @@ fn compare_anyvalue(a: &polars::prelude::AnyValue, op: &crate::query::CompOp, b:
     }
 }
 
-fn cmp_f(a: f64, op: &crate::query::CompOp, b: f64) -> Option<bool> {
-    use crate::query::CompOp;
+fn cmp_f(a: f64, op: &CompOp, b: f64) -> Option<bool> {    
     Some(match *op { CompOp::Gt => a > b, CompOp::Ge => a >= b, CompOp::Lt => a < b, CompOp::Le => a <= b, CompOp::Eq => (a - b).abs() < f64::EPSILON, CompOp::Ne => (a - b).abs() >= f64::EPSILON, CompOp::Like | CompOp::NotLike => false })
 }
 
-fn cmp_s(a: &str, op: &crate::query::CompOp, b: &str) -> Option<bool> {
-    use crate::query::CompOp;
+fn cmp_s(a: &str, op: &CompOp, b: &str) -> Option<bool> {    
     Some(match *op {
         CompOp::Eq => a == b,
         CompOp::Ne => a != b,
@@ -176,8 +184,7 @@ fn cmp_s(a: &str, op: &crate::query::CompOp, b: &str) -> Option<bool> {
 
 /// Produce a cloned subquery where any column reference that resolves to an outer df column
 /// is replaced with a literal value from row i (for correlated subqueries).
-pub(crate) fn substitute_outer_refs_in_query(df: &DataFrame, row_idx: usize, sub: &crate::query::Query, ctx: &DataContext) -> anyhow::Result<crate::query::Query> {
-    use crate::query::{WhereExpr as WE, ArithExpr as AE, ArithTerm as AT};
+pub(crate) fn substitute_outer_refs_in_query(df: &DataFrame, row_idx: usize, sub: &Query, ctx: &DataContext) -> anyhow::Result<Query> {    
 
     // Try to resolve a column reference coming from the subquery that actually
     // points to the OUTER query. The outer DataFrame typically carries
@@ -299,7 +306,7 @@ pub(crate) fn substitute_outer_refs_in_query(df: &DataFrame, row_idx: usize, sub
             WE::Any { left, op, subquery, negated } => WE::Any { left: subst_arith(df, row_idx, left, inner_aliases, outer_aliases), op: op.clone(), subquery: Box::new(subst_query(df, row_idx, subquery, inner_aliases, outer_aliases)), negated: *negated },
         }
     }
-    fn subst_query(df: &DataFrame, row_idx: usize, q: &crate::query::Query, inner_aliases: &std::collections::HashSet<String>, outer_aliases: &std::collections::HashSet<String>) -> crate::query::Query {
+    fn subst_query(df: &DataFrame, row_idx: usize, q: &Query, inner_aliases: &std::collections::HashSet<String>, outer_aliases: &std::collections::HashSet<String>) -> Query {
         let mut out = q.clone();
         if let Some(w) = &q.where_clause { out.where_clause = Some(subst_where(df, row_idx, w, inner_aliases, outer_aliases)); }
         // project expressions

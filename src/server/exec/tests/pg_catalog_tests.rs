@@ -1,5 +1,5 @@
 use super::super::run_select;
-use crate::query::{self, Command};
+use crate::server::query::{self, Command};
 use crate::storage::{Store, SharedStore, Record};
 use super::udf_common::init_all_test_udfs;
 use std::collections::HashSet;

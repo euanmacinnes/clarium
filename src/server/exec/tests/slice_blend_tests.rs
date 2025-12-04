@@ -1,5 +1,5 @@
 use super::super::run_slice;
-use crate::query::{self, Command};
+use crate::server::query::{self, Command};
 use crate::storage::{Store, SharedStore, Record};
 use crate::server::data_context::DataContext;
 use serde_json::json;

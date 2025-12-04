@@ -1,4 +1,7 @@
-use super::{parse_select, Query};
+use crate::server::query::query_common::Query;
+use crate::server::query::query_common::CTE;
+use crate::server::query::query_common::TableRef;
+use crate::server::query;
 
 fn assert_all_none(q: &Query) {
     assert!(q.by_window_ms.is_none(), "by_window_ms leaked: {:?}", q.by_window_ms);
@@ -185,7 +188,7 @@ fn test_from_subquery_with_as() {
 
 #[test]
 fn test_from_subquery_without_as() {
-    use crate::query::{parse, Command, TableRef};
+    use crate::server::query::{parse, Command, TableRef};
     
     let sql = "SELECT t.name FROM (SELECT name FROM users) t";
     let result = parse(sql);

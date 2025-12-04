@@ -55,12 +55,12 @@ fn udf_autoload_can_execute_both() {
 
     // Simple selects invoking UDFs; engine paths should find them via global registry
     let sql1 = "SELECT format_type(23, 0) AS t"; // integer
-    let q1 = match crate::query::parse(sql1).unwrap() { crate::query::Command::Select(q) => q, _ => unreachable!() };
+    let q1 = match crate::server::query::parse(sql1).unwrap() { crate::server::query::Command::Select(q) => q, _ => unreachable!() };
     let df1 = run_select(&shared, &q1).expect("format_type should execute");
     assert_eq!(df1.column("t").unwrap().str().unwrap().get(0).unwrap(), "integer");
 
     let sql2 = "SELECT nullif('a','a') as n1, nullif('a','b') as n2";
-    let q2 = match crate::query::parse(sql2).unwrap() { crate::query::Command::Select(q) => q, _ => unreachable!() };
+    let q2 = match crate::server::query::parse(sql2).unwrap() { crate::server::query::Command::Select(q) => q, _ => unreachable!() };
     let df2 = run_select(&shared, &q2).expect("nullif should execute");
     // n1 should be null, n2 should be 'a' (nullif returns first arg if they differ)
     // Both columns may be null-typed, cast to String to check
@@ -70,7 +70,7 @@ fn udf_autoload_can_execute_both() {
     assert_eq!(n2_casted.str().unwrap().get(0).unwrap(), "a");
 
     let sql3 = "SELECT pg_catalog.pg_get_expr('CHECK (value > 0)', 12345) as expr";
-    let q3 = match crate::query::parse(sql3).unwrap() { crate::query::Command::Select(q) => q, _ => unreachable!() };
+    let q3 = match crate::server::query::parse(sql3).unwrap() { crate::server::query::Command::Select(q) => q, _ => unreachable!() };
     let df3 = run_select(&shared, &q3).expect("pg_catalog.pg_get_expr should execute");
     assert_eq!(df3.column("expr").unwrap().str().unwrap().get(0).unwrap(), "CHECK (value > 0)");
 }
@@ -89,13 +89,13 @@ fn test_pg_get_expr_execution() {
 
     // Test 1: Basic expression text passthrough
     let sql1 = "SELECT pg_catalog.pg_get_expr('CHECK (value > 0)', 12345) as expr";
-    let q1 = match crate::query::parse(sql1).unwrap() { crate::query::Command::Select(q) => q, _ => unreachable!() };
+    let q1 = match crate::server::query::parse(sql1).unwrap() { crate::server::query::Command::Select(q) => q, _ => unreachable!() };
     let df1 = run_select(&shared, &q1).expect("pg_catalog.pg_get_expr should execute");
     assert_eq!(df1.column("expr").unwrap().str().unwrap().get(0).unwrap(), "CHECK (value > 0)");
 
     // Test 2: NULL handling
     let sql2 = "SELECT pg_catalog.pg_get_expr(NULL, 0) as expr";
-    let q2 = match crate::query::parse(sql2).unwrap() { crate::query::Command::Select(q) => q, _ => unreachable!() };
+    let q2 = match crate::server::query::parse(sql2).unwrap() { crate::server::query::Command::Select(q) => q, _ => unreachable!() };
     let df2 = run_select(&shared, &q2).expect("pg_catalog.pg_get_expr with NULL should execute");
     let expr_col = df2.column("expr").unwrap().cast(&polars::prelude::DataType::String).unwrap();
     assert!(expr_col.str().unwrap().get(0).is_none(), "pg_get_expr(NULL) should return NULL");

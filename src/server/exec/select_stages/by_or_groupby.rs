@@ -8,7 +8,13 @@ use tracing::debug;
 use crate::tprintln;
 
 use crate::server::data_context::{DataContext, SelectStage};
-use crate::query::{Query, AggFunc};
+use crate::server::query::query_common::Query;
+use crate::server::query::query_common::AggFunc;
+use crate::server::query::query_common::DateFunc;
+use crate::server::query::query_common::ArithExpr;
+use crate::server::query::query_common::StrSliceBound;
+use crate::server::query::query_common::ArithExpr as AE;
+use crate::server::query::query_common::ArithTerm as AT;
 use crate::server::exec::exec_common::build_arith_expr;
 use crate::scripts::get_script_registry;
 use crate::server::exec::select_stages::having::apply_having_with_validation;
@@ -82,8 +88,7 @@ pub fn by_or_groupby(store: &SharedStore, df: DataFrame, q: &Query, ctx: &mut Da
                         let qa = {
                             // Qualify using current part df context; if fails, fallback to original df for resolution
                             
-                            fn qualify(df: &DataFrame, ctx: &DataContext, a: &crate::query::ArithExpr) -> anyhow::Result<crate::query::ArithExpr> {
-                                use crate::query::{ArithExpr as AE, ArithTerm as AT};
+                            fn qualify(df: &DataFrame, ctx: &DataContext, a: &ArithExpr) -> anyhow::Result<ArithExpr> {                                
                                 Ok(match a {
                                     AE::Term(AT::Col { name, previous: false }) => {
                                         let qn = ctx.resolve_column(df, name).map_err(|_| crate::server::data_context::DataContext::column_not_found_error(name, "BY SLICE", df))?;
@@ -96,8 +101,7 @@ pub fn by_or_groupby(store: &SharedStore, df: DataFrame, q: &Query, ctx: &mut Da
                                     AE::BinOp { left, op, right } => AE::BinOp { left: Box::new(qualify(df, ctx, left)?), op: op.clone(), right: Box::new(qualify(df, ctx, right)?) },
                                     AE::Concat(parts) => AE::Concat(parts.iter().map(|p| qualify(df, ctx, p)).collect::<anyhow::Result<Vec<_>>>()?),
                                     AE::Call { name, args } => AE::Call { name: name.clone(), args: args.iter().map(|p| qualify(df, ctx, p)).collect::<anyhow::Result<Vec<_>>>()? },
-                                    AE::Func(dfm) => {
-                                        use crate::query::DateFunc;
+                                    AE::Func(dfm) => {                                        
                                         match dfm {
                                             DateFunc::DatePart(part, a1) => AE::Func(DateFunc::DatePart(part.clone(), Box::new(qualify(df, ctx, a1)?))),
                                             DateFunc::DateAdd(part, a1, a2) => AE::Func(DateFunc::DateAdd(part.clone(), Box::new(qualify(df, ctx, a1)?), Box::new(qualify(df, ctx, a2)?))),
@@ -238,8 +242,7 @@ pub fn by_or_groupby(store: &SharedStore, df: DataFrame, q: &Query, ctx: &mut Da
         }
         // Column resolver helpers
         fn resolve_col_name_ctx(df: &DataFrame, ctx: &DataContext, name: &str) -> anyhow::Result<String> { ctx.resolve_column_at_stage(df, name, SelectStage::ByOrGroupBy) }
-        fn qualify_arith_ctx(df: &DataFrame, ctx: &DataContext, a: &crate::query::ArithExpr, clause: &str) -> anyhow::Result<crate::query::ArithExpr> {
-            use crate::query::{ArithExpr as AE, ArithTerm as AT};
+        fn qualify_arith_ctx(df: &DataFrame, ctx: &DataContext, a: &ArithExpr, clause: &str) -> anyhow::Result<ArithExpr> {            
             Ok(match a {
                 AE::Term(AT::Col { name, previous: false }) => {
                     let qn = resolve_col_name_ctx(df, ctx, name).map_err(|_| crate::server::data_context::DataContext::column_not_found_error(name, clause, df))?;
@@ -252,16 +255,14 @@ pub fn by_or_groupby(store: &SharedStore, df: DataFrame, q: &Query, ctx: &mut Da
                 AE::BinOp { left, op, right } => AE::BinOp { left: Box::new(qualify_arith_ctx(df, ctx, left, clause)?), op: op.clone(), right: Box::new(qualify_arith_ctx(df, ctx, right, clause)?) },
                 AE::Concat(parts) => AE::Concat(parts.iter().map(|p| qualify_arith_ctx(df, ctx, p, clause)).collect::<anyhow::Result<Vec<_>>>()?),
                 AE::Call { name, args } => AE::Call { name: name.clone(), args: args.iter().map(|p| qualify_arith_ctx(df, ctx, p, clause)).collect::<anyhow::Result<Vec<_>>>()? },
-                AE::Func(dfm) => {
-                    use crate::query::DateFunc;
+                AE::Func(dfm) => {                    
                     match dfm {
                         DateFunc::DatePart(part, a1) => AE::Func(DateFunc::DatePart(part.clone(), Box::new(qualify_arith_ctx(df, ctx, a1, clause)?))),
                         DateFunc::DateAdd(part, a1, a2) => AE::Func(DateFunc::DateAdd(part.clone(), Box::new(qualify_arith_ctx(df, ctx, a1, clause)?), Box::new(qualify_arith_ctx(df, ctx, a2, clause)?))),
                         DateFunc::DateDiff(part, a1, a2) => AE::Func(DateFunc::DateDiff(part.clone(), Box::new(qualify_arith_ctx(df, ctx, a1, clause)?), Box::new(qualify_arith_ctx(df, ctx, a2, clause)?))),
                     }
                 }
-                AE::Slice { base, start, stop, step } => {
-                    use crate::query::StrSliceBound;
+                AE::Slice { base, start, stop, step } => {                    
                     let qbase = Box::new(qualify_arith_ctx(df, ctx, base, clause)?);
                     let qstart = match start {
                         Some(StrSliceBound::Pattern { expr, include }) => Some(StrSliceBound::Pattern { expr: Box::new(qualify_arith_ctx(df, ctx, expr, clause)?), include: *include }),
@@ -296,8 +297,7 @@ pub fn by_or_groupby(store: &SharedStore, df: DataFrame, q: &Query, ctx: &mut Da
             }
         }
         // Validate UDF presence in BY expressions
-        fn collect_udf_names_arith(a: &crate::query::ArithExpr, out: &mut Vec<String>) {
-            use crate::query::ArithExpr as AE;
+        fn collect_udf_names_arith(a: &ArithExpr, out: &mut Vec<String>) {            
             match a {
                 AE::Call { name, args } => { out.push(name.clone()); for x in args { collect_udf_names_arith(x, out); } },
                 AE::BinOp { left, right, .. } => { collect_udf_names_arith(left, out); collect_udf_names_arith(right, out); },
@@ -414,7 +414,7 @@ pub fn by_or_groupby(store: &SharedStore, df: DataFrame, q: &Query, ctx: &mut Da
             if item.func.is_none() && item.str_func.is_none() {
                 let mut is_udf_agg = false;
                 if let Some(ex) = &item.expr {
-                    if let crate::query::ArithExpr::Call { name: _name, .. } = ex {
+                    if let ArithExpr::Call { name: _name, .. } = ex {
                         // Treat function call expressions as aggregate UDFs; defer validation until execution.
                         is_udf_agg = true;
                     }
@@ -482,12 +482,11 @@ pub fn by_or_groupby(store: &SharedStore, df: DataFrame, q: &Query, ctx: &mut Da
         // Aggregations
         let mut agg_cols: Vec<Expr> = Vec::new();
         // Track aggregate UDF items to evaluate post-aggregation
-        struct UdfAggPlan { base_name: String, func_name: String, ret_types: Vec<DataType>, args: Vec<crate::query::ArithExpr> }
+        struct UdfAggPlan { base_name: String, func_name: String, ret_types: Vec<DataType>, args: Vec<ArithExpr> }
         let mut udf_plans: Vec<UdfAggPlan> = Vec::new();
         let time_col = ctx.resolve_column_at_stage(&df, "_time", SelectStage::ByOrGroupBy).unwrap_or_else(|_| "_time".to_string());
         // Helper: qualify arithmetic expressions against this stage
-        fn qualify_arith_ctx(df: &DataFrame, ctx: &DataContext, a: &crate::query::ArithExpr, clause: &str) -> anyhow::Result<crate::query::ArithExpr> {
-            use crate::query::{ArithExpr as AE, ArithTerm as AT};
+        fn qualify_arith_ctx(df: &DataFrame, ctx: &DataContext, a: &ArithExpr, clause: &str) -> anyhow::Result<ArithExpr> {            
             Ok(match a {
                 AE::Term(AT::Col { name, previous: false }) => {
                     let qn = ctx.resolve_column_at_stage(df, name, SelectStage::ByOrGroupBy)
@@ -501,16 +500,14 @@ pub fn by_or_groupby(store: &SharedStore, df: DataFrame, q: &Query, ctx: &mut Da
                 AE::BinOp { left, op, right } => AE::BinOp { left: Box::new(qualify_arith_ctx(df, ctx, left, clause)?), op: op.clone(), right: Box::new(qualify_arith_ctx(df, ctx, right, clause)?) },
                 AE::Concat(parts) => AE::Concat(parts.iter().map(|p| qualify_arith_ctx(df, ctx, p, clause)).collect::<anyhow::Result<Vec<_>>>()?),
                 AE::Call { name, args } => AE::Call { name: name.clone(), args: args.iter().map(|p| qualify_arith_ctx(df, ctx, p, clause)).collect::<anyhow::Result<Vec<_>>>()? },
-                AE::Func(dfm) => {
-                    use crate::query::DateFunc;
+                AE::Func(dfm) => {                    
                     match dfm {
                         DateFunc::DatePart(part, a1) => AE::Func(DateFunc::DatePart(part.clone(), Box::new(qualify_arith_ctx(df, ctx, a1, clause)?))),
                         DateFunc::DateAdd(part, a1, a2) => AE::Func(DateFunc::DateAdd(part.clone(), Box::new(qualify_arith_ctx(df, ctx, a1, clause)?), Box::new(qualify_arith_ctx(df, ctx, a2, clause)?))),
                         DateFunc::DateDiff(part, a1, a2) => AE::Func(DateFunc::DateDiff(part.clone(), Box::new(qualify_arith_ctx(df, ctx, a1, clause)?), Box::new(qualify_arith_ctx(df, ctx, a2, clause)?))),
                     }
                 }
-                AE::Slice { base, start, stop, step } => {
-                    use crate::query::StrSliceBound;
+                AE::Slice { base, start, stop, step } => {                    
                     let qbase = Box::new(qualify_arith_ctx(df, ctx, base, clause)?);
                     let qstart = match start {
                         Some(StrSliceBound::Pattern { expr, include }) => Some(StrSliceBound::Pattern { expr: Box::new(qualify_arith_ctx(df, ctx, expr, clause)?), include: *include }),
@@ -588,7 +585,7 @@ pub fn by_or_groupby(store: &SharedStore, df: DataFrame, q: &Query, ctx: &mut Da
                 agg_cols.push(e);
             } else if let Some(ex) = &item.expr {
                 // Aggregate UDFs are handled post-aggregation. Detect and record plan.
-                if let crate::query::ArithExpr::Call { name, args } = ex {
+                if let ArithExpr::Call { name, args } = ex {
                     let mut consider_as_aggregate = false;
                     let mut ret_types_hint: Vec<DataType> = Vec::new();
                     if let Some(reg) = get_script_registry() {
@@ -608,7 +605,7 @@ pub fn by_or_groupby(store: &SharedStore, df: DataFrame, q: &Query, ctx: &mut Da
                     }
                     if consider_as_aggregate {
                         // qualify args against this stage
-                        let qargs: Vec<crate::query::ArithExpr> = args.iter().map(|a| qualify_arith_ctx(&df, ctx, a, "GROUP BY")).collect::<anyhow::Result<Vec<_>>>().unwrap_or_else(|_| args.clone());
+                        let qargs: Vec<ArithExpr> = args.iter().map(|a| qualify_arith_ctx(&df, ctx, a, "GROUP BY")).collect::<anyhow::Result<Vec<_>>>().unwrap_or_else(|_| args.clone());
                         let base_name = item.alias.clone().unwrap_or_else(|| name.clone());
                         udf_plans.push(UdfAggPlan { base_name, func_name: name.clone(), ret_types: ret_types_hint, args: qargs });
                     }

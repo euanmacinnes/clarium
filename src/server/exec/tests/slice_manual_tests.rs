@@ -1,5 +1,5 @@
 use super::super::run_slice;
-use crate::query::{self, Command};
+use crate::server::query::{self, Command};
 use crate::storage::SharedStore;
 use crate::server::data_context::DataContext;
 

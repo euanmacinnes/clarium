@@ -37,7 +37,7 @@ fn test_use_affects_view_ddl() {
     assert!(def.to_uppercase().contains("SELECT"));
 
     // Selecting from the unqualified view should work using session defaults
-    let sel = match crate::query::parse("SELECT v FROM v1 ORDER BY v").unwrap() { crate::query::Command::Select(q) => q, _ => unreachable!() };
+    let sel = match crate::server::query::parse("SELECT v FROM v1 ORDER BY v").unwrap() { crate::server::query::Command::Select(q) => q, _ => unreachable!() };
     let df = crate::server::exec::exec_select::run_select(&shared, &sel).unwrap();
     assert_eq!(df.height(), 2);
 

@@ -6,7 +6,21 @@ use anyhow::Result;
 use polars::prelude::*;
 
 use crate::server::data_context::{DataContext, SelectStage};
-use crate::query::{Query, AggFunc, ArithExpr, StrFunc};
+use crate::server::query::query_common::Query;
+use crate::server::query::query_common::WhereExpr;
+use crate::server::query::query_common::AggFunc;
+use crate::server::query::query_common::StrFunc;
+use crate::server::query::query_common::CompOp;
+use crate::server::query::query_common::ArithExpr as AE;
+use crate::server::query::query_common::ArithTerm as AT;
+use crate::server::query::query_common::WhereExpr as WE;
+use crate::server::query::query_common::ArithTerm;
+use crate::server::query::query_common::ArithExpr;
+use crate::server::query::query_common::DateFunc;
+use crate::server::query::query_common::WindowFunc;
+use crate::server::query::query_common::TableRef;
+use crate::server::query::query_common::StrSliceBound;
+use crate::server::query::query_common::JoinType;
 use crate::server::exec::exec_common::build_arith_expr;
 use crate::scripts::get_script_registry;
 
@@ -14,8 +28,7 @@ pub fn project_select(df: DataFrame, q: &Query, ctx: &mut DataContext) -> Result
     // Clause-aware validation for SELECT projection against incoming DataFrame
     
     // Helpers to collect column and UDF references from expressions
-    fn collect_cols_arith(a: &crate::query::ArithExpr, out: &mut Vec<String>) {
-        use crate::query::{ArithExpr as AE, ArithTerm as AT};
+    fn collect_cols_arith(a: &ArithExpr, out: &mut Vec<String>) {        
         match a {
             AE::Term(AT::Col { name, previous }) => { if !*previous { out.push(name.clone()); } },
             AE::Cast { expr, .. } => { collect_cols_arith(expr, out); },
@@ -35,8 +48,7 @@ pub fn project_select(df: DataFrame, q: &Query, ctx: &mut DataContext) -> Result
             AE::Term(_) => {},
         }
     }
-    fn collect_udf_names_arith(a: &crate::query::ArithExpr, out: &mut Vec<String>) {
-        use crate::query::ArithExpr as AE;
+    fn collect_udf_names_arith(a: &ArithExpr, out: &mut Vec<String>) {        
         match a {
             AE::Call { name, args } => { out.push(name.clone()); for x in args { collect_udf_names_arith(x, out); } },
             AE::Cast { expr, .. } => { collect_udf_names_arith(expr, out); },
@@ -58,8 +70,7 @@ pub fn project_select(df: DataFrame, q: &Query, ctx: &mut DataContext) -> Result
         ctx.resolve_column_at_stage(df, name, SelectStage::ProjectSelect)
     }
     // Qualify arithmetic expressions against current DF/Context
-    fn qualify_arith_ctx(df: &DataFrame, ctx: &DataContext, a: &crate::query::ArithExpr, clause: &str) -> anyhow::Result<crate::query::ArithExpr> {
-        use crate::query::{ArithExpr as AE, ArithTerm as AT};
+    fn qualify_arith_ctx(df: &DataFrame, ctx: &DataContext, a: &ArithExpr, clause: &str) -> anyhow::Result<ArithExpr> {        
         Ok(match a {
             AE::Term(AT::Col { name, previous }) => {
                 let qn = resolve_col_name_ctx(df, ctx, name).map_err(|_| crate::server::data_context::DataContext::column_not_found_error(name, clause, df))?;
@@ -73,15 +84,14 @@ pub fn project_select(df: DataFrame, q: &Query, ctx: &mut DataContext) -> Result
             AE::Concat(parts) => AE::Concat(parts.iter().map(|p| qualify_arith_ctx(df, ctx, p, clause)).collect::<anyhow::Result<Vec<_>>>()?),
             AE::Call { name, args } => AE::Call { name: name.clone(), args: args.iter().map(|p| qualify_arith_ctx(df, ctx, p, clause)).collect::<anyhow::Result<Vec<_>>>()? },
             AE::Func(dfm) => {
-                use crate::query::DateFunc;
+                use DateFunc;
                 match dfm {
                     DateFunc::DatePart(part, a1) => AE::Func(DateFunc::DatePart(part.clone(), Box::new(qualify_arith_ctx(df, ctx, a1, clause)?))),
                     DateFunc::DateAdd(part, a1, a2) => AE::Func(DateFunc::DateAdd(part.clone(), Box::new(qualify_arith_ctx(df, ctx, a1, clause)?), Box::new(qualify_arith_ctx(df, ctx, a2, clause)?))),
                     DateFunc::DateDiff(part, a1, a2) => AE::Func(DateFunc::DateDiff(part.clone(), Box::new(qualify_arith_ctx(df, ctx, a1, clause)?), Box::new(qualify_arith_ctx(df, ctx, a2, clause)?))),
                 }
             }
-            AE::Slice { base, start, stop, step } => {
-                use crate::query::StrSliceBound;
+            AE::Slice { base, start, stop, step } => {                
                 let qbase = Box::new(qualify_arith_ctx(df, ctx, base, clause)?);
                 let qstart = match start {
                     Some(StrSliceBound::Pattern { expr, include }) => Some(StrSliceBound::Pattern { expr: Box::new(qualify_arith_ctx(df, ctx, expr, clause)?), include: *include }),
@@ -105,8 +115,7 @@ pub fn project_select(df: DataFrame, q: &Query, ctx: &mut DataContext) -> Result
             }
         })
     }
-    fn qualify_where_ctx(df: &DataFrame, ctx: &DataContext, w: &crate::query::WhereExpr, clause: &str) -> anyhow::Result<crate::query::WhereExpr> {
-        use crate::query::WhereExpr as WE;
+    fn qualify_where_ctx(df: &DataFrame, ctx: &DataContext, w: &WhereExpr, clause: &str) -> anyhow::Result<WhereExpr> {        
         Ok(match w {
             WE::Comp { left, op, right } => WE::Comp { left: qualify_arith_ctx(df, ctx, left, clause)?, op: op.clone(), right: qualify_arith_ctx(df, ctx, right, clause)? },
             WE::And(a, b) => WE::And(Box::new(qualify_where_ctx(df, ctx, a, clause)?), Box::new(qualify_where_ctx(df, ctx, b, clause)?)),
@@ -165,7 +174,7 @@ pub fn project_select(df: DataFrame, q: &Query, ctx: &mut DataContext) -> Result
             }
             // 2) Aggregate UDFs: if aliased and outputs exist under function-name base, rename to alias base
             if let Some(ex) = &item.expr {
-                if let crate::query::ArithExpr::Call { name, .. } = ex {
+                if let ArithExpr::Call { name, .. } = ex {
                     if let Some(alias) = &item.alias {
                         if let Some(reg) = get_script_registry() {
                             if let Some(meta) = reg.get_meta(name) {
@@ -356,8 +365,7 @@ pub fn project_select(df: DataFrame, q: &Query, ctx: &mut DataContext) -> Result
             // Add ORDER BY expressions
             let mut temp_col_counter = 0;
             if let Some(order_exprs) = &wspec.order_by {
-                for (expr, asc) in order_exprs {
-                    use crate::query::{ArithExpr as AE, ArithTerm as AT};
+                for (expr, asc) in order_exprs {                    
                     let col_name = if let AE::Term(AT::Col { name, previous: false }) = expr {
                         resolve_col_name_ctx(&df, ctx, name).unwrap_or_else(|_| name.clone())
                     } else {
@@ -426,7 +434,7 @@ pub fn project_select(df: DataFrame, q: &Query, ctx: &mut DataContext) -> Result
             for src in &ctx.sources {
                 let eff = src.effective_name().to_string();
                 match src {
-                    crate::query::TableRef::Table { name, alias } => {
+                    TableRef::Table { name, alias } => {
                         if eff == qualifier {
                             prefix_match = Some(eff);
                             break;
@@ -441,7 +449,7 @@ pub fn project_select(df: DataFrame, q: &Query, ctx: &mut DataContext) -> Result
                             break;
                         }
                     }
-                    crate::query::TableRef::Subquery { alias, .. } => {
+                    TableRef::Subquery { alias, .. } => {
                         if alias == qualifier {
                             prefix_match = Some(eff);
                             break;
@@ -501,8 +509,7 @@ pub fn project_select(df: DataFrame, q: &Query, ctx: &mut DataContext) -> Result
             out_cols.push(s);
             user_generated.push(name);
         } else if item.window_func.is_some() {
-            // Window function execution - DataFrame already sorted by first pass
-            use crate::query::WindowFunc;
+            // Window function execution - DataFrame already sorted by first pass            
             let wfunc = item.window_func.as_ref().unwrap();
             let wspec = item.window_spec.as_ref().ok_or_else(|| anyhow::anyhow!("Window function requires OVER clause"))?;
             
@@ -752,9 +759,9 @@ pub fn project_select(df: DataFrame, q: &Query, ctx: &mut DataContext) -> Result
                     ArithExpr::Func(dfm) => {
                         // Derive a friendly label for date functions to aid tests and UX
                         match dfm {
-                            crate::query::DateFunc::DateAdd(_, _, _) => Some("DATEADD".to_string()),
-                            crate::query::DateFunc::DatePart(_, _) => Some("DATEPART".to_string()),
-                            crate::query::DateFunc::DateDiff(_, _, _) => Some("DATEDIFF".to_string()),
+                            DateFunc::DateAdd(_, _, _) => Some("DATEADD".to_string()),
+                            DateFunc::DatePart(_, _) => Some("DATEPART".to_string()),
+                            DateFunc::DateDiff(_, _, _) => Some("DATEDIFF".to_string()),
                         }
                     }
                     ArithExpr::Slice { .. } => None,

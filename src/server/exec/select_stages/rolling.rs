@@ -5,7 +5,19 @@ use anyhow::Result;
 use polars::prelude::*;
 
 use crate::server::data_context::{DataContext, SelectStage};
-use crate::query::{Query, AggFunc};
+use crate::server::query::query_common::Query;
+use crate::server::query::query_common::WhereExpr;
+use crate::server::query::query_common::CompOp;
+use crate::server::query::query_common::ArithExpr as AE;
+use crate::server::query::query_common::ArithTerm as AT;
+use crate::server::query::query_common::WhereExpr as WE;
+use crate::server::query::query_common::ArithTerm;
+use crate::server::query::query_common::AggFunc;
+use crate::server::query::query_common::ArithExpr;
+use crate::server::query::query_common::DateFunc;
+use crate::server::query::query_common::WindowFunc;
+use crate::server::query::query_common::StrSliceBound;
+use crate::server::query::query_common::JoinType;
 
 pub fn rolling(mut df: DataFrame, q: &Query, ctx: &mut DataContext) -> Result<DataFrame> {
     let win = q.rolling_window_ms.ok_or_else(|| anyhow::anyhow!("ROLLING BY requires a window"))?;
@@ -13,7 +25,7 @@ pub fn rolling(mut df: DataFrame, q: &Query, ctx: &mut DataContext) -> Result<Da
     if q.select.iter().any(|i| i.str_func.is_some()) {
         anyhow::bail!("String functions are not supported with ROLLING BY window");
     }
-    if q.select.iter().any(|i| match &i.expr { Some(crate::query::ArithExpr::Term(crate::query::ArithTerm::Col { .. })) => false, Some(_) => true, None => false }) {
+    if q.select.iter().any(|i| match &i.expr { Some(ArithExpr::Term(ArithTerm::Col { .. })) => false, Some(_) => true, None => false }) {
         anyhow::bail!("ROLLING BY currently supports only simple columns inside aggregate functions");
     }
 

@@ -1,5 +1,14 @@
+use tracing::debug;
+use crate::server::query::query_common::Query;
+use crate::server::query::query_common::CTE;
+use crate::server::query::query_common::TableRef;
+use crate::server::query::query_common::JoinType;
+use crate::server::query::query_common::JoinClause;
+use regex::Regex;
 
-fn split_union_queries(input: &str) -> Result<(Vec<&str>, bool)> {
+
+
+pub fn split_union_queries(input: &str) -> Result<(Vec<&str>, bool)> {
     // Split top-level SELECT statements by UNION or UNION ALL, respecting parentheses and quotes.
     let mut parts: Vec<&str> = Vec::new();
     let mut start = 0usize;
