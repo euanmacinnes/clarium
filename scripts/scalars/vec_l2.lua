@@ -9,6 +9,21 @@ end
 
 local function parse_vec(s)
     if s == nil then return nil end
+    local t = type(s)
+    if t == "table" then
+        local arr = {}
+        for i = 1, #s do
+            local v = s[i]
+            local num = tonumber(v)
+            if num == nil then return nil end
+            arr[#arr+1] = num
+        end
+        if #arr == 0 then return nil end
+        return arr
+    end
+    if t == "number" then
+        return { s }
+    end
     s = tostring(s)
     s = trim(s)
     if (#s >= 2) then

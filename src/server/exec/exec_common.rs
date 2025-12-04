@@ -493,15 +493,14 @@ pub fn build_arith_expr(a: &ArithExpr, ctx: &crate::server::data_context::DataCo
             }
 
             // Build argument expressions and wrap them into a Struct to access all arg values in the map closure.
-            // For vector-similarity UDFs, coerce args to String to align with Lua parsers that expect strings.
+            // For vector-similarity UDFs, allow native arrays (Polars List) to flow into Lua as tables; no forced coercion.
             let mut arg_exprs: Vec<Expr> = Vec::with_capacity(args.len());
             let mut field_names: Vec<String> = Vec::with_capacity(args.len());
-            let is_vec_udf = matches!(name_lc.as_str(), "cosine_sim" | "vec_l2");
+            let _is_vec_udf = matches!(name_lc.as_str(), "cosine_sim" | "vec_l2" | "vec_ip");
             for (i, a) in args.iter().enumerate() {
                 let fname = format!("__arg{}", i);
                 field_names.push(fname.clone());
                 let mut built = build_arith_expr(a, ctx);
-                if is_vec_udf { built = built.cast(DataType::String); }
                 arg_exprs.push(built.alias(&fname));
             }
             let struct_expr = polars::lazy::dsl::as_struct(arg_exprs);
@@ -546,6 +545,25 @@ pub fn build_arith_expr(a: &ArithExpr, ctx: &crate::server::data_context::DataCo
                                                 polars::prelude::AnyValue::Float64(v) => LVal::Number(v),
                                                 polars::prelude::AnyValue::String(s) => LVal::String(lua.create_string(s)?),
                                                 polars::prelude::AnyValue::StringOwned(ref s) => LVal::String(lua.create_string(s.as_str())?),
+                                                polars::prelude::AnyValue::List(ref inner) => {
+                                                    // Convert Polars List to Lua array-style table
+                                                    let tbl = lua.create_table()?;
+                                                    let ser = inner; // Series
+                                                    let len_list = ser.len();
+                                                    for li in 0..len_list {
+                                                        let av2 = ser.get(li).unwrap_or(polars::prelude::AnyValue::Null);
+                                                        match av2 {
+                                                            polars::prelude::AnyValue::Null => { tbl.set(li as i64 + 1, mlua::Value::Nil)?; }
+                                                            polars::prelude::AnyValue::Boolean(b) => { tbl.set(li as i64 + 1, mlua::Value::Boolean(b))?; }
+                                                            polars::prelude::AnyValue::Int64(v) => { tbl.set(li as i64 + 1, mlua::Value::Integer(v))?; }
+                                                            polars::prelude::AnyValue::Float64(v) => { tbl.set(li as i64 + 1, mlua::Value::Number(v))?; }
+                                                            polars::prelude::AnyValue::String(s) => { tbl.set(li as i64 + 1, mlua::Value::String(lua.create_string(s)?))?; }
+                                                            polars::prelude::AnyValue::StringOwned(ref s) => { tbl.set(li as i64 + 1, mlua::Value::String(lua.create_string(s.as_str())?))?; }
+                                                            _ => { tbl.set(li as i64 + 1, mlua::Value::Nil)?; }
+                                                        }
+                                                    }
+                                                    LVal::Table(tbl)
+                                                }
                                                 _ => LVal::Nil,
                                             };
                                             mvals.push_front(lv);
@@ -574,6 +592,24 @@ pub fn build_arith_expr(a: &ArithExpr, ctx: &crate::server::data_context::DataCo
                                                 polars::prelude::AnyValue::Float64(v) => LVal::Number(v),
                                                 polars::prelude::AnyValue::String(s) => LVal::String(lua.create_string(s)?),
                                                 polars::prelude::AnyValue::StringOwned(ref s) => LVal::String(lua.create_string(s.as_str())?),
+                                                polars::prelude::AnyValue::List(ref inner) => {
+                                                    let tbl = lua.create_table()?;
+                                                    let ser = inner;
+                                                    let len_list = ser.len();
+                                                    for li in 0..len_list {
+                                                        let av2 = ser.get(li).unwrap_or(polars::prelude::AnyValue::Null);
+                                                        match av2 {
+                                                            polars::prelude::AnyValue::Null => { tbl.set(li as i64 + 1, mlua::Value::Nil)?; }
+                                                            polars::prelude::AnyValue::Boolean(b) => { tbl.set(li as i64 + 1, mlua::Value::Boolean(b))?; }
+                                                            polars::prelude::AnyValue::Int64(v) => { tbl.set(li as i64 + 1, mlua::Value::Integer(v))?; }
+                                                            polars::prelude::AnyValue::Float64(v) => { tbl.set(li as i64 + 1, mlua::Value::Number(v))?; }
+                                                            polars::prelude::AnyValue::String(s) => { tbl.set(li as i64 + 1, mlua::Value::String(lua.create_string(s)?))?; }
+                                                            polars::prelude::AnyValue::StringOwned(ref s) => { tbl.set(li as i64 + 1, mlua::Value::String(lua.create_string(s.as_str())?))?; }
+                                                            _ => { tbl.set(li as i64 + 1, mlua::Value::Nil)?; }
+                                                        }
+                                                    }
+                                                    LVal::Table(tbl)
+                                                }
                                                 _ => LVal::Nil,
                                             };
                                             mvals.push_front(lv);
@@ -602,6 +638,24 @@ pub fn build_arith_expr(a: &ArithExpr, ctx: &crate::server::data_context::DataCo
                                                 polars::prelude::AnyValue::Float64(v) => LVal::Number(v),
                                                 polars::prelude::AnyValue::String(s) => LVal::String(lua.create_string(s)?),
                                                 polars::prelude::AnyValue::StringOwned(ref s) => LVal::String(lua.create_string(s.as_str())?),
+                                                polars::prelude::AnyValue::List(ref inner) => {
+                                                    let tbl = lua.create_table()?;
+                                                    let ser = inner;
+                                                    let len_list = ser.len();
+                                                    for li in 0..len_list {
+                                                        let av2 = ser.get(li).unwrap_or(polars::prelude::AnyValue::Null);
+                                                        match av2 {
+                                                            polars::prelude::AnyValue::Null => { tbl.set(li as i64 + 1, mlua::Value::Nil)?; }
+                                                            polars::prelude::AnyValue::Boolean(b) => { tbl.set(li as i64 + 1, mlua::Value::Boolean(b))?; }
+                                                            polars::prelude::AnyValue::Int64(v) => { tbl.set(li as i64 + 1, mlua::Value::Integer(v))?; }
+                                                            polars::prelude::AnyValue::Float64(v) => { tbl.set(li as i64 + 1, mlua::Value::Number(v))?; }
+                                                            polars::prelude::AnyValue::String(s) => { tbl.set(li as i64 + 1, mlua::Value::String(lua.create_string(s)?))?; }
+                                                            polars::prelude::AnyValue::StringOwned(ref s) => { tbl.set(li as i64 + 1, mlua::Value::String(lua.create_string(s.as_str())?))?; }
+                                                            _ => { tbl.set(li as i64 + 1, mlua::Value::Nil)?; }
+                                                        }
+                                                    }
+                                                    LVal::Table(tbl)
+                                                }
                                                 _ => LVal::Nil,
                                             };
                                             mvals.push_front(lv);
@@ -616,7 +670,7 @@ pub fn build_arith_expr(a: &ArithExpr, ctx: &crate::server::data_context::DataCo
                                             LVal::Number(f) => vals.push(Some(f)),
                                             LVal::Integer(i) => vals.push(Some(i as f64)),
                                             LVal::Nil => {
-                                                if udf_name_eval == "cosine_sim" || udf_name_eval == "vec_l2" {
+                                                if udf_name_eval == "cosine_sim" || udf_name_eval == "vec_l2" || udf_name_eval == "vec_ip" {
                                                     let mut ivals: Vec<String> = Vec::with_capacity(fields.len());
                                                     for f in fields.iter() {
                                                         let av = f.get(row_idx).unwrap_or(polars::prelude::AnyValue::Null);
@@ -627,7 +681,7 @@ pub fn build_arith_expr(a: &ArithExpr, ctx: &crate::server::data_context::DataCo
                                                 vals.push(None)
                                             }
                                             _ => {
-                                                if udf_name_eval == "cosine_sim" || udf_name_eval == "vec_l2" {
+                                                if udf_name_eval == "cosine_sim" || udf_name_eval == "vec_l2" || udf_name_eval == "vec_ip" {
                                                     crate::tprintln!("[UDF] eval unexpected type (not number/integer/nil) for '{}' — coercing to NULL", udf_name_eval);
                                                 }
                                                 vals.push(None)
@@ -650,6 +704,24 @@ pub fn build_arith_expr(a: &ArithExpr, ctx: &crate::server::data_context::DataCo
                                                 polars::prelude::AnyValue::Float64(v) => LVal::Number(v),
                                                 polars::prelude::AnyValue::String(s) => LVal::String(lua.create_string(s)?),
                                                 polars::prelude::AnyValue::StringOwned(ref s) => LVal::String(lua.create_string(s.as_str())?),
+                                                polars::prelude::AnyValue::List(ref inner) => {
+                                                    let tbl = lua.create_table()?;
+                                                    let ser = inner;
+                                                    let len_list = ser.len();
+                                                    for li in 0..len_list {
+                                                        let av2 = ser.get(li).unwrap_or(polars::prelude::AnyValue::Null);
+                                                        match av2 {
+                                                            polars::prelude::AnyValue::Null => { tbl.set(li as i64 + 1, mlua::Value::Nil)?; }
+                                                            polars::prelude::AnyValue::Boolean(b) => { tbl.set(li as i64 + 1, mlua::Value::Boolean(b))?; }
+                                                            polars::prelude::AnyValue::Int64(v) => { tbl.set(li as i64 + 1, mlua::Value::Integer(v))?; }
+                                                            polars::prelude::AnyValue::Float64(v) => { tbl.set(li as i64 + 1, mlua::Value::Number(v))?; }
+                                                            polars::prelude::AnyValue::String(s) => { tbl.set(li as i64 + 1, mlua::Value::String(lua.create_string(s)?))?; }
+                                                            polars::prelude::AnyValue::StringOwned(ref s) => { tbl.set(li as i64 + 1, mlua::Value::String(lua.create_string(s.as_str())?))?; }
+                                                            _ => { tbl.set(li as i64 + 1, mlua::Value::Nil)?; }
+                                                        }
+                                                    }
+                                                    LVal::Table(tbl)
+                                                }
                                                 _ => LVal::Nil,
                                             };
                                             mvals.push_front(lv);

@@ -47,12 +47,13 @@ pub fn parse_create(s: &str) -> Result<Command> {
         let rem_up = rem.to_uppercase();
         if !rem_up.starts_with("ON ") { anyhow::bail!("Invalid CREATE VECTOR INDEX: expected ON <table>(<column>)"); }
         let mut j = 3; // after ON 
-        // table name until '(' or whitespace
-        let (table_tok, k1) = read_word(rem, j);
+        // table name is everything up to the opening '(' (allowing qualified paths like db/schema/table)
+        // Optional whitespace before '(' is tolerated
+        let after_on = &rem[j..];
+        let paren_pos = after_on.find('(').ok_or_else(|| anyhow::anyhow!("Invalid CREATE VECTOR INDEX: expected (column) after table name"))?;
+        let table_tok = after_on[..paren_pos].trim();
         if table_tok.is_empty() { anyhow::bail!("Invalid CREATE VECTOR INDEX: missing table after ON"); }
-        j = k1; j = skip_ws(rem, j);
-        if j >= rem.len() || rem.as_bytes()[j] as char != '(' { anyhow::bail!("Invalid CREATE VECTOR INDEX: expected (column) after table name"); }
-        j += 1; // past '('
+        j = j + paren_pos + 1; // past '('
         // read column until ')'
         let mut col_end = j;
         while col_end < rem.len() && rem.as_bytes()[col_end] as char != ')' { col_end += 1; }
