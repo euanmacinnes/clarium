@@ -7,8 +7,9 @@ use polars::prelude::*;
 
 use crate::server::exec::{where_subquery::{eval_where_mask, where_contains_subquery}, exec_common::build_where_expr, df_utils::read_df_or_kv};
 use crate::storage::SharedStore;
+use crate::server::query::query_common::WhereExpr;
 
-pub fn handle_delete_columns(store: &SharedStore, database: String, mut columns: Vec<String>, where_clause: Option<crate::query::WhereExpr>) -> Result<serde_json::Value> {
+pub fn handle_delete_columns(store: &SharedStore, database: String, mut columns: Vec<String>, where_clause: Option<WhereExpr>) -> Result<serde_json::Value> {
     // Load full dataframe
     let mut df_all = read_df_or_kv(store, &database)?;
     if df_all.width() == 0 { return Ok(serde_json::json!({"status":"ok"})); }

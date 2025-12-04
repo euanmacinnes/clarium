@@ -39,6 +39,9 @@ use crate::server::exec::df_utils::read_df_or_kv;
 pub use crate::server::exec::exec_helpers::{execute_select_df, dataframe_to_tabular, normalize_query_with_defaults};
 pub use crate::server::exec::exec_create::do_create_table;
 
+use crate::server::query::query_common::*;
+use crate::server::query::*;
+
 /// Returns true if the provided SQL text is a transaction control statement
 /// that we treat as a no-op for compatibility (BEGIN/START TRANSACTION/COMMIT/END/ROLLBACK).
 fn is_transaction_control(text: &str) -> bool {
@@ -58,7 +61,7 @@ pub async fn execute_query(store: &SharedStore, text: &str) -> Result<serde_json
     if is_transaction_control(text) {
         return Ok(serde_json::json!({"status":"ok"}));
     }
-    let cmd = query::parse(text)?;
+    let cmd = parse(text)?;
     match cmd {
         Command::Slice(plan) => {
             // Create DataContext with registry snapshot for SLICE query
@@ -191,8 +194,8 @@ pub async fn execute_query(store: &SharedStore, text: &str) -> Result<serde_json
                     guard.write_records(dest, &records)?;
                 } else {
                     match mode {
-                        crate::query::IntoMode::Replace => { guard.rewrite_table_df(dest, df.clone())?; }
-                        crate::query::IntoMode::Append => {
+                        IntoMode::Replace => { guard.rewrite_table_df(dest, df.clone())?; }
+                        IntoMode::Append => {
                             let combined = match guard.read_df(dest) { Ok(existing) => { existing.vstack(&df)? } Err(_) => df.clone(), };
                             guard.rewrite_table_df(dest, combined)?;
                         }
@@ -529,8 +532,3 @@ pub async fn execute_query_with_defaults(store: &SharedStore, text: &str, defaul
 
 #[cfg(test)]
 mod tests;
-
-
-
-// Tracing macros for diagnostics (debug is already imported earlier in this module)
-use tracing::{info, warn, error};

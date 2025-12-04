@@ -1,7 +1,5 @@
-use crate::server::query::query_common::Query;
-use crate::server::query::query_common::CTE;
-use crate::server::query::query_common::TableRef;
-use crate::server::query;
+use crate::server::query::query_common::*;
+use crate::server::query::*;
 
 fn assert_all_none(q: &Query) {
     assert!(q.by_window_ms.is_none(), "by_window_ms leaked: {:?}", q.by_window_ms);
@@ -151,7 +149,7 @@ fn parse_select_joins_with_clauses() {
 
 #[test]
 fn test_from_subquery_basic() {
-    use crate::query::{parse, Command, TableRef};
+
     
     let sql = "SELECT * FROM (SELECT id, name FROM users) AS u";
     let result = parse(sql);
@@ -170,9 +168,7 @@ fn test_from_subquery_basic() {
 }
 
 #[test]
-fn test_from_subquery_with_as() {
-    use crate::query::{parse, Command, TableRef};
-    
+fn test_from_subquery_with_as() {        
     let sql = "SELECT u.id FROM (SELECT id FROM users) AS u";
     let result = parse(sql);
     assert!(result.is_ok());
@@ -188,7 +184,6 @@ fn test_from_subquery_with_as() {
 
 #[test]
 fn test_from_subquery_without_as() {
-    use crate::server::query::{parse, Command, TableRef};
     
     let sql = "SELECT t.name FROM (SELECT name FROM users) t";
     let result = parse(sql);
@@ -204,8 +199,7 @@ fn test_from_subquery_without_as() {
 }
 
 #[test]
-fn test_from_subquery_missing_alias() {
-    use crate::query::parse;
+fn test_from_subquery_missing_alias() {    
     
     let sql = "SELECT * FROM (SELECT id FROM users)";
     let result = parse(sql);
@@ -215,8 +209,7 @@ fn test_from_subquery_missing_alias() {
 }
 
 #[test]
-fn test_from_table_still_works() {
-    use crate::query::{parse, Command, TableRef};
+fn test_from_table_still_works() {   
     
     let sql = "SELECT * FROM users AS u";
     let result = parse(sql);

@@ -1,4 +1,7 @@
-fn parse_user(s: &str) -> Result<Command> {
+use crate::server::query::query_common::*;
+use crate::server::query::*;
+
+pub fn parse_user(s: &str) -> Result<Command> {
     // USER ADD <username> PASSWORD '<pw>' [ADMIN] [PERMISSIONS (<list>)] [GLOBAL | (IN|FROM|TO) <db>]
     // USER DELETE <username> [GLOBAL | (IN|FROM|TO) <db>]
     let rest = s[4..].trim();

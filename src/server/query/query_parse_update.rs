@@ -1,5 +1,7 @@
+use crate::server::query::query_common::*;
+use crate::server::query::*;
 
-fn parse_update(s: &str) -> Result<Command> {
+pub fn parse_update(s: &str) -> Result<Command> {
     // UPDATE <table> SET col = value[, ...] [WHERE ...]
     let rest = s[6..].trim(); // after UPDATE
     if rest.is_empty() { anyhow::bail!("Invalid UPDATE syntax: missing table name"); }

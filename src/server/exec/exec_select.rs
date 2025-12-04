@@ -2,7 +2,8 @@ use anyhow::Result;
 use polars::prelude::*;
 use tracing::debug;
 
-use crate::{storage::{SharedStore}};
+use crate::server::query::IntoMode;
+use crate::{server::query::Query, storage::SharedStore};
 
 use crate::server::data_context::{DataContext};
 use crate::server::exec::select_stages::having::apply_having_with_validation;
@@ -15,12 +16,12 @@ use crate::scripts::get_script_registry;
 
 
 
-pub fn run_select(store: &SharedStore, q: &crate::query::Query) -> Result<DataFrame> {
+pub fn run_select(store: &SharedStore, q: &Query) -> Result<DataFrame> {
     run_select_with_context(store, q, None)
 }
 
 // Expose for subquery execution within WHERE/HAVING evaluation and FROM subqueries
-pub(crate) fn run_select_with_context(store: &SharedStore, q: &crate::query::Query, parent_ctx: Option<&DataContext>) -> Result<DataFrame> {
+pub(crate) fn run_select_with_context(store: &SharedStore, q: &Query, parent_ctx: Option<&DataContext>) -> Result<DataFrame> {
     // When debug logging is enabled, print the entire parsed Query for leak diagnostics
     // tprintln!("run_select: full Query AST = {:#?}", q);
 
@@ -103,14 +104,14 @@ fn derive_defaults_from_ident(ident: &str) -> (String, String) {
 // High-level handlers for SELECT and SELECT UNION, extracted from exec.rs to keep dispatcher thin.
 // These functions encapsulate INTO handling and schema alignment logic.
 
-pub fn handle_select(store: &SharedStore, q: &crate::query::Query) -> Result<(DataFrame, Option<(String, crate::query::IntoMode)>)> {
+pub fn handle_select(store: &SharedStore, q: &Query) -> Result<(DataFrame, Option<(String, IntoMode)>)> {
     // Return the DataFrame and optional INTO destination with mode for the caller to persist.
     let df = run_select(store, q)?;
-    let into = q.into_table.as_ref().map(|dest| (dest.clone(), q.into_mode.clone().unwrap_or(crate::query::IntoMode::Append)));
+    let into = q.into_table.as_ref().map(|dest| (dest.clone(), q.into_mode.clone().unwrap_or(IntoMode::Append)));
     Ok((df, into))
 }
 
-pub fn handle_select_union(store: &SharedStore, queries: &[crate::query::Query], all: bool) -> Result<DataFrame> {
+pub fn handle_select_union(store: &SharedStore, queries: &[Query], all: bool) -> Result<DataFrame> {
     // Execute each query and collect DataFrames
     let mut dfs: Vec<DataFrame> = Vec::new();
     for q in queries { dfs.push(run_select(store, q)?); }

@@ -1,6 +1,8 @@
 //! DBeaver compatibility tests
 //! Focus: parsing SELECT lists with qualified wildcards like `t.*` alongside other expressions
 
+use crate::server::query::query_common::TableRef;
+
 #[test]
 fn parse_pg_type_query_with_qualified_wildcard() {
     use crate::server::query::{parse, Command};
@@ -62,7 +64,7 @@ fn execute_full_pg_type_query_with_qualified_wildcard() {
         let mut got = std::collections::HashSet::new();
         for j in js {
             match &j.right {
-                crate::query::TableRef::Table { name: _, alias } => { if let Some(a) = alias { got.insert(a.clone()); } },
+                TableRef::Table { name: _, alias } => { if let Some(a) = alias { got.insert(a.clone()); } },
                 _ => {}
             }
         }

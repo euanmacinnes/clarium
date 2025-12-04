@@ -1,5 +1,9 @@
+use crate::server::query::query_common::*;
+use crate::server::query::*;
+
+
 // --- SLICE parser ---
-fn parse_slice(input: &str) -> Result<SlicePlan> {
+pub fn parse_slice(input: &str) -> Result<SlicePlan> {
     let s = input.trim();
     let up = s.to_uppercase();
     let mut pos = 0usize;
@@ -91,7 +95,7 @@ fn parse_slice(input: &str) -> Result<SlicePlan> {
     Ok(SlicePlan { base: base_src, clauses, labels })
 }
 
-fn parse_slice_clause(s: &str) -> Result<(SliceClause, usize)> {
+pub fn parse_slice_clause(s: &str) -> Result<(SliceClause, usize)> {
     let up = s.to_uppercase();
     let mut op: Option<SliceOp> = None;
     let mut offset = 0usize;
@@ -115,7 +119,7 @@ fn parse_slice_clause(s: &str) -> Result<(SliceClause, usize)> {
     Ok((SliceClause{ op: op.unwrap(), source: src }, used))
 }
 
-fn parse_slice_source(s: &str) -> Result<(SliceSource, usize)> {
+pub fn parse_slice_source(s: &str) -> Result<(SliceSource, usize)> {
     let up = s.to_uppercase();
     let mut i = 0usize;
     let bytes = s.as_bytes();

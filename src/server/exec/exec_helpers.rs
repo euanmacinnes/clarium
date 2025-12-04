@@ -8,6 +8,8 @@
 use anyhow::Result;
 use polars::prelude::*;
 
+use crate::server::query::Query;
+
 /// Convert a DataFrame into a serde_json::Value for HTTP/pgwire simple protocol.
 pub fn dataframe_to_json(df: &DataFrame) -> serde_json::Value {
     // Emit native JSON numbers/bools/strings/nulls to satisfy engine tests
@@ -70,7 +72,7 @@ pub fn dataframe_to_tabular(df: &DataFrame) -> (Vec<String>, Vec<Vec<Option<Stri
 }
 
 /// Convenience: staged SELECT execution returning a DataFrame.
-pub fn execute_select_df(store: &crate::storage::SharedStore, q: &crate::query::Query) -> Result<DataFrame> {
+pub fn execute_select_df(store: &crate::storage::SharedStore, q: &Query) -> Result<DataFrame> {
     crate::server::exec::exec_select::run_select(store, q)
 }
 

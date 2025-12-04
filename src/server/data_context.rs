@@ -8,6 +8,8 @@ use anyhow::Result;
 use polars::prelude::DataFrame;
 use tracing::debug;
 
+use crate::server::query::query_common::*;
+use crate::server::query::*;
 
 /// Execution pipeline stages for SELECT processing
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -500,10 +502,10 @@ impl DataContext {
                     if let Some(vf) = crate::server::exec::exec_views::read_view_file(store, &effective).ok().flatten() {
                         tracing::debug!(target: "clarium::exec", "load_source_df: view hit name='{}' -> executing definition", effective);
                         // Parse and execute the stored definition SQL
-                        let cmd = crate::query::parse(&vf.definition_sql)?;
+                        let cmd = parse(&vf.definition_sql)?;
                         let subquery_df = match cmd {
-                            crate::query::Command::Select(q) => crate::server::exec::exec_select::run_select_with_context(store, &q, Some(self))?,
-                            crate::query::Command::SelectUnion { queries, all } => crate::server::exec::exec_select::handle_select_union(store, &queries, all)?,
+                            Command::Select(q) => crate::server::exec::exec_select::run_select_with_context(store, &q, Some(self))?,
+                            Command::SelectUnion { queries, all } => crate::server::exec::exec_select::handle_select_union(store, &queries, all)?,
                             _ => anyhow::bail!("View definition must be SELECT or SELECT UNION"),
                         };
                         // Prefix columns with alias or view name

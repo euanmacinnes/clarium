@@ -20,8 +20,26 @@ pub mod query_parse_user;
 pub mod query_parse_where;
 pub mod query_parse_where_tokens;
 
-use crate::server::query::query_common::TableRef;
-use crate::server::query::query_common::CTE;
+// Re-export common query types and helpers so existing paths like
+// `crate::server::query::Query` continue to work after restructuring.
+pub use query_common::*;
+pub use query_parse_create::*;
+pub use query_parse_database::*;
+pub use query_parse_delete::*;
+pub use query_parse_drop::*;
+pub use query_parse_insert::*;
+pub use query_parse_misc::*;
+pub use query_parse_rename::*;
+pub use query_parse_select_list::*;
+pub use query_parse_select::*;
+pub use query_parse_show::*;
+pub use query_parse_slice::*;
+pub use query_parse_update::*;
+pub use query_parse_user::*;
+pub use query_parse_where_tokens::*;
+pub use query_parse_where::*;
+
+
 
 #[derive(Debug, Clone)]
 pub enum Command {

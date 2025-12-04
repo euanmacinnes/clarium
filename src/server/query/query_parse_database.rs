@@ -1,17 +1,7 @@
-use crate::server::query::query_common::Query;
-use crate::server::query::query_common::WhereExpr;
-use crate::server::query::query_common::CompOp;
-use crate::server::query::query_common::ArithExpr as AE;
-use crate::server::query::query_common::ArithTerm as AT;
-use crate::server::query::query_common::WhereExpr as WE;
-use crate::server::query::query_common::ArithTerm;
-use crate::server::query::query_common::ArithExpr;
-use crate::server::query::query_common::DateFunc;
-use crate::server::query::query_common::StrSliceBound;
-use crate::server::query::query_common::JoinType;
-use crate::server::query::Command;
+use crate::server::query::query_common::*;
+use crate::server::query::*;
 
-fn parse_database(s: &str) -> Result<Command> {
+pub fn parse_database(s: &str) -> Result<Command> {
     // DATABASE ADD <db> | DATABASE DELETE <db> | DATABASE DROP <db>
     let rest = s[9..].trim();
     let up = rest.to_uppercase();
@@ -30,7 +20,7 @@ fn parse_database(s: &str) -> Result<Command> {
 }
 
 
-fn parse_schema(s: &str) -> Result<Command> {
+pub fn parse_schema(s: &str) -> Result<Command> {
     // SCHEMA SHOW <db> | SCHEMA SHOW FROM <db>
     // SCHEMA ADD <name Type>[, <name Type> ...] (FROM|IN|TO) <db>
     let rest = s[6..].trim();

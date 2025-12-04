@@ -1,10 +1,10 @@
 use tracing::debug;
-use crate::server::query::query_common::Query;
-use crate::server::query::query_common::CTE;
-use crate::server::query::query_common::TableRef;
-use crate::server::query::query_common::JoinType;
-use crate::server::query::query_common::JoinClause;
 use regex::Regex;
+
+use crate::server::query::query_common::*;
+use crate::server::query::*;
+use crate::server::query::query_parse_select_list::parse_select_list;
+
 
 
 
@@ -53,7 +53,7 @@ pub fn split_union_queries(input: &str) -> Result<(Vec<&str>, bool)> {
     Ok((parts.into_iter().map(|p| p.trim()).collect(), all))
 }
 
-fn parse_select(s: &str) -> Result<Query> {
+pub fn parse_select(s: &str) -> Result<Query> {
     debug!("[PARSE SELECT] Starting parse_select with SQL: '{}'", s);
     // Parse optional WITH clause for CTEs
     let mut with_ctes: Option<Vec<CTE>> = None;

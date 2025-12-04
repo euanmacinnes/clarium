@@ -1,6 +1,9 @@
 use tracing::debug;
+use crate::server::query::query_common::*;
+use crate::server::query::*;
+use crate::server::query::query_parse_arith_expr::parse_arith_expr;
 
-fn parse_where_tokens(tokens: &[String], original: &str) -> Result<WhereExpr> {
+pub fn parse_where_tokens(tokens: &[String], original: &str) -> Result<WhereExpr> {
     // Split by OR (lowest precedence)
     if let Some(idx) = find_token_ci(tokens, "OR") {
         let left = parse_where_tokens(&tokens[..idx], original)?;

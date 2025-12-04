@@ -1,6 +1,7 @@
+use crate::server::query::query_common::*;
+use crate::server::query::*;
 
-
-fn parse_rename(s: &str) -> Result<Command> {
+pub fn parse_rename(s: &str) -> Result<Command> {
     // RENAME SCRIPT old TO new
     let rest = s[6..].trim();
     let up = rest.to_uppercase();

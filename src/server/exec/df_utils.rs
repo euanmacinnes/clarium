@@ -4,6 +4,7 @@ use polars::prelude::*;
 use tracing::debug;
 
 use crate::storage::{SharedStore, KvValue};
+use crate::server::query::Query;
 
 // Helper: read a DataFrame from either a regular table path or a KV store address
 pub(crate) fn read_df_or_kv(store: &SharedStore, name: &str) -> anyhow::Result<DataFrame> {
