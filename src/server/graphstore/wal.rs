@@ -11,6 +11,7 @@ use crc32fast::Hasher as Crc32;
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 const MAGIC_WAL: u32 = 0x47574C31; // 'GWL1'
 
@@ -70,20 +71,24 @@ pub struct TxnAbort { pub txn_id: u64 }
 pub enum WalRecord { Begin(TxnBegin), Data(TxnData), Commit(TxnCommit), Abort(TxnAbort) }
 
 /// WAL writer appends records and fsyncs on commit.
-pub struct WalWriter { file: File }
+pub struct WalWriter { file: File, path: PathBuf, max_size_bytes: u64 }
 
 impl WalWriter {
     pub fn create(path: &Path) -> Result<Self> {
         if let Some(parent) = path.parent() { std::fs::create_dir_all(parent).ok(); }
         let file = OpenOptions::new().create(true).append(true).read(true).open(path)
             .with_context(|| format!("open WAL for append: {}", path.display()))?;
-        Ok(Self { file })
+        Ok(Self { file, path: path.to_path_buf(), max_size_bytes: 64 * 1024 * 1024 })
     }
 
     pub fn append_begin(&mut self, b: &TxnBegin) -> Result<()> { self.append(&WalRecord::Begin(b.clone()), false) }
     pub fn append_data(&mut self, d: &TxnData) -> Result<()> { self.append(&WalRecord::Data(d.clone()), false) }
     pub fn append_abort(&mut self, a: &TxnAbort) -> Result<()> { self.append(&WalRecord::Abort(a.clone()), false) }
     pub fn append_commit(&mut self, c: &TxnCommit) -> Result<()> { self.append(&WalRecord::Commit(c.clone()), true) }
+
+    /// Append a commit record without fsync; used by group-commit batching where
+    /// only the final commit in the batch should fsync.
+    pub fn append_commit_nosync(&mut self, c: &TxnCommit) -> Result<()> { self.append(&WalRecord::Commit(c.clone()), false) }
 
     fn append(&mut self, rec: &WalRecord, sync: bool) -> Result<()> {
         let mut payload: Vec<u8> = Vec::new();
@@ -126,6 +131,8 @@ impl WalWriter {
     }
 
     fn write_record(&mut self, kind: RecKind, payload: &[u8], sync: bool) -> Result<()> {
+        // Simple rolling policy: if file exceeds threshold, roll to timestamped file and reopen current
+        self.maybe_roll()?;
         let mut hasher = Crc32::new(); hasher.update(payload); let crc = hasher.finalize();
         let header = RecHeader { magic: MAGIC_WAL, kind: kind as u8, version: 1, _pad: 0, len: (payload.len() as u32) };
         header.write_to(&mut self.file)?;
@@ -136,6 +143,25 @@ impl WalWriter {
             // On Windows this maps to FlushFileBuffers via std
             self.file.sync_all()?;
         }
+        Ok(())
+    }
+
+    fn maybe_roll(&mut self) -> Result<()> {
+        // Best effort: if current file larger than max_size_bytes, rename to wal.<epoch_millis>.lg and reopen
+        let len = self.file.metadata().map(|m| m.len()).unwrap_or(0);
+        if len < self.max_size_bytes { return Ok(()); }
+        // Build new name
+        let parent = self.path.parent().map(|p| p.to_path_buf()).unwrap_or_else(|| PathBuf::from("."));
+        let now_ms: u128 = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis();
+        let rolled = parent.join(format!("wal.{}.lg", now_ms));
+        // Close current by dropping File, then rename and reopen
+        drop(&self.file);
+        // If the current file may be named "current.lg", rename it
+        let _ = std::fs::rename(&self.path, &rolled);
+        // Reopen fresh current
+        let newf = OpenOptions::new().create(true).append(true).read(true).open(&self.path)
+            .with_context(|| format!("reopen WAL after roll: {}", self.path.display()))?;
+        self.file = newf;
         Ok(())
     }
 }

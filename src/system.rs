@@ -76,6 +76,50 @@ pub(crate) fn get_or_assign_view_oid(view_file: &Path, db: &str, schema: &str, v
     default_oid
 }
 
+/// Obtain a stable OID for a vector index, persisted inside the `.vindex` JSON file
+fn get_or_assign_vindex_oid(vindex_file: &Path, db: &str, schema: &str, name: &str) -> i32 {
+    // Reserve a separate range for vector indexes to avoid collision
+    // Range start 22000
+    let seed = format!("vindex:{}.{}/{}", db, schema, name);
+    let default_oid = 22000 + (stable_hash_u32(&seed) % 1_000_000) as i32;
+    if let Some(mut json) = read_json(vindex_file) {
+        if let Some(obj) = json.as_object_mut() {
+            let o = obj.entry("__clarium_oids__").or_insert(serde_json::json!({}));
+            if let Some(map) = o.as_object() {
+                if let Some(v) = map.get("class_oid").and_then(|v| v.as_i64()) { return v as i32; }
+            }
+            let mut new_map = o.as_object().cloned().unwrap_or_default();
+            new_map.insert("class_oid".to_string(), serde_json::json!(default_oid));
+            *o = serde_json::Value::Object(new_map);
+            write_json(vindex_file, &serde_json::Value::Object(obj.clone()));
+            return default_oid;
+        }
+    }
+    default_oid
+}
+
+/// Obtain a stable OID for a graph catalog, persisted inside the `.graph` JSON file
+fn get_or_assign_graph_oid(graph_file: &Path, db: &str, schema: &str, name: &str) -> i32 {
+    // Reserve a separate range for graphs
+    // Range start 23000
+    let seed = format!("graph:{}.{}/{}", db, schema, name);
+    let default_oid = 23000 + (stable_hash_u32(&seed) % 1_000_000) as i32;
+    if let Some(mut json) = read_json(graph_file) {
+        if let Some(obj) = json.as_object_mut() {
+            let o = obj.entry("__clarium_oids__").or_insert(serde_json::json!({}));
+            if let Some(map) = o.as_object() {
+                if let Some(v) = map.get("class_oid").and_then(|v| v.as_i64()) { return v as i32; }
+            }
+            let mut new_map = o.as_object().cloned().unwrap_or_default();
+            new_map.insert("class_oid".to_string(), serde_json::json!(default_oid));
+            *o = serde_json::Value::Object(new_map);
+            write_json(graph_file, &serde_json::Value::Object(obj.clone()));
+            return default_oid;
+        }
+    }
+    default_oid
+}
+
 /// Lookup a view definition by its OID. Returns Some(definition_sql) or None
 /// if OID is not found or maps to a non-view object.
 pub fn lookup_view_definition_by_oid(store: &SharedStore, oid: i32) -> Option<String> {
@@ -156,6 +200,11 @@ thread_local! {
     static TLS_CURRENT_SCHEMA: Cell<Option<String>> = const { Cell::new(None) };
 }
 
+// Thread-local current GRAPH (qualified path db/schema/name)
+thread_local! {
+    static TLS_CURRENT_GRAPH: Cell<Option<String>> = const { Cell::new(None) };
+}
+
 /// Get current database name for this thread/session, or default "clarium"
 pub fn get_current_database() -> String {
     TLS_CURRENT_DB.with(|c| c.take()).map(|s| { TLS_CURRENT_DB.with(|c2| c2.set(Some(s.clone()))); s }).unwrap_or_else(|| "clarium".to_string())
@@ -182,11 +231,25 @@ pub fn set_current_database(db: &str) { TLS_CURRENT_DB.with(|c| c.set(Some(db.to
 /// Set current schema for this thread/session
 pub fn set_current_schema(schema: &str) { TLS_CURRENT_SCHEMA.with(|c| c.set(Some(schema.to_string()))); }
 
-/// Unset current database for this thread/session (so helpers can treat it as NONE)
-pub fn unset_current_database() { TLS_CURRENT_DB.with(|c| c.set(None)); }
+/// Unset current database (and by extension, schema) for this thread/session (so helpers can treat it as NONE)
+pub fn unset_current_database() {
+    unset_current_schema();
+    TLS_CURRENT_DB.with(|c| c.set(None));
+}
 
 /// Unset current schema for this thread/session (so helpers can treat it as NONE)
 pub fn unset_current_schema() { TLS_CURRENT_SCHEMA.with(|c| c.set(None)); }
+
+/// Set current graph (qualified: db/schema/name) for this thread/session
+pub fn set_current_graph(graph: &str) { TLS_CURRENT_GRAPH.with(|c| c.set(Some(graph.to_string()))); }
+
+/// Unset current graph for this thread/session
+pub fn unset_current_graph() { TLS_CURRENT_GRAPH.with(|c| c.set(None)); }
+
+/// Get current graph if set for this thread/session
+pub fn get_current_graph_opt() -> Option<String> {
+    TLS_CURRENT_GRAPH.with(|c| c.take()).map(|s| { TLS_CURRENT_GRAPH.with(|c2| c2.set(Some(s.clone()))); s })
+}
 
 /// Helper to obtain QueryDefaults from current thread-local session values
 pub fn current_query_defaults() -> crate::ident::QueryDefaults {
@@ -296,6 +359,68 @@ fn enumerate_views(store: &SharedStore) -> Vec<ViewMeta> {
                                         out.push(ViewMeta { db: dbname.clone(), schema: schema_name.clone(), view: vname, def_sql: def, file: p.clone() });
                                     }
                                 }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
+#[derive(Debug, Clone)]
+struct SidecarMeta {
+    db: String,
+    schema: String,
+    name: String,
+    file: PathBuf,
+}
+
+fn enumerate_vector_indexes(store: &SharedStore) -> Vec<SidecarMeta> {
+    let mut out: Vec<SidecarMeta> = Vec::new();
+    let root = store.root_path();
+    if let Ok(dbs) = std::fs::read_dir(&root) {
+        for db_ent in dbs.flatten() {
+            let db_path = db_ent.path(); if !db_path.is_dir() { continue; }
+            let dbname = match db_path.file_name().and_then(|s| s.to_str()) { Some(n) => n.to_string(), None => continue };
+            if let Ok(schemas) = std::fs::read_dir(&db_path) {
+                for sch_ent in schemas.flatten() {
+                    let sch_path = sch_ent.path(); if !sch_path.is_dir() { continue; }
+                    let schema_name = sch_path.file_name().and_then(|s| s.to_str()).unwrap_or("").to_string();
+                    if let Ok(entries) = std::fs::read_dir(&sch_path) {
+                        for e in entries.flatten() {
+                            let p = e.path();
+                            if p.is_file() && p.extension().and_then(|s| s.to_str()).map(|x| x.eq_ignore_ascii_case("vindex")).unwrap_or(false) {
+                                let name = p.file_stem().and_then(|s| s.to_str()).unwrap_or("").to_string();
+                                out.push(SidecarMeta { db: dbname.clone(), schema: schema_name.clone(), name, file: p.clone() });
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
+fn enumerate_graphs(store: &SharedStore) -> Vec<SidecarMeta> {
+    let mut out: Vec<SidecarMeta> = Vec::new();
+    let root = store.root_path();
+    if let Ok(dbs) = std::fs::read_dir(&root) {
+        for db_ent in dbs.flatten() {
+            let db_path = db_ent.path(); if !db_path.is_dir() { continue; }
+            let dbname = match db_path.file_name().and_then(|s| s.to_str()) { Some(n) => n.to_string(), None => continue };
+            if let Ok(schemas) = std::fs::read_dir(&db_path) {
+                for sch_ent in schemas.flatten() {
+                    let sch_path = sch_ent.path(); if !sch_path.is_dir() { continue; }
+                    let schema_name = sch_path.file_name().and_then(|s| s.to_str()).unwrap_or("").to_string();
+                    if let Ok(entries) = std::fs::read_dir(&sch_path) {
+                        for e in entries.flatten() {
+                            let p = e.path();
+                            if p.is_file() && p.extension().and_then(|s| s.to_str()).map(|x| x.eq_ignore_ascii_case("graph")).unwrap_or(false) {
+                                let name = p.file_stem().and_then(|s| s.to_str()).unwrap_or("").to_string();
+                                out.push(SidecarMeta { db: dbname.clone(), schema: schema_name.clone(), name, file: p.clone() });
                             }
                         }
                     }
@@ -524,9 +649,10 @@ pub fn system_table_df(name: &str, store: &SharedStore) -> Option<DataFrame> {
             "timestamp".into(),
             "timestamptz".into(),
             "hstore".into(),
+            "vector".into(),
         ];
-        let oids: Vec<i32> = vec![23, 20, 701, 25, 16, 1114, 1184, 16414];
-        let arrays: Vec<i32> = vec![1007, 1016, 1022, 1009, 1000, 1115, 1185, 16415];
+        let oids: Vec<i32> = vec![23, 20, 701, 25, 16, 1114, 1184, 16414, 70400];
+        let arrays: Vec<i32> = vec![1007, 1016, 1022, 1009, 1000, 1115, 1185, 16415, 70401];
         let pg_catalog_oid: i32 = 11;
         let typnamespace: Vec<i32> = vec![pg_catalog_oid; names.len()];
         // Element type OID for array types; for built-in scalar types set to 0.
@@ -547,6 +673,7 @@ pub fn system_table_df(name: &str, store: &SharedStore) -> Option<DataFrame> {
             "D".into(), // timestamp datetime
             "D".into(), // timestamptz datetime
             "U".into(), // hstore user-defined
+            "U".into(), // vector user-defined
         ];
         // Type type: 'b' for base types
         let typtype: Vec<String> = vec!["b".into(); names.len()];
@@ -885,6 +1012,8 @@ pub fn system_table_df(name: &str, store: &SharedStore) -> Option<DataFrame> {
     if last1 == "pg_class" || last2 == "pg_catalog.pg_class" {
         let metas = enumerate_tables(store);
         let vmetas = enumerate_views(store);
+        let idxs = enumerate_vector_indexes(store);
+        let graphs = enumerate_graphs(store);
         let mut relname: Vec<String> = Vec::new();
         let mut nspname: Vec<String> = Vec::new();
         let mut relkind: Vec<String> = Vec::new();
@@ -917,6 +1046,24 @@ pub fn system_table_df(name: &str, store: &SharedStore) -> Option<DataFrame> {
             relkind.push("v".to_string());
             oid.push(get_or_assign_view_oid(&v.file, &v.db, &v.schema, &v.view));
             relnamespace.push(ns_oid_for(&v.schema));
+            relpartbound.push(None);
+        }
+        // Vector indexes as relkind 'i'
+        for x in idxs.iter() {
+            relname.push(x.name.clone());
+            nspname.push(x.schema.clone());
+            relkind.push("i".to_string());
+            oid.push(get_or_assign_vindex_oid(&x.file, &x.db, &x.schema, &x.name));
+            relnamespace.push(ns_oid_for(&x.schema));
+            relpartbound.push(None);
+        }
+        // Graph catalogs – expose as views (relkind 'v') for client compatibility
+        for g in graphs.iter() {
+            relname.push(g.name.clone());
+            nspname.push(g.schema.clone());
+            relkind.push("v".to_string());
+            oid.push(get_or_assign_graph_oid(&g.file, &g.db, &g.schema, &g.name));
+            relnamespace.push(ns_oid_for(&g.schema));
             relpartbound.push(None);
         }
         return DataFrame::new(vec![

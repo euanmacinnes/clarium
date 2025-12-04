@@ -328,6 +328,17 @@ impl Store {
                 let s = match dt {
                     DataType::String => Series::new(name.clone().into(), vec![Option::<String>::None; df.height()]),
                     DataType::Int64 => Series::new(name.clone().into(), vec![Option::<i64>::None; df.height()]),
+                    DataType::List(inner) => {
+                        // For vector/list columns, create a null list column (Vec<Option<Vec<_>>>)
+                        if matches!(**inner, DataType::Float64) {
+                            Series::new(name.clone().into(), vec![Option::<Vec<f64>>::None; df.height()])
+                        } else if matches!(**inner, DataType::Int64) {
+                            Series::new(name.clone().into(), vec![Option::<Vec<i64>>::None; df.height()])
+                        } else {
+                            // Fallback to null strings to keep schema alignment
+                            Series::new(name.clone().into(), vec![Option::<String>::None; df.height()])
+                        }
+                    }
                     _ => Series::new(name.clone().into(), vec![Option::<f64>::None; df.height()]),
                 };
                 df.with_column(s)?;
@@ -666,6 +677,15 @@ impl Store {
                     let s = match dt {
                         DataType::String => Series::new(name.clone().into(), vec![Option::<String>::None; df.height()]),
                         DataType::Int64 => Series::new(name.clone().into(), vec![Option::<i64>::None; df.height()]),
+                        DataType::List(inner) => {
+                            if matches!(**inner, DataType::Float64) {
+                                Series::new(name.clone().into(), vec![Option::<Vec<f64>>::None; df.height()])
+                            } else if matches!(**inner, DataType::Int64) {
+                                Series::new(name.clone().into(), vec![Option::<Vec<i64>>::None; df.height()])
+                            } else {
+                                Series::new(name.clone().into(), vec![Option::<String>::None; df.height()])
+                            }
+                        }
                         _ => Series::new(name.clone().into(), vec![Option::<f64>::None; df.height()]),
                     };
                     df.with_column(s)?;
@@ -770,13 +790,24 @@ impl Store {
         match dt {
             DataType::String => "string".into(),
             DataType::Int64 => "int64".into(),
+            // Treat List(Float64) as our logical 'vector' type for schema purposes
+            DataType::List(inner) => {
+                if matches!(**inner, DataType::Float64) || matches!(**inner, DataType::Int64) {
+                    "vector".into()
+                } else {
+                    // default label for other lists
+                    "list".into()
+                }
+            }
             _ => "float64".into(),
         }
     }
     fn str_to_dtype(s: &str) -> DataType {
-        match s {
+        match s.to_ascii_lowercase().as_str() {
             "utf8" | "string" => DataType::String,
             "int64" => DataType::Int64,
+            // Map logical 'vector' to List(Float64)
+            "vector" => DataType::List(Box::new(DataType::Float64)),
             _ => DataType::Float64,
         }
     }
@@ -785,6 +816,12 @@ impl Store {
         use DataType::*;
         match (a, b) {
             (String, _) | (_, String) => String,
+            // Do not implicitly widen to/from vectors. If any side is List, keep List if other side is numeric; else fall back to String.
+            (List(a), List(b)) => {
+                if *a == *b { List(a) } else { String }
+            }
+            (List(a), Float64) | (Float64, List(a)) => List(a),
+            (List(a), Int64) | (Int64, List(a)) => List(a),
             (Float64, _) | (_, Float64) => Float64,
             _ => Int64,
         }

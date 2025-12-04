@@ -18,7 +18,8 @@ use crate::server::graphstore::segments::{AdjSegment, NodeDict};
 use crate::server::graphstore::delta::{PartitionDeltaIndex, build_indexes_from_records};
 use crate::server::graphstore::wal::{WalReader, WalRecord};
 use crate::server::graphstore::manifest as mfutil;
-use crate::server::graphstore::delta_log::{DeltaLogReader, apply_edge_deltas};
+use crate::server::graphstore::delta_log::{DeltaLogReader, apply_edge_deltas, NodeDeltaLogReader};
+use crate::server::graphstore::metrics as gsm;
 
 /// Runtime operations the GraphStore must support for TVFs.
 pub trait GraphRuntime: Send + Sync {
@@ -47,6 +48,36 @@ pub fn runtime_api() -> Option<&'static dyn GraphRuntime> {
 
 // ---------- Read-only manifest and loader (initial skeleton) ----------
 
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+pub struct Partitioning {
+    #[serde(default)]
+    pub strategy: Option<String>,   // e.g., "hash_mod"
+    #[serde(default)]
+    pub hash_seed: Option<u64>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+pub struct ClusterGroup {
+    pub part_begin: u32,
+    pub part_end: u32,
+    #[serde(default)]
+    pub replica_set: Vec<String>,
+    #[serde(default)]
+    pub leader: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+pub struct ClusterMeta {
+    #[serde(default)]
+    pub replication_factor: Option<u32>,
+    #[serde(default)]
+    pub epoch_term: Option<u64>,
+    #[serde(default)]
+    pub placement_version: Option<u64>,
+    #[serde(default)]
+    pub groups: Vec<ClusterGroup>,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GraphManifest {
@@ -55,6 +86,10 @@ pub struct GraphManifest {
     pub partitions: u32,          // number of edge partitions
     #[serde(default)]
     pub options: HashMap<String, String>,
+    #[serde(default)]
+    pub partitioning: Option<Partitioning>,
+    #[serde(default)]
+    pub cluster: Option<ClusterMeta>,
     pub nodes: NodesSection,
     pub edges: EdgesSection,
 }
@@ -120,6 +155,36 @@ impl GraphHandle {
         }
         if mf.partitions == 0 {
             return Err(anyhow!("manifest partitions must be > 0"));
+        }
+        // Validate partitioning/cluster metadata if present (forward-compatible, no-op otherwise)
+        if let Some(p) = &mf.partitioning {
+            if let Some(strategy) = &p.strategy {
+                let s = strategy.to_ascii_lowercase();
+                if s != "hash_mod" {
+                    return Err(anyhow!("unsupported partitioning strategy '{}'", strategy));
+                }
+            }
+        }
+        if let Some(cluster) = &mf.cluster {
+            for g in &cluster.groups {
+                if g.part_begin > g.part_end { return Err(anyhow!("cluster group part_begin > part_end")); }
+                if g.part_end >= mf.partitions { return Err(anyhow!("cluster group part_end out of range")); }
+                if g.replica_set.is_empty() { return Err(anyhow!("cluster group replica_set must not be empty")); }
+                if let Some(leader) = &g.leader {
+                    if !g.replica_set.iter().any(|n| n == leader) {
+                        return Err(anyhow!("cluster group leader '{}' not in replica_set", leader));
+                    }
+                }
+            }
+            if let Some(rf) = cluster.replication_factor {
+                if rf == 0 { return Err(anyhow!("replication_factor must be > 0")); }
+                // Best-effort check: ensure every group has at least rf replicas
+                for g in &cluster.groups {
+                    if (g.replica_set.len() as u32) < rf {
+                        return Err(anyhow!("cluster group has fewer replicas than replication_factor"));
+                    }
+                }
+            }
         }
         // Basic existence checks for referenced segments (best-effort; read-only skeleton)
         for seg in &mf.nodes.dict_segments {
@@ -188,6 +253,7 @@ pub mod delta_log;
 pub mod recovery;
 pub mod txn;
 pub mod compaction;
+pub mod metrics;
 
 // ---------------- Basic runtime placeholder ----------------
 
@@ -206,6 +272,7 @@ impl GraphRuntime for BasicRuntime {
         _time_start: Option<&str>,
         _time_end: Option<&str>,
     ) -> Result<DataFrame> {
+        gsm::inc_bfs_calls();
         // Open handle and load immutable structures.
         let mut handle = GraphHandle::open(_store, graph_qualified)?;
         handle.ensure_loaded()?;
@@ -334,7 +401,23 @@ impl GraphHandle {
             .dict_segments
             .last()
             .map(|rel| self.root.join(rel));
-        let dict = if let Some(p) = dict_path_opt { NodeDict::open(&p)? } else { NodeDict::default() };
+        let mut dict = if let Some(p) = dict_path_opt { NodeDict::open(&p)? } else { NodeDict::default() };
+        // Overlay node delta log entries (if any) to reflect recent upserts/deletes before next dict compaction
+        let nlog_path = self.root.join("nodes").join("delta.log");
+        if nlog_path.exists() {
+            if let Ok(mut rdr) = NodeDeltaLogReader::open(&nlog_path) {
+                if let Ok(recs) = rdr.read_all_nodes() {
+                    // Apply in file order; idempotency ensured by future seen-set if needed
+                    for r in recs {
+                        match r.op {
+                            0 => dict.upsert(&r.label, &r.key, r.node_id),
+                            1 => dict.delete(&r.label, &r.key),
+                            _ => {}
+                        }
+                    }
+                }
+            }
+        }
 
         // Build partitions vector sized to manifest.partitions
         let mut parts: Vec<PartitionState> = (0..self.manifest.partitions)
@@ -354,7 +437,7 @@ impl GraphHandle {
         }
 
         // First, persist committed WAL records into delta logs to bound recovery.
-        let _ = crate::server::graphstore::recovery::replay_wal_to_delta(&self.root);
+        let _ = crate::server::graphstore::recovery::replay_wal_to_delta(&self.root).map(|_| { gsm::inc_recoveries(); () });
 
         // Load persisted delta logs per partition if present and merge into in-memory indexes
         let edges_dir = self.root.join("edges");
@@ -439,6 +522,127 @@ impl GraphHandle {
         self.write_and_rotate_manifest(&next)?;
         // Update in-memory manifest
         self.manifest = next;
+        // Refresh in-memory parts and clear applied deltas so future reads hit compacted CSR
+        self.parts = None;
+        self.ensure_loaded()?;
         Ok(self.manifest.epoch.unwrap())
+    }
+
+    /// Evaluate simple GC thresholds against in-memory delta indexes and, if exceeded,
+    /// compact and publish a new manifest. Returns true if a compaction occurred.
+    pub fn run_gc_if_needed(&mut self) -> Result<bool> {
+        self.ensure_loaded()?;
+        // Read thresholds from env. Defaults are conservative and can be tuned.
+        let max_delta_records: i64 = std::env::var("CLARIUM_GRAPH_GC_MAX_DELTA_RECORDS").ok()
+            .and_then(|s| s.parse::<i64>().ok()).unwrap_or(10_000);
+        let tombstone_ratio_ppm: i64 = std::env::var("CLARIUM_GRAPH_GC_TOMBSTONE_RATIO_PPM").ok()
+            .and_then(|s| s.parse::<i64>().ok()).unwrap_or(300_000); // 30%
+        // Age-based GC requires per-record timestamps; omitted in this phase.
+
+        let mut need_compact = false;
+        if let Some(parts) = &self.parts {
+            for p in parts {
+                if let Some(d) = &p.delta {
+                    let adds = d.adds.values().map(|v| v.len() as i64).sum::<i64>();
+                    let tombs = d.tombstones.len() as i64;
+                    let total = adds + tombs;
+                    if total >= max_delta_records { need_compact = true; break; }
+                    if total > 0 {
+                        let ratio_ppm = (tombs * 1_000_000) / total.max(1);
+                        if ratio_ppm >= tombstone_ratio_ppm { need_compact = true; break; }
+                    }
+                }
+            }
+        }
+        if need_compact {
+            let _ = self.compact_and_publish()?;
+            return Ok(true);
+        }
+        Ok(false)
+    }
+}
+
+/// GraphStore status snapshot as a DataFrame for observability.
+/// Columns: graph, epoch, partitions, bfs_calls, wal_commits, recoveries
+pub fn graphstore_status_df(store: &SharedStore, graph: &str) -> Result<DataFrame> {
+    let mut epoch_val: i64 = -1;
+    let mut parts_val: i64 = 0;
+    let mut delta_adds: i64 = 0;
+    let mut delta_tombs: i64 = 0;
+    let mut backlog: i64 = 0;
+    if let Ok(mut handle) = GraphHandle::open(store, graph) {
+        let _ = handle.ensure_loaded();
+        epoch_val = handle.manifest.epoch.unwrap_or(0) as i64;
+        parts_val = handle.manifest.partitions as i64;
+        if let Some(parts) = &handle.parts {
+            for p in parts {
+                if let Some(d) = &p.delta {
+                    delta_adds += d.adds.values().map(|v| v.len() as i64).sum::<i64>();
+                    delta_tombs += d.tombstones.len() as i64;
+                }
+            }
+        }
+    }
+    backlog = delta_adds + delta_tombs;
+    // Config snapshot: group-commit window and GC thresholds from env (manifest options could be added similarly)
+    let commit_window_ms: i64 = std::env::var("CLARIUM_GRAPH_COMMIT_WINDOW_MS").ok().and_then(|s| s.parse::<i64>().ok()).unwrap_or(3);
+    let gc_max_delta_records: i64 = std::env::var("CLARIUM_GRAPH_GC_MAX_DELTA_RECORDS").ok().and_then(|s| s.parse::<i64>().ok()).unwrap_or(10_000);
+    let gc_tombstone_ratio_ppm: i64 = std::env::var("CLARIUM_GRAPH_GC_TOMBSTONE_RATIO_PPM").ok().and_then(|s| s.parse::<i64>().ok()).unwrap_or(300_000); // 30%
+    let gc_max_delta_age_ms: i64 = std::env::var("CLARIUM_GRAPH_GC_MAX_DELTA_AGE_MS").ok().and_then(|s| s.parse::<i64>().ok()).unwrap_or(5 * 60_000);
+    let snap = gsm::snapshot();
+    let df = DataFrame::new(vec![
+        Series::new("graph".into(), vec![graph.to_string()]).into(),
+        Series::new("epoch".into(), vec![epoch_val]).into(),
+        Series::new("partitions".into(), vec![parts_val]).into(),
+        Series::new("delta_adds".into(), vec![delta_adds]).into(),
+        Series::new("delta_tombstones".into(), vec![delta_tombs]).into(),
+        Series::new("compaction_backlog".into(), vec![backlog]).into(),
+        Series::new("commit_window_ms".into(), vec![commit_window_ms]).into(),
+        Series::new("gc_max_delta_records".into(), vec![gc_max_delta_records]).into(),
+        Series::new("gc_tombstone_ratio_ppm".into(), vec![gc_tombstone_ratio_ppm]).into(),
+        Series::new("gc_max_delta_age_ms".into(), vec![gc_max_delta_age_ms]).into(),
+        Series::new("bfs_calls".into(), vec![snap.bfs_calls as i64]).into(),
+        Series::new("wal_commits".into(), vec![snap.wal_commits as i64]).into(),
+        Series::new("recoveries".into(), vec![snap.recoveries as i64]).into(),
+    ])?;
+    Ok(df)
+}
+
+/// Scan `db_root` for all `*.gstore` graphs and attempt GC on each.
+pub fn gc_scan_all_graphs(store: &SharedStore) {
+    // Walk db_root and find any path ending with .gstore/meta/manifest.json
+    let root = store.0.lock().root_path().clone();
+    let mut graphs: Vec<String> = Vec::new();
+    if let Ok(dbs) = std::fs::read_dir(&root) {
+        for dbe in dbs.flatten() {
+            if !dbe.path().is_dir() { continue; }
+            if let Ok(schemas) = std::fs::read_dir(dbe.path()) {
+                for sche in schemas.flatten() {
+                    if !sche.path().is_dir() { continue; }
+                    if let Ok(entries) = std::fs::read_dir(sche.path()) {
+                        for ent in entries.flatten() {
+                            let p = ent.path();
+                            if p.extension().and_then(|s| s.to_str()).map(|e| e.eq_ignore_ascii_case("gstore")).unwrap_or(false) {
+                                // Rebuild qualified graph name from folder path: db/schema/name
+                                if let (Some(db), Some(schema), Some(name_os)) = (
+                                    dbe.file_name().to_str(),
+                                    sche.file_name().to_str(),
+                                    p.file_stem(),
+                                ) {
+                                    if let Some(name) = name_os.to_str() {
+                                        graphs.push(format!("{}/{}/{}", db, schema, name));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    for g in graphs {
+        if let Ok(mut handle) = GraphHandle::open(store, &g) {
+            let _ = handle.run_gc_if_needed();
+        }
     }
 }

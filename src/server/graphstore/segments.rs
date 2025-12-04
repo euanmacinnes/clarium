@@ -171,6 +171,27 @@ impl NodeDict {
         }
         None
     }
+
+    /// Apply an upsert of a node mapping. If `node_id` is None, this call is a no-op.
+    pub fn upsert(&mut self, label: &str, key: &str, node_id: Option<u64>) {
+        if let Some(id) = node_id {
+            let k = (label.to_string(), key.to_string());
+            self.map.insert(k.clone(), id);
+            let idx = id as usize;
+            if self.rev.len() <= idx { self.rev.resize(idx + 1, (String::new(), String::new())); }
+            self.rev[idx] = k;
+        }
+    }
+
+    /// Apply a delete of a node mapping.
+    pub fn delete(&mut self, label: &str, key: &str) {
+        if let Some(id) = self.map.remove(&(label.to_string(), key.to_string())) {
+            let idx = id as usize;
+            if idx < self.rev.len() {
+                self.rev[idx] = (String::new(), String::new());
+            }
+        }
+    }
 }
 
 // ---------------- Utilities ----------------

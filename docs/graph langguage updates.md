@@ -118,3 +118,73 @@ SELECT * FROM graph_neighbors('planner','Calls',2) ORDER BY hop, node_id;
 ```
 
 If you approve, I’ll wire the parser and session state to support `USE GRAPH`, `UNSET GRAPH`, and `SHOW CURRENT GRAPH`, and make the MATCH planner consult the session default when `USING GRAPH` is omitted. The TVF convenience overload can be gated behind a feature flag to keep the surface conservative by default.
+# Graph language updates
+
+This document describes the SQL-integrated MATCH grammar, USE GRAPH session defaults, and related commands.
+
+## USE GRAPH session default
+
+- Set default graph for the session: `USE GRAPH db/schema/graph;`
+- Clear default: `UNSET GRAPH;`
+- Inspect: `SHOW CURRENT GRAPH;`
+
+The default graph is used when a statement (e.g., MATCH, SHOW GRAPH STATUS) omits an explicit graph.
+
+## MATCH — linear patterns with expressions
+
+Supported forms (first round):
+
+- Neighbors (bounded hops):
+```
+MATCH [USING GRAPH 'db/schema/graph']
+  (s:Label { key: <expr> })-[:Type*L..U]->(t:Label)
+[WHERE <boolean_expr>]
+RETURN <projection_expr_list>
+[ORDER BY <expr> [ASC|DESC], ...]
+[LIMIT <n>]
+```
+Rewrites to `SELECT ... FROM graph_neighbors(graph, start, etype, U)` and applies WHERE/ORDER/LIMIT.
+
+- Shortest path (weighted/unweighted):
+```
+MATCH SHORTEST [USING GRAPH 'db/schema/graph']
+  (s:Label { key: <expr> })-[:Type*L..U]->(t:Label { key: <expr> })
+RETURN <projection_expr_list>
+```
+Rewrites to `SELECT ... FROM graph_paths(graph, src, dst, U, etype)`.
+
+### Identifier mapping in expressions
+
+- `t.key` → `node_id`
+- `prev.key` → `prev_id`
+- `s.key` → substituted literal of the start key expression
+- `hop` → `hop`
+
+These mappings apply in `RETURN`, `WHERE`, and `ORDER BY`.
+
+### Subquery support
+
+`MATCH` compiles to a regular `SELECT`, so it can be used:
+- As a table source: `FROM (MATCH ...) AS m`
+- In CTEs: `WITH m AS (MATCH ...) SELECT ... FROM m`
+- In LATERAL joins
+
+## SHOW GRAPH STATUS
+
+`SHOW GRAPH STATUS [<graph>]` returns a single-row table with:
+- `epoch`, `partitions`, `delta_adds`, `delta_tombstones`, `compaction_backlog`
+- `commit_window_ms`, `gc_max_delta_records`, `gc_tombstone_ratio_ppm`, `gc_max_delta_age_ms`
+- runtime metrics: `bfs_calls`, `wal_commits`, `recoveries`
+
+## GC DDL
+
+Trigger graphstore compaction based on GC thresholds:
+
+- Per graph: `GC GRAPH db/schema/graph;`
+- Session default: `USE GRAPH db/schema/g; GC GRAPH;`
+- All graphs: `GC GRAPH;` (when no default is set)
+
+Thresholds can be tuned via environment variables:
+- `CLARIUM_GRAPH_GC_MAX_DELTA_RECORDS` (default 10_000)
+- `CLARIUM_GRAPH_GC_TOMBSTONE_RATIO_PPM` (default 300_000 → 30%)
+- `CLARIUM_GRAPH_GC_MAX_DELTA_AGE_MS` (reserved)

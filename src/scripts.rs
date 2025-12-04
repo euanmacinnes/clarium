@@ -304,6 +304,9 @@ impl ScriptRegistry {
                         DataType::String => "string",
                         DataType::Null => "null",
                         DataType::Datetime(_, _) => "datetime",
+                        DataType::List(inner) => {
+                            if matches!(**inner, DataType::Float64) { "vector" } else { "list" }
+                        }
                         _ => "other",
                     }).collect();
                     let _ = writeln!(out, "  - {}: kind={}, returns={:?}, nullable={}, version={}", name, kind, returns, meta.nullable, meta.version);
@@ -623,6 +626,7 @@ fn str_to_dtype(s: &str) -> Result<DataType> {
         "float64" | "double" | "float" | "number" => DataType::Float64,
         "boolean" | "bool" => DataType::Boolean,
         "utf8" | "string" | "str" | "text" => DataType::String,
+        "vector" => DataType::List(Box::new(DataType::Float64)),
         "null" => DataType::Null,
         // datetime types could be specified as datetime[ms]
         v if v.starts_with("datetime") => DataType::Datetime(polars::prelude::TimeUnit::Milliseconds, None),

@@ -6,9 +6,19 @@ use std::path::Path;
 use crate::server::query::Command;
 use crate::scripts::scripts_dir_for;
 use crate::storage::SharedStore;
+use crate::server::graphstore::graphstore_status_df;
 
 pub async fn execute_show(store: &SharedStore, cmd: Command) -> Result<Value> {
     match cmd {
+        Command::ShowGraphStatus { name } => {
+            // Determine graph: explicit arg wins; else fall back to session default graph
+            let graph = if let Some(n) = name { n } else {
+                crate::system::get_current_graph_opt()
+                    .ok_or_else(|| anyhow::anyhow!("SHOW GRAPH STATUS: missing graph name; set it with USE GRAPH or provide explicitly"))?
+            };
+            let df = graphstore_status_df(store, &graph)?;
+            return Ok(crate::server::exec::dataframe_to_json(&df));
+        }
         Command::ShowTransactionIsolation => single_kv("transaction_isolation", "read committed"),
         Command::ShowStandardConformingStrings => single_kv("standard_conforming_strings", "on"),
         Command::ShowServerVersion => single_kv("server_version", "14.0"),

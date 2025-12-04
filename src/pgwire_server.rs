@@ -510,7 +510,7 @@ async fn handle_query(socket: &mut tokio::net::TcpStream, store: &SharedStore, _
         let q_trim = stmt.trim();
         debug!("pgwire simple query [{}]: {}", idx, q_trim);
         let q_effective = exec::normalize_query_with_defaults(q_trim, &state.current_database, &state.current_schema);
-        match exec::execute_query(store, &q_effective).await {
+        match exec::execute_query_safe(store, &q_effective).await {
             Ok(val) => {
                 let upper = q_trim.chars().take(32).collect::<String>().to_uppercase();
                 // Treat SHOW as a row-returning command similar to SELECT for client compatibility
@@ -1072,7 +1072,7 @@ async fn describe_row_description(socket: &mut tokio::net::TcpStream, store: &Sh
     let up = q.to_uppercase();
     if up.starts_with("SELECT") || up.starts_with("WITH ") || up.starts_with("SHOW ") {
         let q_eff = exec::normalize_query_with_defaults(q, &state.current_database, &state.current_schema);
-        match exec::execute_query(store, &q_eff).await {
+        match exec::execute_query_safe(store, &q_eff).await {
             Ok(val) => {
                 let (cols, _data) = match &val {
                     serde_json::Value::Array(arr) => to_table(arr.clone())?,
@@ -1153,7 +1153,7 @@ async fn handle_execute(socket: &mut tokio::net::TcpStream, store: &SharedStore,
     debug!(target: "pgwire", "execute effective SQL: {}", q_effective);
 
     // Delegate execution to common server executor
-    match exec::execute_query(store, &q_effective).await {
+    match exec::execute_query_safe(store, &q_effective).await {
         Ok(val) => {
             let upper = q_trim.chars().take(32).collect::<String>().to_uppercase();
             let is_select_like = upper.starts_with("SELECT") || upper.starts_with("WITH ");

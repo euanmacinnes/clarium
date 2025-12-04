@@ -12,6 +12,16 @@ pub fn parse_use(s: &str) -> Result<Command> {
         let normalized_name = crate::ident::normalize_identifier(name);
         return Ok(Command::UseDatabase { name: normalized_name });
     }
+    if up.starts_with("GRAPH ") {
+        // USE GRAPH <qualified> | USE GRAPH NONE
+        let name = rest[6..].trim();
+        if name.is_empty() { anyhow::bail!("USE GRAPH: missing name"); }
+        if name.eq_ignore_ascii_case("NONE") {
+            return Ok(Command::UnsetGraph);
+        }
+        let normalized_name = crate::ident::normalize_identifier(name);
+        return Ok(Command::UseGraph { name: normalized_name });
+    }
     if up.starts_with("SCHEMA ") {
         let name = rest[7..].trim();
         if name.is_empty() { anyhow::bail!("USE SCHEMA: missing name"); }

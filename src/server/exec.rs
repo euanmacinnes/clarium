@@ -92,7 +92,8 @@ pub async fn execute_query(store: &SharedStore, text: &str) -> Result<serde_json
         | Command::ShowSchemas
         | Command::ShowTables
         | Command::ShowObjects
-        | Command::ShowScripts => {
+        | Command::ShowScripts
+        | Command::ShowGraphStatus { .. } => {
             self::exec_show::execute_show(store, cmd).await
         }
         // DESCRIBE <object>
@@ -113,6 +114,48 @@ pub async fn execute_query(store: &SharedStore, text: &str) -> Result<serde_json
         | Command::ShowGraphs => {
             self::exec_graph::execute_graph(store, cmd)
         }
+        // Graph GC command
+        Command::GcGraph { name } => {
+            // Determine target: explicit name > session default > all graphs
+            if let Some(g) = name {
+                // Per-graph GC
+                let mut handle = crate::server::graphstore::GraphHandle::open(store, &g)?;
+                let did = handle.run_gc_if_needed()?;
+                Ok(serde_json::json!({"status":"ok","graph": g, "compacted": did}))
+            } else if let Some(gdef) = crate::system::get_current_graph_opt() {
+                let mut handle = crate::server::graphstore::GraphHandle::open(store, &gdef)?;
+                let did = handle.run_gc_if_needed()?;
+                Ok(serde_json::json!({"status":"ok","graph": gdef, "compacted": did}))
+            } else {
+                crate::server::graphstore::gc_scan_all_graphs(store);
+                Ok(serde_json::json!({"status":"ok","scope":"all"}))
+            }
+        }
+        // MATCH rewrite execution
+        Command::MatchRewrite { sql } => {
+            // Replace session default placeholder if present
+            let mut sql2 = sql.clone();
+            if sql2.contains("__SESSION_DEFAULT__") {
+                let g = crate::system::get_current_graph_opt()
+                    .ok_or_else(|| anyhow::anyhow!("MATCH: no graph specified and no session default set; use USING GRAPH or USE GRAPH."))?;
+                let quoted = if g.starts_with('\'') && g.ends_with('\'') { g } else { format!("'{}'", g.replace('\'', "''")) };
+                sql2 = sql2.replace("__SESSION_DEFAULT__", &quoted);
+            }
+            // Parse the rewritten SELECT and execute
+            match crate::server::query::parse(&sql2)? {
+                crate::server::query::Command::Select(q) => {
+                    let df = run_select(store, &q)?;
+                    Ok(dataframe_to_json(&df))
+                }
+                crate::server::query::Command::SelectUnion { queries, all } => {
+                    let out = crate::server::exec::exec_select::handle_select_union(store, &queries, all)?;
+                    Ok(dataframe_to_json(&out))
+                }
+                other => {
+                    anyhow::bail!(format!("MATCH rewrite did not produce a SELECT: {:?}", other));
+                }
+            }
+        }
         // USE and SET commands affect only session defaults; update thread-local defaults
         Command::UseDatabase { name } => {
             if name.eq_ignore_ascii_case("none") {
@@ -121,6 +164,22 @@ pub async fn execute_query(store: &SharedStore, text: &str) -> Result<serde_json
                 crate::system::set_current_database(&name);
             }
             Ok(serde_json::json!({"status":"ok"}))
+        }
+        Command::UseGraph { name } => {
+            if name.eq_ignore_ascii_case("none") {
+                crate::system::unset_current_graph();
+            } else {
+                crate::system::set_current_graph(&name);
+            }
+            Ok(serde_json::json!({"status":"ok"}))
+        }
+        Command::UnsetGraph => {
+            crate::system::unset_current_graph();
+            Ok(serde_json::json!({"status":"ok"}))
+        }
+        Command::ShowCurrentGraph => {
+            let g = crate::system::get_current_graph_opt();
+            Ok(serde_json::json!([{ "graph": g.unwrap_or_default() }]))
         }
         Command::UseSchema { name } => {
             if name.eq_ignore_ascii_case("none") {
@@ -350,6 +409,8 @@ pub async fn execute_query(store: &SharedStore, text: &str) -> Result<serde_json
                     "DISCRETE" | "INT64" | "INTEGER" | "INT" => Ok(DataType::Int64),
                     "LABEL" | "STRING" | "UTF8" => Ok(DataType::String),
                     "DATETIME" | "DATE" | "TIMESTAMP" => Ok(DataType::Int64), // epoch ms
+                    // Native vector column type backed by Polars List(Float64)
+                    "VECTOR" => Ok(DataType::List(Box::new(DataType::Float64))),
                     _ => Err(anyhow::anyhow!(format!("Unknown type: {}", s))),
                 }
             };
@@ -525,6 +586,36 @@ pub async fn execute_query(store: &SharedStore, text: &str) -> Result<serde_json
     }
 }
 
+/// Panic-safe wrapper around `execute_query`.
+///
+/// Executes the query on a spawned task so that any internal panic is captured by the runtime
+/// and converted to an error value instead of unwinding the current thread/task. This ensures
+/// DDL and other execution errors never terminate the serving thread and can be reported back
+/// to the user gracefully.
+pub async fn execute_query_safe(store: &SharedStore, text: &str) -> Result<serde_json::Value> {
+    use tracing::debug;
+    let text_owned = text.to_string();
+    let store_cloned = store.clone();
+    let handle = tokio::spawn(async move {
+        // Delegate to the regular executor; propagate its Result
+        execute_query(&store_cloned, &text_owned).await
+    });
+    match handle.await {
+        Ok(res) => res,
+        Err(join_err) => {
+            // Convert panic or cancellation into a user-visible error, without unwinding here
+            if join_err.is_panic() {
+                debug!(target: "exec", "execute_query_safe captured panic inside query task");
+                Err(anyhow::anyhow!("query execution failed due to an internal panic"))
+            } else if join_err.is_cancelled() {
+                Err(anyhow::anyhow!("query execution was cancelled"))
+            } else {
+                Err(anyhow::anyhow!(format!("query execution task join error: {}", join_err)))
+            }
+        }
+    }
+}
+
 
 // dataframe_to_tabular and execute_select_df are provided by exec_helpers and re-exported above.
 
@@ -535,7 +626,7 @@ pub async fn execute_query_with_defaults(store: &SharedStore, text: &str, defaul
         &defaults.current_database,
         &defaults.current_schema,
     );
-    execute_query(store, &effective).await
+    execute_query_safe(store, &effective).await
 }
 
 #[cfg(test)]

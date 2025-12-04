@@ -5,6 +5,18 @@ use crate::server::query::*;
 
 pub fn parse_show(s: &str) -> Result<Command> {
     let up = s.trim().to_uppercase();
+    if up == "SHOW CURRENT GRAPH" { return Ok(Command::ShowCurrentGraph); }
+    // SHOW GRAPH STATUS [<name>]
+    if up.starts_with("SHOW GRAPH STATUS") {
+        let tail = s.trim()["SHOW GRAPH STATUS".len()..].trim();
+        if tail.is_empty() || tail == ";" {
+            return Ok(Command::ShowGraphStatus { name: None });
+        } else {
+            let name = tail.trim_matches(';').trim();
+            let normalized_name = crate::ident::normalize_identifier(name);
+            return Ok(Command::ShowGraphStatus { name: Some(normalized_name) });
+        }
+    }
     if up == "SHOW TRANSACTION ISOLATION LEVEL" { return Ok(Command::ShowTransactionIsolation); }
     if up == "SHOW STANDARD_CONFORMING_STRINGS" { return Ok(Command::ShowStandardConformingStrings); }
     if up.starts_with("SHOW SERVER_VERSION") { return Ok(Command::ShowServerVersion); }

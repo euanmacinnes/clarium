@@ -15,10 +15,16 @@ pub mod query_parse_select;
 pub mod query_parse_select_list;
 pub mod query_parse_show;
 pub mod query_parse_slice;
+pub mod query_parse_match;
+pub mod query_parse_gc;
 pub mod query_parse_update;
 pub mod query_parse_user;
-pub mod query_parse_where;
 pub mod query_parse_where_tokens;
+pub mod query_parse_where;
+
+// Import MATCH parser entrypoint for top-level dispatch
+use crate::server::query::query_parse_match::parse_match;
+use crate::server::query::query_parse_gc::parse_gc;
 
 // Re-export common query types and helpers so existing paths like
 // `crate::server::query::Query` continue to work after restructuring.
@@ -34,6 +40,8 @@ pub use query_parse_select_list::*;
 pub use query_parse_select::*;
 pub use query_parse_show::*;
 pub use query_parse_slice::*;
+pub use query_parse_match::*;
+pub use query_parse_gc::*;
 pub use query_parse_update::*;
 pub use query_parse_user::*;
 pub use query_parse_where_tokens::*;
@@ -133,6 +141,16 @@ pub enum Command {
     DropGraph { name: String },
     ShowGraph { name: String },
     ShowGraphs,
+    // Graph runtime status
+    ShowGraphStatus { name: Option<String> },
+    // Session graph defaults
+    UseGraph { name: String },
+    UnsetGraph,
+    ShowCurrentGraph,
+    // MATCH (rewritten to SELECT)
+    MatchRewrite { sql: String },
+    // GC DDL
+    GcGraph { name: Option<String> },
     // DESCRIBE <object> (table/view) and DESCRIBE KEY ... (existing)
     // For backward compatibility, DESCRIBE KEY is parsed specially; otherwise
     // we treat DESCRIBE <object> as DescribeObject with a possibly unqualified name.
@@ -177,6 +195,12 @@ pub fn parse(input: &str) -> Result<Command> {
             let q = parse_select(s)?;
             return Ok(Command::Select(q));
         }
+    }
+    if sup.starts_with("MATCH ") || sup == "MATCH" {
+        return parse_match(s);
+    }
+    if sup.starts_with("GC ") || sup == "GC" {
+        return parse_gc(s);
     }
     if sup.starts_with("SHOW ") || sup == "SHOW" {
         return parse_show(s);

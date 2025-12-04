@@ -14,6 +14,13 @@ Keep query paring and execution separate and keep each DDL in separate files for
 
 Add permanent debug tprintln commands to enable faster debugging. These commands will not impact release performance.
 
+DDL error handling should not rely on bail or panics, but exit gracefully to report back to the user without
+terminating the thread.
+
+Do not use workarounds for bugs or incomplete features, instead, complete the features and fix the bugs.
+
+Do not use shortcuts. Plan for the proper full implementation of the feature.
+
 
 # Junie Polars Guidelines (Polars 0.51+)
 

@@ -169,6 +169,24 @@ pub async fn run_with_ports(http_port: u16, pg_port: Option<u16>, db_root: &str)
         });
     }
 
+    // Background GraphStore GC ticker (optional)
+    {
+        let store_for_gc = store.clone();
+        // Interval in seconds; default 60s; set to 0 or negative to disable
+        let interval_sec: i64 = std::env::var("CLARIUM_GRAPH_GC_INTERVAL_SEC").ok().and_then(|s| s.parse::<i64>().ok()).unwrap_or(60);
+        if interval_sec > 0 {
+            tokio::spawn(async move {
+                use std::time::Duration;
+                loop {
+                    crate::server::graphstore::gc_scan_all_graphs(&store_for_gc);
+                    tokio::time::sleep(Duration::from_secs(interval_sec as u64)).await;
+                }
+            });
+        } else {
+            tracing::info!("graph_gc_ticker" = false, "GraphStore background GC ticker disabled");
+        }
+    }
+
     let app_state = AppState {
         store: store.clone(),
         db_root: db_root.to_string(),
@@ -632,7 +650,11 @@ fn to_ck_and_db(cmd: &query::Command) -> (security::CommandKind, Option<String>)
         query::Command::CreateGraph { .. }
         | query::Command::DropGraph { .. }
         | query::Command::ShowGraph { .. }
-        | query::Command::ShowGraphs => (security::CommandKind::Other, None),
+        | query::Command::ShowGraphs
+        | query::Command::ShowGraphStatus { .. }
+        | query::Command::UseGraph { .. }
+        | query::Command::UnsetGraph
+        | query::Command::ShowCurrentGraph => (security::CommandKind::Other, None),
         // Global session-affecting and SHOW
         query::Command::UseDatabase { .. } | query::Command::UseSchema { .. } | query::Command::Set { .. } => (security::CommandKind::Other, None),
         query::Command::ShowTransactionIsolation

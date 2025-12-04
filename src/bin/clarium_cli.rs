@@ -13,7 +13,7 @@ use anyhow::{anyhow, Context, Result};
 use reqwest::header::{HeaderMap, HeaderValue};
 use reqwest::Url;
 
-use clarium::server::exec::execute_query;
+use clarium::server::exec::execute_query_safe;
 use clarium::storage::SharedStore;
 
 fn print_usage(program: &str) {
@@ -436,7 +436,7 @@ fn main() -> Result<()> {
             std::process::exit(2);
         }
     } else {
-        rt.block_on(async { execute_query(&store, &qtext).await })
+        rt.block_on(async { execute_query_safe(&store, &qtext).await })
     };
 
     match result {
@@ -537,7 +537,7 @@ fn run_repl(rt: tokio::runtime::Runtime, store: SharedStore) -> Result<()> {
                 Err(e) => eprintln!("error: {}", e),
             }
         } else {
-            match rt.block_on(async { execute_query(&store, line).await }) {
+            match rt.block_on(async { execute_query_safe(&store, line).await }) {
                 Ok(val) => { let pretty = serde_json::to_string_pretty(&val).unwrap_or_else(|_| val.to_string()); println!("{}", pretty); }
                 Err(e) => eprintln!("error: {}", e),
             }
@@ -661,7 +661,7 @@ fn run_repl_with_autoconnect(
                 Err(e) => eprintln!("error: {}", e),
             }
         } else {
-            match rt.block_on(async { execute_query(&store, line).await }) {
+            match rt.block_on(async { execute_query_safe(&store, line).await }) {
                 Ok(val) => { let pretty = serde_json::to_string_pretty(&val).unwrap_or_else(|_| val.to_string()); println!("{}", pretty); }
                 Err(e) => eprintln!("error: {}", e),
             }

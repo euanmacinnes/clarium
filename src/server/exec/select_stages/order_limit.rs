@@ -456,14 +456,34 @@ fn ann_order_dataframe(
     let col_series = df.column(&cname)?;
     // Create score series
     let mut scores: Vec<f64> = Vec::with_capacity(df.height());
-    // Iterate row-wise and attempt to read string values regardless of underlying dtype
+    // Iterate row-wise and read vectors from either native List(Float64/Int64) cells or fallback string encodings
     for i in 0..col_series.len() {
-        let cell = col_series.get(i);
-        let s_owned: String = match cell {
-            Ok(v) => v.get_str().map(|x| x.to_string()).unwrap_or_default(),
-            Err(_) => String::new(),
+        let av = col_series.get(i);
+        // Prefer native list extraction for robustness across Polars versions
+        let v: Vec<f64> = match av {
+            AnyValue::List(inner) => {
+                let ser = inner;
+                let mut out: Vec<f64> = Vec::with_capacity(ser.len());
+                for li in 0..ser.len() {
+                    let av2 = ser.get(li);
+                    match av2 {
+                        AnyValue::Float64(f) => out.push(*f),
+                        AnyValue::Int64(iv) => out.push(*iv as f64),
+                        AnyValue::Float32(f) => out.push(*f as f64),
+                        AnyValue::Int32(iv) => out.push(*iv as f64),
+                        _ => out.push(0.0),
+                    }
+                }
+                out
+            }
+            AnyValue::String(s) => parse_vec_literal(s).unwrap_or_default(),
+            AnyValue::StringOwned(s) => parse_vec_literal(s.as_str()).unwrap_or_default(),
+            other => {
+                // Fallback: stringify and parse literal like "[1,2,3]" or "1 2 3"
+                let s_owned = other.to_string();
+                parse_vec_literal(&s_owned).unwrap_or_default()
+            }
         };
-        let v = parse_vec_literal(&s_owned).unwrap_or_default();
         let score = match func {
             f if f.eq_ignore_ascii_case("vec_l2") => l2_distance(&v, &qvec),
             f if f.eq_ignore_ascii_case("cosine_sim") => cosine_similarity(&v, &qvec),
