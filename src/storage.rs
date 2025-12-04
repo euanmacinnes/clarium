@@ -473,10 +473,39 @@ impl Store {
             let new_times_vec = df.column("_time")?.i64()?.into_no_null_iter().collect::<Vec<i64>>();
             let new_times_set: std::collections::HashSet<i64> = new_times_vec.into_iter().collect();
             let times_ca = old_df.column("_time")?.i64()?;
-            let mask_keep: Vec<bool> = times_ca.into_iter().map(|opt| opt.map(|v| !new_times_set.contains(&v)).unwrap_or(true)).collect();
+            let mask_keep: Vec<bool> = times_ca
+                .into_iter()
+                .map(|opt| opt.map(|v| !new_times_set.contains(&v)).unwrap_or(true))
+                .collect();
             let mask_series = Series::new("keep".into(), mask_keep);
             let old_filtered = old_df.filter(mask_series.bool()?)?;
-            old_filtered.vstack(&df)?
+            // Align columns by name before vstack to avoid order/name mismatches
+            let acc_cols = old_filtered.get_column_names();
+            let df_cols = df.get_column_names();
+            if acc_cols == df_cols {
+                old_filtered.vstack(&df)?
+            } else {
+                // If sets are equal but order differs, reorder df to match acc
+                let acc_set: std::collections::HashSet<&str> = acc_cols.iter().map(|s| s.as_str()).collect();
+                let df_set: std::collections::HashSet<&str> = df_cols.iter().map(|s| s.as_str()).collect();
+                if acc_set == df_set {
+                    let mut reordered: Vec<Column> = Vec::with_capacity(acc_cols.len());
+                    for name in acc_cols {
+                        let s = df.column(name)?.clone();
+                        reordered.push(s.into());
+                    }
+                    let df2 = DataFrame::new(reordered)?;
+                    old_filtered.vstack(&df2)?
+                } else {
+                    // Fallback: select common columns in accumulator order
+                    let mut common: Vec<Column> = Vec::new();
+                    for name in old_filtered.get_column_names() {
+                        if let Ok(s) = df.column(name) { common.push(s.clone().into()); }
+                    }
+                    let df2 = DataFrame::new(common)?;
+                    old_filtered.vstack(&df2)?
+                }
+            }
         } else {
             df.clone()
         };

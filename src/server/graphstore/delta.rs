@@ -1,0 +1,95 @@
+//! GraphStore delta indexes (in-memory) and WAL recovery skeleton
+//! --------------------------------------------------------------
+//! Builds per-partition in-memory delta indexes (adds and tombstones) by
+//! scanning the WAL and applying only committed transactions. This module is
+//! intentionally read-focused for now: it does not yet implement append-only
+//! delta log files on disk; instead, it provides the recovery path needed to
+//! materialize recent writes for read merging.
+
+use anyhow::{anyhow, Context, Result};
+use std::collections::{HashMap, HashSet};
+use std::path::Path;
+
+use super::wal::{WalReader, WalRecord, TxnData};
+
+#[derive(Debug, Default)]
+pub struct PartitionDeltaIndex {
+    /// Map of src_id -> appended neighbors (dst_ids) to consider in addition to CSR
+    pub adds: HashMap<u64, Vec<u64>>,
+    /// Set of tombstones (src,dst) marking deletions that should be excluded
+    pub tombstones: HashSet<(u64, u64)>,
+}
+
+impl PartitionDeltaIndex {
+    pub fn add_edge(&mut self, src: u64, dst: u64) {
+        self.adds.entry(src).or_default().push(dst);
+    }
+    pub fn del_edge(&mut self, src: u64, dst: u64) { self.tombstones.insert((src, dst)); }
+}
+
+/// Build per-partition delta indexes by reading a WAL file and applying
+/// committed transactions only. Idempotent: if the same txn_id appears
+/// twice, the resulting indexes are equivalent.
+pub fn build_indexes_from_wal(wal_path: &Path) -> Result<HashMap<u32, PartitionDeltaIndex>> {
+    if !wal_path.exists() { return Ok(HashMap::new()); }
+    let mut reader = WalReader::open(wal_path)?;
+    let recs = reader.read_all()?;
+    build_indexes_from_records(&recs)
+}
+
+/// Internal helper: build indexes from an in-memory list of WAL records.
+pub fn build_indexes_from_records(recs: &[WalRecord]) -> Result<HashMap<u32, PartitionDeltaIndex>> {
+    // 1) Collect Data records per txn_id
+    let mut by_txn: HashMap<u64, Vec<TxnData>> = HashMap::new();
+    let mut committed: HashSet<u64> = HashSet::new();
+    let mut aborted: HashSet<u64> = HashSet::new();
+    for r in recs {
+        match r {
+            WalRecord::Data(d) => { by_txn.entry(d.txn_id).or_default().push(d.clone()); },
+            WalRecord::Commit(c) => { committed.insert(c.txn_id); },
+            WalRecord::Abort(a) => { aborted.insert(a.txn_id); },
+            WalRecord::Begin(_) => {}
+        }
+    }
+    // 2) Apply committed (not aborted) txn data in txn_id order for determinism
+    let mut txns: Vec<u64> = by_txn.keys().copied().collect();
+    txns.sort_unstable();
+    let mut out: HashMap<u32, PartitionDeltaIndex> = HashMap::new();
+    for tid in txns {
+        if !committed.contains(&tid) || aborted.contains(&tid) { continue; }
+        if let Some(datas) = by_txn.get(&tid) {
+            for d in datas {
+                for e in &d.edges {
+                    let idx = out.entry(e.part).or_default();
+                    match e.op { 0 => idx.add_edge(e.src, e.dst), 1 => idx.del_edge(e.src, e.dst), _ => {} }
+                }
+            }
+        }
+    }
+    Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::server::graphstore::wal::{WalWriter, TxnBegin, TxnData, NodeOp, EdgeOp, TxnCommit};
+
+    #[test]
+    fn build_from_wal_records_committed_only() {
+        // Build an in-memory record list: committed txn with two edges and one delete
+        let d = TxnData{
+            txn_id: 1,
+            nodes: vec![NodeOp{ op:0, label:"Tool".into(), key:"planner".into(), node_id: Some(0) }],
+            edges: vec![
+                EdgeOp{ op:0, part:0, src:0, dst:1, etype_id:1 },
+                EdgeOp{ op:1, part:0, src:0, dst:2, etype_id:1 },
+            ]
+        };
+        let recs = vec![WalRecord::Begin(TxnBegin{ txn_id:1, snapshot_epoch:0 }), WalRecord::Data(d), WalRecord::Commit(TxnCommit{ txn_id:1, commit_epoch:1 })];
+        let idxs = build_indexes_from_records(&recs).unwrap();
+        let p0 = idxs.get(&0).unwrap();
+        assert!(p0.adds.get(&0).is_some());
+        assert_eq!(p0.adds.get(&0).unwrap().len(), 1);
+        assert!(p0.tombstones.contains(&(0,2)));
+    }
+}

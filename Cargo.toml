@@ -27,6 +27,10 @@ pgwire = { version = "0.33", optional = true, default-features = false }
 
 # Polars for convenient Parquet IO and simple grouping
 polars = { version = "0.51.0", default-features = false, features = ["lazy", "parquet", "fmt", "serde", "strings", "temporal"] }
+
+# GraphStore dependencies (readers, checksums)
+memmap2 = "0.9"
+crc32fast = "1.3"
 polars-core = { version = "0.51.0", default-features = false }
 
 # Password hashing

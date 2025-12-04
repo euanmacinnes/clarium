@@ -29,6 +29,7 @@ use crate::{storage::{SharedStore, Record}, security};
 pub mod query;
 pub mod exec;
 pub mod data_context;
+pub mod graphstore; // direct graph storage engine (scaffolding)
 use serde_json::json;
 use polars::prelude::*;
 use crate::scripts::{ScriptRegistry, scripts_dir_for, load_all_scripts_for_schema, load_global_default_scripts};

@@ -161,9 +161,19 @@ pub fn get_current_database() -> String {
     TLS_CURRENT_DB.with(|c| c.take()).map(|s| { TLS_CURRENT_DB.with(|c2| c2.set(Some(s.clone()))); s }).unwrap_or_else(|| "clarium".to_string())
 }
 
+/// Optional getter: returns None when current database is unset for this thread/session
+pub fn get_current_database_opt() -> Option<String> {
+    TLS_CURRENT_DB.with(|c| c.take()).map(|s| { TLS_CURRENT_DB.with(|c2| c2.set(Some(s.clone()))); s })
+}
+
 /// Get current schema name for this thread/session, or default "public"
 pub fn get_current_schema() -> String {
     TLS_CURRENT_SCHEMA.with(|c| c.take()).map(|s| { TLS_CURRENT_SCHEMA.with(|c2| c2.set(Some(s.clone()))); s }).unwrap_or_else(|| "public".to_string())
+}
+
+/// Optional getter: returns None when current schema is unset for this thread/session
+pub fn get_current_schema_opt() -> Option<String> {
+    TLS_CURRENT_SCHEMA.with(|c| c.take()).map(|s| { TLS_CURRENT_SCHEMA.with(|c2| c2.set(Some(s.clone()))); s })
 }
 
 /// Set current database for this thread/session
@@ -171,6 +181,12 @@ pub fn set_current_database(db: &str) { TLS_CURRENT_DB.with(|c| c.set(Some(db.to
 
 /// Set current schema for this thread/session
 pub fn set_current_schema(schema: &str) { TLS_CURRENT_SCHEMA.with(|c| c.set(Some(schema.to_string()))); }
+
+/// Unset current database for this thread/session (so helpers can treat it as NONE)
+pub fn unset_current_database() { TLS_CURRENT_DB.with(|c| c.set(None)); }
+
+/// Unset current schema for this thread/session (so helpers can treat it as NONE)
+pub fn unset_current_schema() { TLS_CURRENT_SCHEMA.with(|c| c.set(None)); }
 
 /// Helper to obtain QueryDefaults from current thread-local session values
 pub fn current_query_defaults() -> crate::ident::QueryDefaults {

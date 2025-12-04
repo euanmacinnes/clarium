@@ -3,7 +3,7 @@
 //! Runtime helpers to materialize Graph TVFs (graph_neighbors, graph_paths)
 //! backed by `.graph` catalogs and regular edge tables.
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use polars::prelude::*;
 use serde::Deserialize;
 use std::collections::{HashMap, VecDeque};
@@ -34,6 +34,11 @@ struct GraphFile {
     nodes: Vec<GraphNodeDef>,
     edges: Vec<GraphEdgeDef>,
     created_at: Option<String>,
+    // Optional extended fields to support direct GraphStore engine.
+    // These are absent for legacy table-backed graphs.
+    engine: Option<String>,
+    partitions: Option<u32>,
+    options: Option<std::collections::HashMap<String, String>>,
 }
 
 // Normalize an identifier potentially wrapped in quotes coming from generic to_string conversions.
@@ -72,6 +77,17 @@ fn path_for_graph(store: &SharedStore, qualified: &str) -> PathBuf {
     let local = qualified.replace('/', std::path::MAIN_SEPARATOR_STR);
     p.push(local);
     p.set_extension("graph");
+    p
+}
+
+fn path_for_graph_manifest(store: &SharedStore, qualified: &str) -> PathBuf {
+    // <db>/<schema>/<name>.gstore/meta/manifest.json
+    let mut p = store.0.lock().root_path().clone();
+    let local = qualified.replace('/', std::path::MAIN_SEPARATOR_STR);
+    p.push(format!("{}", local));
+    p.set_extension("gstore");
+    p.push("meta");
+    p.push("manifest.json");
     p
 }
 
@@ -134,6 +150,33 @@ pub fn graph_neighbors_df(
 ) -> Result<DataFrame> {
     let qname = qualify_graph_name(graph);
     let gf = read_graph_file(store, &qname)?;
+    // If the graph is configured to use the direct GraphStore engine AND a manifest exists,
+    // delegate to the GraphStore runtime. Otherwise fall back to table-backed traversal.
+    if let Some(engine) = gf.engine.as_ref().map(|s| s.to_ascii_lowercase()) {
+        if engine == "graphstore" {
+            let mpath = path_for_graph_manifest(store, &qname);
+            if mpath.exists() {
+                #[allow(unused_imports)]
+                use crate::server::graphstore;
+                if let Some(api) = graphstore::runtime_api() {
+                    return api.neighbors_bfs(
+                        store,
+                        &qname,
+                        start,
+                        etype,
+                        max_hops,
+                        time_start,
+                        time_end,
+                    );
+                } else {
+                    // If graphstore module is present but not available at runtime, report a clear error.
+                    return Err(anyhow!(
+                        "GraphStore engine configured but runtime is not available"
+                    ));
+                }
+            }
+        }
+    }
     let (mut edges_df, src_col, dst_col, _cost, time_col_opt) = load_edges_df(store, &gf, etype)?;
     // Optional temporal filter: apply if at least one bound is supplied and time column exists
     if let Some(time_col) = time_col_opt.clone() {

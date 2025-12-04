@@ -115,11 +115,19 @@ pub async fn execute_query(store: &SharedStore, text: &str) -> Result<serde_json
         }
         // USE and SET commands affect only session defaults; update thread-local defaults
         Command::UseDatabase { name } => {
-            crate::system::set_current_database(&name);
+            if name.eq_ignore_ascii_case("none") {
+                crate::system::unset_current_database();
+            } else {
+                crate::system::set_current_database(&name);
+            }
             Ok(serde_json::json!({"status":"ok"}))
         }
         Command::UseSchema { name } => {
-            crate::system::set_current_schema(&name);
+            if name.eq_ignore_ascii_case("none") {
+                crate::system::unset_current_schema();
+            } else {
+                crate::system::set_current_schema(&name);
+            }
             Ok(serde_json::json!({"status":"ok"}))
         }
         Command::Set { variable, value } => {
