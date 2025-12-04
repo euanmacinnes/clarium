@@ -36,6 +36,24 @@ struct GraphFile {
     created_at: Option<String>,
 }
 
+// Normalize an identifier potentially wrapped in quotes coming from generic to_string conversions.
+// Repeatedly strips matching leading/trailing single or double quotes.
+fn unquote(mut s: &str) -> String {
+    loop {
+        if s.len() >= 2 {
+            let b = s.as_bytes();
+            let a = b[0] as char;
+            let z = b[b.len() - 1] as char;
+            if (a == '"' && z == '"') || (a == '\'' && z == '\'') {
+                s = &s[1..s.len() - 1];
+                continue;
+            }
+        }
+        break;
+    }
+    s.to_string()
+}
+
 fn path_for_graph(store: &SharedStore, qualified: &str) -> PathBuf {
     let mut p = store.0.lock().root_path().clone();
     let local = qualified.replace('/', std::path::MAIN_SEPARATOR_STR);
@@ -138,22 +156,30 @@ pub fn graph_neighbors_df(
     // For robustness, accept Utf8 or general string-like columns via `to_string` fallback
     let src_series = edges_df.column(&src_col)?;
     let dst_series = edges_df.column(&dst_col)?;
-    // Build src/dst string vectors in a version-agnostic way without relying on utf8()/iter() on Series
+    // Build src/dst string vectors in a version-agnostic way without relying on utf8()/iter() on Series.
+    // Prefer `get_str()` for Utf8 cells to avoid added quotes from `AnyValue::to_string()`.
     let len = src_series.len().min(dst_series.len());
+    // Use robust unquote to normalize string IDs
     let mut src: Vec<String> = Vec::with_capacity(len);
     let mut dst: Vec<String> = Vec::with_capacity(len);
     for i in 0..len {
         let s_val = src_series.get(i);
         let d_val = dst_series.get(i);
-        let s = match s_val { Ok(v) => v.to_string(), Err(_) => String::new() };
-        let d = match d_val { Ok(v) => v.to_string(), Err(_) => String::new() };
-        src.push(s);
-        dst.push(d);
+        let s = match s_val {
+            Ok(v) => v.get_str().map(|x| unquote(x)).unwrap_or_else(|| unquote(&v.to_string())),
+            Err(_) => String::new(),
+        };
+        let d = match d_val {
+            Ok(v) => v.get_str().map(|x| unquote(x)).unwrap_or_else(|| unquote(&v.to_string())),
+            Err(_) => String::new(),
+        };
+        src.push(unquote(&s));
+        dst.push(unquote(&d));
     }
     // Build adjacency list
     let mut adj: HashMap<String, Vec<String>> = HashMap::new();
     for (s, d) in src.iter().zip(dst.iter()) {
-        adj.entry(s.clone()).or_default().push(d.clone());
+        adj.entry(unquote(s)).or_default().push(unquote(d));
     }
     // BFS up to max_hops
     let mut out_node: Vec<String> = Vec::new();
@@ -165,8 +191,8 @@ pub fn graph_neighbors_df(
     seen.insert(start.to_string(), 0);
     while let Some((node, prev, hop)) = q.pop_front() {
         if hop >= 1 { // exclude the start node from output
-            out_node.push(node.clone());
-            out_prev.push(prev.unwrap_or_default());
+            out_node.push(unquote(&node));
+            out_prev.push(prev.map(|p| unquote(&p)).unwrap_or_default());
             out_hop.push(hop);
         }
         if hop >= max_hops { continue; }
@@ -179,6 +205,9 @@ pub fn graph_neighbors_df(
             }
         }
     }
+    // Final normalization: ensure no stray quotes remain in identifiers
+    let out_node: Vec<String> = out_node.into_iter().map(|s| unquote(&s)).collect();
+    let out_prev: Vec<String> = out_prev.into_iter().map(|s| unquote(&s)).collect();
     Ok(DataFrame::new(vec![
         Series::new("node_id".into(), out_node).into(),
         Series::new("prev_id".into(), out_prev).into(),
@@ -232,24 +261,36 @@ pub fn graph_paths_df(
         }
     }
     // Extract columns as strings and optional costs
+    // Helper to strip matching surrounding quotes, if present
+    let strip_quotes = |s: &str| -> String {
+        if s.len() >= 2 {
+            let b = s.as_bytes();
+            let a = b[0] as char; let z = b[b.len()-1] as char;
+            if (a == '"' && z == '"') || (a == '\'' && z == '\'') { return s[1..s.len()-1].to_string(); }
+        }
+        s.to_string()
+    };
     let src_series = edges_df.column(&src_col)?;
     let dst_series = edges_df.column(&dst_col)?;
     let mut src: Vec<String> = Vec::with_capacity(src_series.len());
     for i in 0..src_series.len() {
         let s_val = src_series.get(i);
         let s = match s_val {
-            Ok(v) => v.to_string(),
+            Ok(v) => v.get_str().map(|x| unquote(x)).unwrap_or_else(|| unquote(&v.to_string())),
             Err(_) => String::new(),
         };
-        src.push(s);
+        src.push(unquote(&s));
     }
     // Build src/dst vectors with string conversion independent of utf8 API
     let len_sd = dst_series.len();
     let mut dst: Vec<String> = Vec::with_capacity(len_sd);
     for i in 0..len_sd {
         let d_val = dst_series.get(i);
-        let d = match d_val { Ok(v) => v.to_string(), Err(_) => String::new() };
-        dst.push(d);
+        let d = match d_val {
+            Ok(v) => v.get_str().map(|x| unquote(x)).unwrap_or_else(|| unquote(&v.to_string())),
+            Err(_) => String::new(),
+        };
+        dst.push(unquote(&d));
     }
     let costs: Option<Vec<f64>> = if let Some(cc) = &cost_col_opt {
         let cser = edges_df.column(cc)?;

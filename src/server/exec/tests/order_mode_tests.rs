@@ -30,7 +30,7 @@ fn test_order_by_strict_requires_projected_column() {
     let err = run_select(&shared, &q).err();
     assert!(err.is_some());
     let msg = format!("{}", err.unwrap());
-    assert!(msg.contains("Column not found in ORDER BY:"), "unexpected: {}", msg);
+    assert!(msg.contains("Column b not found in ORDER BY:"), "unexpected: {}", msg);
     system::set_strict_projection(prev);
 }
 

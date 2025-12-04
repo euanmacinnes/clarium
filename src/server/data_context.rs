@@ -154,7 +154,7 @@ impl DataContext {
             if c.ends_with(&needle) { matches.push(c.to_string()); }
         }
         if matches.len() == 1 { suggestion = Some(matches.remove(0)); }
-        let mut msg = format!("Column not found in {}: '{}'", clause, name);
+        let mut msg = format!("Column {} not found in {}: ", name, clause);
         if let Some(s) = suggestion { msg.push_str(&format!(". Did you mean to reference it as '{}' and/or add an alias?", s)); }
         // Append available columns for better diagnostics
         let cols = df.get_column_names();

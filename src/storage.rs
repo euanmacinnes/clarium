@@ -536,7 +536,35 @@ impl Store {
             let df = ParquetReader::new(file).finish()?;
             match &mut out {
                 None => out = Some(df),
-                Some(acc) => { acc.vstack_mut(&df)?; }
+                Some(acc) => {
+                    // Ensure column order matches the accumulator to avoid vstack name mismatches
+                    let acc_cols = acc.get_column_names();
+                    let df_cols = df.get_column_names();
+                    if acc_cols == df_cols {
+                        acc.vstack_mut(&df)?;
+                    } else {
+                        // If sets are equal but order differs, reorder df to match acc
+                        let acc_set: std::collections::HashSet<&str> = acc_cols.iter().map(|s| s.as_str()).collect();
+                        let df_set: std::collections::HashSet<&str> = df_cols.iter().map(|s| s.as_str()).collect();
+                        if acc_set == df_set {
+                            let mut reordered: Vec<Column> = Vec::with_capacity(acc_cols.len());
+                            for name in acc_cols {
+                                let s = df.column(name)?.clone();
+                                reordered.push(s.into());
+                            }
+                            let df2 = DataFrame::new(reordered)?;
+                            acc.vstack_mut(&df2)?;
+                        } else {
+                            // Fallback: attempt to select common columns in acc order
+                            let mut common: Vec<Column> = Vec::new();
+                            for name in acc_cols {
+                                if let Ok(s) = df.column(name) { common.push(s.clone().into()); }
+                            }
+                            let df2 = DataFrame::new(common)?;
+                            acc.vstack_mut(&df2)?;
+                        }
+                    }
+                }
             }
         }
         match out {

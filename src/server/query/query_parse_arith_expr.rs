@@ -19,6 +19,29 @@ pub fn parse_arith_expr(tokens: &[String]) -> Result<ArithExpr> {
     // Turn whitespace-split tokens into a single string, then tokenize char-by-char to support parentheses
     let src = tokens.join(" ");
 
+    // Detect scalar subquery of the form: (SELECT ...)
+    // This is commonly used as a scalar RHS for functions, e.g., cosine_sim(x,(SELECT v FROM q))
+    // We only treat the whole expression as a scalar subquery when it is exactly wrapped once by parentheses
+    // and starts with SELECT (case-insensitive) inside.
+    {
+        let s = src.trim();
+        if s.starts_with('(') && s.ends_with(')') {
+            // Check matching outer parentheses
+            let mut depth: i32 = 0;
+            let mut ok_outer = false;
+            for (i, ch) in s.chars().enumerate() {
+                if ch == '(' { depth += 1; }
+                else if ch == ')' { depth -= 1; if depth == 0 { ok_outer = i == s.len()-1; break; } }
+            }
+            if ok_outer {
+                let inner = &s[1..s.len()-1];
+                if inner.trim_start().to_uppercase().starts_with("SELECT ") {
+                    return Ok(ArithExpr::Call { name: "SCALAR_SUBQUERY".to_string(), args: vec![ArithExpr::Term(ArithTerm::Str(inner.to_string()))] });
+                }
+            }
+        }
+    }
+
     // Detect top-level comparison expressions (including LIKE / NOT LIKE) and wrap as a predicate
     // This enables using boolean comparisons inside SELECT expressions, e.g., `SELECT 'a' LIKE 'a%' AS ok`.
     // We scan respecting parentheses and single-quoted strings.

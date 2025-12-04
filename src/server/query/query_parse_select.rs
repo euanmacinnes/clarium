@@ -551,7 +551,20 @@ pub fn parse_select(s: &str) -> Result<Query> {
             }
             let mut list: Vec<(String, bool)> = Vec::new();
             let mut raw_list: Vec<(String, bool)> = Vec::new();
-            for raw in inside.split(',') {
+            // Split by comma respecting parenthesis depth to handle function calls correctly
+            let mut parts: Vec<String> = Vec::new();
+            let mut buf = String::new();
+            let mut depth = 0i32;
+            for ch in inside.chars() {
+                match ch {
+                    '(' => { depth += 1; buf.push(ch); }
+                    ')' => { depth -= 1; buf.push(ch); }
+                    ',' if depth == 0 => { parts.push(buf.trim().to_string()); buf.clear(); }
+                    _ => buf.push(ch),
+                }
+            }
+            if !buf.is_empty() { parts.push(buf.trim().to_string()); }
+            for raw in parts {
                 let p = raw.trim();
                 if p.is_empty() { continue; }
                 let mut toks = p.split_whitespace();

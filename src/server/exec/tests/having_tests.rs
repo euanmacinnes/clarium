@@ -27,7 +27,7 @@ fn test_having_rejects_non_final_column() {
     let err = run_select(&shared, &q).err();
     assert!(err.is_some(), "expected HAVING to fail when referencing non-final column");
     let msg = format!("{}", err.unwrap());
-    assert!(msg.contains("Column not found in HAVING:"), "unexpected error: {}", msg);
+    assert!(msg.contains("Column v not found in HAVING:"), "unexpected error: {}", msg);
 }
 
 #[test]

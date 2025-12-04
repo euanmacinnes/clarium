@@ -4,6 +4,7 @@ use crate::storage::SharedStore;
 
 #[test]
 fn to_vec_parsing_variants_and_invalid() {
+    super::udf_common::init_all_test_udfs();
     let tmp = tempfile::tempdir().unwrap();
     let store = SharedStore::new(tmp.path()).unwrap();
 
@@ -30,6 +31,7 @@ fn to_vec_parsing_variants_and_invalid() {
 
 #[test]
 fn cosine_l2_ip_correctness_small_vectors() {
+    super::udf_common::init_all_test_udfs();
     let tmp = tempfile::tempdir().unwrap();
     let store = SharedStore::new(tmp.path()).unwrap();
 

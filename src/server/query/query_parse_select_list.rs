@@ -38,6 +38,20 @@ pub fn parse_select_list(s: &str) -> Result<Vec<SelectItem>> {
             alias = Some(rhs);
             t = lhs.trim();
         }
+        // If no explicit AS alias found, check for implicit alias: trailing identifier after function call
+        // Pattern: "func(...) identifier" where identifier is alphanumeric/underscore without spaces
+        if alias.is_none() && t.contains('(') {
+            // Find the last closing paren
+            if let Some(last_paren) = t.rfind(')') {
+                let after_paren = t[last_paren+1..].trim();
+                // Check if there's a valid identifier after the closing paren
+                if !after_paren.is_empty() && after_paren.chars().all(|c| c.is_alphanumeric() || c == '_') {
+                    // Extract as implicit alias
+                    alias = Some(after_paren.to_string());
+                    t = t[..=last_paren].trim();
+                }
+            }
+        }
         if t == "_time" {
             if alias.is_some() { anyhow::bail!("Alias is not allowed on _time"); }
             items.push(SelectItem{ func: None, str_func: None, window_func: None, window_spec: None, column: "_time".into(), expr: None, alias: None});

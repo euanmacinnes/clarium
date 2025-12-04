@@ -331,6 +331,44 @@ pub fn build_arith_expr(a: &ArithExpr, ctx: &crate::server::data_context::DataCo
                 name_lc = name_lc[11..].to_string();
             }
 
+            // Special: SCALAR_SUBQUERY — execute inner SELECT once and substitute a literal value.
+            // The parser encodes `(SELECT ...)` as Call { name: "SCALAR_SUBQUERY", args: [Term::Str(inner_sql)] }.
+            if name_lc == "scalar_subquery" && args.len() == 1 {
+                if let ArithExpr::Term(ArithTerm::Str(inner_sql)) = &args[0] {
+                    if let Some(store) = &ctx.store {
+                        // Parse inner SQL
+                        if let Ok(cmd) = crate::server::query::parse(inner_sql) {
+                            if let crate::server::query::Command::Select(q) = cmd {
+                                if let Ok(df) = crate::server::exec::exec_select::run_select_with_context(store, &q, Some(ctx)) {
+                                    // Extract first row, first column as a scalar
+                                    if df.height() > 0 && df.width() > 0 {
+                                        let name0 = &df.get_column_names()[0];
+                                        if let Ok(s) = df.column(name0) {
+                                            use polars::prelude::AnyValue;
+                                            match s.get(0) {
+                                                Ok(AnyValue::Int64(v)) => return lit(v),
+                                                Ok(AnyValue::Int32(v)) => return lit(v as i64),
+                                                Ok(AnyValue::UInt64(v)) => return lit(v as i64),
+                                                Ok(AnyValue::UInt32(v)) => return lit(v as i64),
+                                                Ok(AnyValue::Float64(v)) => return lit(v),
+                                                Ok(AnyValue::Boolean(b)) => return lit(b),
+                                                Ok(AnyValue::String(v)) => return lit(v.to_string()),
+                                                Ok(AnyValue::StringOwned(v)) => return lit(v.to_string()),
+                                                Ok(AnyValue::Null) | Err(_) => return lit(polars::prelude::Null {}),
+                                                _ => { /* fall through */ }
+                                            }
+                                        }
+                                    }
+                                    return lit(polars::prelude::Null {});
+                                }
+                            }
+                        }
+                    }
+                    // If we cannot execute (no store or parse error), treat as NULL
+                    return lit(polars::prelude::Null {});
+                }
+            }
+
             // Handle built-in: COALESCE(expr1, expr2, ...)
             if name_lc == "coalesce" && !args.is_empty() {
                 let mut result = build_arith_expr(&args[0], ctx);

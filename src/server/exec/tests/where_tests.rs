@@ -27,7 +27,7 @@ fn test_where_column_not_found_message() {
     let err = run_select(&shared, &q).err();
     assert!(err.is_some());
     let msg = format!("{}", err.unwrap());
-    assert!(msg.contains("Column not found in WHERE:"), "unexpected error: {}", msg);
+    assert!(msg.contains("Column nope not found in WHERE:"), "unexpected error: {}", msg);
 }
 
 #[test]
