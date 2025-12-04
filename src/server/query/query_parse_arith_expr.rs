@@ -151,17 +151,34 @@ pub fn parse_arith_expr(tokens: &[String]) -> Result<ArithExpr> {
         }
         if depth != 0 { return None; }
         let inside = &s[name_end+1..j-1];
-        // Helper: split by commas at top level
+        // Helper: split by commas at top level, respecting quotes
         let mut args: Vec<String> = Vec::new();
         let mut buf = String::new();
         let mut d = 0i32;
+        let mut in_quote = false;
+        let mut quote_char = ' ';
         let mut k = 0usize;
         while k < inside.len() {
             let ch = inside[k..].chars().next().unwrap();
-            if ch == '(' { d += 1; buf.push(ch); }
-            else if ch == ')' { d -= 1; buf.push(ch); }
-            else if ch == ',' && d == 0 { args.push(buf.trim().to_string()); buf.clear(); }
-            else { buf.push(ch); }
+            if (ch == '\'' || ch == '"') && !in_quote {
+                in_quote = true;
+                quote_char = ch;
+                buf.push(ch);
+            } else if in_quote && ch == quote_char {
+                in_quote = false;
+                buf.push(ch);
+            } else if !in_quote && ch == '(' {
+                d += 1;
+                buf.push(ch);
+            } else if !in_quote && ch == ')' {
+                d -= 1;
+                buf.push(ch);
+            } else if !in_quote && ch == ',' && d == 0 {
+                args.push(buf.trim().to_string());
+                buf.clear();
+            } else {
+                buf.push(ch);
+            }
             k += ch.len_utf8();
         }
         if !buf.trim().is_empty() { args.push(buf.trim().to_string()); }
