@@ -1,6 +1,6 @@
 # General project guidelines
 
-Ensure no file gets larger than about 600 lines long. Prioritize breaking down long match statements to call functions in other modules first. 
+Ensure no code file gets larger than about 600 lines long (python or rust). Prioritize breaking down long match statements to call functions in other modules first. 
 
 primary interfaces should be kept thin. Large functions should be avoided.
 

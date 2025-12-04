@@ -35,6 +35,13 @@ pub struct GraphFile {
     pub nodes: Vec<GraphNodeDef>,
     pub edges: Vec<GraphEdgeDef>,
     pub created_at: Option<String>,
+    // Optional engine integration metadata (backward compatible)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub engine: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub graphstore_config: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub graphstore_options: Option<Vec<(String, String)>>,
 }
 
 fn qualify_name(name: &str) -> String {
@@ -107,7 +114,7 @@ fn list_graphs(store: &SharedStore) -> Result<Value> {
 
 pub fn execute_graph(store: &SharedStore, cmd: query::Command) -> Result<Value> {
     match cmd {
-        query::Command::CreateGraph { name, nodes, edges, nodes_table, edges_table } => {
+        query::Command::CreateGraph { name, nodes, edges, nodes_table, edges_table, graph_engine, graphstore_config, graphstore_options } => {
             let qualified = qualify_name(&name);
             if read_graph_file(store, &qualified)?.is_some() {
                 return Err(AppError::Conflict { code: "name_conflict".into(), message: format!("Graph already exists: {}", qualified) }.into());
@@ -121,9 +128,58 @@ pub fn execute_graph(store: &SharedStore, cmd: query::Command) -> Result<Value> 
             for (etype, from, to) in edges.into_iter() {
                 edge_defs.push(GraphEdgeDef { r#type: etype, from, to, table: edges_table.clone(), src_column: None, dst_column: None, cost_column: None, time_column: None });
             }
-            let gf = GraphFile { version: 1, name: qualified.clone(), qualified: qualified.clone(), nodes: node_defs, edges: edge_defs, created_at: Some(now_iso()) };
+            let gf = GraphFile {
+                version: 1,
+                name: qualified.clone(),
+                qualified: qualified.clone(),
+                nodes: node_defs,
+                edges: edge_defs,
+                created_at: Some(now_iso()),
+                engine: graph_engine.clone(),
+                graphstore_config: graphstore_config.clone(),
+                graphstore_options: graphstore_options.clone(),
+            };
             write_graph_file(store, &qualified, &gf)?;
             info!(target: "clarium::ddl", "CREATE GRAPH saved '{}.graph'", qualified);
+
+            // If USING GRAPHSTORE was specified, seed a .gstore manifest directory.
+            if let Some(engine) = graph_engine {
+                if engine.eq_ignore_ascii_case("graphstore") {
+                    // Build minimal manifest reflecting options; default partitions=1 unless overridden via options
+                    let mut partitions: u32 = 1;
+                    if let Some(opts) = &graphstore_options {
+                        for (k, v) in opts.iter() {
+                            if k.eq_ignore_ascii_case("partitions") {
+                                if let Ok(n) = v.parse::<u32>() { partitions = n.max(1); }
+                            }
+                        }
+                    }
+                    let manifest = crate::server::graphstore::GraphManifest {
+                        engine: "graphstore".to_string(),
+                        epoch: Some(1),
+                        partitions,
+                        options: graphstore_options.unwrap_or_default().into_iter().collect(),
+                        partitioning: None,
+                        cluster: None,
+                        nodes: crate::server::graphstore::NodesSection { dict_segments: vec![] },
+                        edges: crate::server::graphstore::EdgesSection { partitions: vec![], has_reverse: false },
+                    };
+                    // Write manifest via rotation helper
+                    let root = {
+                        // Resolve <db>/<schema>/<graph>.gstore directory
+                        let mut p = store.0.lock().root_path().clone();
+                        let local = qualified.replace('/', std::path::MAIN_SEPARATOR_STR);
+                        p.push(local);
+                        p.set_extension("gstore");
+                        p
+                    };
+                    let meta_dir = root.join("meta");
+                    std::fs::create_dir_all(&meta_dir).ok();
+                    let json = serde_json::to_string_pretty(&manifest)?;
+                    crate::server::graphstore::manifest::rotate_manifest(&root, &json)?;
+                    info!(target: "clarium::ddl", "CREATE GRAPH initialized GraphStore manifest at '{}.gstore'", qualified);
+                }
+            }
             Ok(serde_json::json!({"status":"ok"}))
         }
         query::Command::DropGraph { name } => {

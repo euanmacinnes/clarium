@@ -137,7 +137,18 @@ pub enum Command {
     ShowVectorIndex { name: String },
     ShowVectorIndexes,
     // Graph catalog
-    CreateGraph { name: String, nodes: Vec<(String, String)>, edges: Vec<(String, String, String)>, nodes_table: Option<String>, edges_table: Option<String> },
+    // Optional integration with GraphStore engine via `USING GRAPHSTORE [CONFIG <name>] [WITH (k=v, ...)]`.
+    CreateGraph {
+        name: String,
+        nodes: Vec<(String, String)>,
+        edges: Vec<(String, String, String)>,
+        nodes_table: Option<String>,
+        edges_table: Option<String>,
+        // New optional GraphStore clause
+        graph_engine: Option<String>,                 // e.g., Some("graphstore")
+        graphstore_config: Option<String>,            // named configuration to use
+        graphstore_options: Option<Vec<(String, String)>>, // inline options
+    },
     DropGraph { name: String },
     ShowGraph { name: String },
     ShowGraphs,

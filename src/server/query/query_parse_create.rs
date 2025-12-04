@@ -153,19 +153,68 @@ pub fn parse_create(s: &str) -> Result<Command> {
                 edges.push((et.to_string(), from.to_string(), to.to_string()));
             } else { anyhow::bail!("Invalid EDGES entry: expected FROM ... TO ..."); } } else { anyhow::bail!("Invalid EDGES entry: expected Type FROM A TO B"); }
         }
-        // Optional USING TABLES (nodes=..., edges=...)
+        // Optional USING clauses:
+        // - USING TABLES (nodes=..., edges=...)
+        // - USING GRAPHSTORE [CONFIG <name>] [WITH (k=v, ...)]
         let rem3 = &rem2[k..]; let rem3 = rem3.trim_start(); let rem3_up = rem3.to_uppercase();
         let mut nodes_table: Option<String> = None; let mut edges_table: Option<String> = None;
-        if rem3_up.starts_with("USING TABLES ") {
-            let mut x = 13; x = skip_ws(rem3, x);
-            if x >= rem3.len() || rem3.as_bytes()[x] as char != '(' { anyhow::bail!("Invalid USING TABLES: expected (nodes=..., edges=...)"); }
-            x += 1; let mut buf = String::new(); let mut depth3 = 1i32; let mut y = x; while y < rem3.len() { let ch = rem3.as_bytes()[y] as char; if ch == '(' { depth3 += 1; } else if ch == ')' { depth3 -= 1; if depth3 == 0 { break; } } buf.push(ch); y += 1; }
-            if depth3 != 0 { anyhow::bail!("Invalid USING TABLES: unterminated (...) block"); }
-            for part in buf.split(',') { let p = part.trim(); if p.is_empty() { continue; }
-                if let Some(eq) = p.find('=') { let k = p[..eq].trim().to_lowercase(); let v = p[eq+1..].trim(); if k == "nodes" { nodes_table = Some(v.to_string()); } else if k == "edges" { edges_table = Some(v.to_string()); } }
+        let mut graph_engine: Option<String> = None; let mut graphstore_config: Option<String> = None; let mut graphstore_options: Option<Vec<(String, String)>> = None;
+
+        if rem3_up.starts_with("USING ") {
+            // Determine variant
+            let after_using = &rem3[6..]; let after_using_up = after_using.to_uppercase();
+            if after_using_up.starts_with("TABLES ") {
+                let mut x = 7; x = skip_ws(after_using, x);
+                if x >= after_using.len() || after_using.as_bytes()[x] as char != '(' { anyhow::bail!("Invalid USING TABLES: expected (nodes=..., edges=...)"); }
+                x += 1; let mut buf = String::new(); let mut depth3 = 1i32; let mut y = x; while y < after_using.len() { let ch = after_using.as_bytes()[y] as char; if ch == '(' { depth3 += 1; } else if ch == ')' { depth3 -= 1; if depth3 == 0 { break; } } buf.push(ch); y += 1; }
+                if depth3 != 0 { anyhow::bail!("Invalid USING TABLES: unterminated (...) block"); }
+                for part in buf.split(',') { let p = part.trim(); if p.is_empty() { continue; }
+                    if let Some(eq) = p.find('=') { let k = p[..eq].trim().to_lowercase(); let v = p[eq+1..].trim(); if k == "nodes" { nodes_table = Some(v.to_string()); } else if k == "edges" { edges_table = Some(v.to_string()); } }
+                }
+            } else if after_using_up.starts_with("GRAPHSTORE") {
+                graph_engine = Some("graphstore".to_string());
+                // advance past GRAPHSTORE
+                let mut x = "GRAPHSTORE".len();
+                // Optional CONFIG <name>
+                x = skip_ws(after_using, x);
+                let tail = &after_using[x..]; let tail_up = tail.to_uppercase();
+                let mut consumed = 0usize;
+                if tail_up.starts_with("CONFIG ") {
+                    let mut c = 7; // after CONFIG 
+                    let (cfg_name, c2) = read_word(tail, c);
+                    if cfg_name.is_empty() { anyhow::bail!("Invalid USING GRAPHSTORE: expected config name after CONFIG"); }
+                    graphstore_config = Some(cfg_name.to_string());
+                    consumed = c2;
+                }
+                // Optional WITH (k=v,...)
+                let tail2 = &tail[consumed..]; let tail2 = tail2.trim_start(); let tail2_up = tail2.to_uppercase();
+                if tail2_up.starts_with("WITH ") {
+                    let mut w = 5; w = skip_ws(tail2, w);
+                    if w >= tail2.len() || tail2.as_bytes()[w] as char != '(' { anyhow::bail!("Invalid USING GRAPHSTORE WITH: expected WITH (k=v,...)"); }
+                    w += 1; let mut buf = String::new(); let mut depth4 = 1i32; let mut y = w; while y < tail2.len() { let ch = tail2.as_bytes()[y] as char; if ch == '(' { depth4 += 1; } else if ch == ')' { depth4 -= 1; if depth4 == 0 { break; } } buf.push(ch); y += 1; }
+                    if depth4 != 0 { anyhow::bail!("Invalid USING GRAPHSTORE WITH: unterminated (...) block"); }
+                    let mut opts: Vec<(String, String)> = Vec::new();
+                    for part in buf.split(',') { let p = part.trim(); if p.is_empty() { continue; }
+                        if let Some(eq) = p.find('=') { let k = p[..eq].trim().to_string(); let v = p[eq+1..].trim().trim_matches('\'').to_string(); opts.push((k, v)); } else { anyhow::bail!("Invalid option in WITH: expected k=v, got '{}'", p); }
+                    }
+                    graphstore_options = Some(opts);
+                }
+            } else {
+                // Unknown USING variant; be strict
+                anyhow::bail!("Invalid CREATE GRAPH: expected USING TABLES (...) or USING GRAPHSTORE ...");
             }
         }
-        return Ok(Command::CreateGraph { name: crate::ident::normalize_identifier(&name_tok), nodes, edges, nodes_table, edges_table });
+
+        return Ok(Command::CreateGraph {
+            name: crate::ident::normalize_identifier(&name_tok),
+            nodes,
+            edges,
+            nodes_table,
+            edges_table,
+            graph_engine,
+            graphstore_config,
+            graphstore_options,
+        });
     }
     if up.starts_with("SCRIPT ") {
         // CREATE SCRIPT name AS 'code'

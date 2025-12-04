@@ -49,15 +49,19 @@ pub fn parse_match(s: &str) -> Result<Command> {
     let order_sql = order_part.map(|o| o.replace("t.key", "node_id").replace("s.key", &start_sql).replace("prev.key", "prev_id"));
 
     // Determine graph name: explicit USING GRAPH wins; else defer to session default at execution time
-    let gf = graph.unwrap_or_else(|| "__SESSION_DEFAULT__".to_string());
+    let mut gf = graph.unwrap_or_else(|| "__SESSION_DEFAULT__".to_string());
+    if gf == "__SESSION_DEFAULT__" {
+        if let Some(sess) = crate::system::get_current_graph_opt() {
+            gf = sess;
+        }
+    }
     let etype_sql = format!("'{}'", etype);
     let u_sql = u;
 
-    let mut select_sql = if is_shortest {
+    let from_sql = if is_shortest {
         let dst_sql = normalize_start_expr(dst_expr_raw.ok_or_else(|| anyhow::anyhow!("MATCH SHORTEST requires target node key in t: {{ key: ... }}"))?);
         format!(
-            "SELECT {} FROM graph_paths({}, {}, {}, {}, {}) p",
-            proj_sql,
+            "graph_paths({}, {}, {}, {}, {})",
             quote_graph_if_needed(&gf),
             start_sql,
             dst_sql,
@@ -66,14 +70,15 @@ pub fn parse_match(s: &str) -> Result<Command> {
         )
     } else {
         format!(
-            "SELECT {} FROM graph_neighbors({}, {}, {}, {}) g",
-            proj_sql,
+            "graph_neighbors({}, {}, {}, {})",
             quote_graph_if_needed(&gf),
             start_sql,
             etype_sql,
             u_sql
         )
     };
+    // Wrap TVF call in a subquery to align with existing planner expectations
+    let mut select_sql = format!("SELECT {} FROM (SELECT * FROM {}) g", proj_sql, from_sql);
     if let Some(ws) = where_sql { select_sql.push_str(" WHERE "); select_sql.push_str(ws.trim()); }
     if let Some(os) = order_sql { select_sql.push_str(" ORDER BY "); select_sql.push_str(os.trim()); }
     if let Some(ls) = limit_part { select_sql.push_str(" LIMIT "); select_sql.push_str(ls.trim()); }
