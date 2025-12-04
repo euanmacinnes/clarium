@@ -4,6 +4,7 @@ use crate::server::exec::exec_graph::GraphFile;
 use crate::server::exec::tests::fixtures::*;
 use crate::storage::{Store, SharedStore, Record};
 use serde_json::json;
+use futures::executor::block_on;
 
 fn seed_simple_tables(tmp: &tempfile::TempDir) -> SharedStore {
     let store = Store::new(tmp.path()).unwrap();
@@ -62,9 +63,9 @@ fn create_show_drop_graph_happy() {
 NODES (Doc KEY(id), Tool KEY(name)) \
 EDGES (Calls FROM Tool TO Tool, Cites FROM Doc TO Doc) \
 USING TABLES (nodes=clarium/public/know_nodes, edges=clarium/public/know_edges)";
-    crate::server::exec::execute_query(&shared, sql).unwrap();
+    block_on(crate::server::exec::execute_query(&shared, sql)).unwrap();
 
-    let show = crate::server::exec::execute_query(&shared, "SHOW GRAPH know").unwrap();
+    let show = block_on(crate::server::exec::execute_query(&shared, "SHOW GRAPH know")).unwrap();
     let arr = show.as_array().cloned().unwrap();
     assert_eq!(arr.len(), 1);
 
@@ -73,7 +74,7 @@ USING TABLES (nodes=clarium/public/know_nodes, edges=clarium/public/know_edges)"
     assert_eq!(gf.edges.len(), 2);
 
     // Drop
-    crate::server::exec::execute_query(&shared, "DROP GRAPH know").unwrap();
+    block_on(crate::server::exec::execute_query(&shared, "DROP GRAPH know")).unwrap();
     let gf2 = read_graph_sidecar(&shared, "clarium/public/know");
     assert!(gf2.is_none());
 }
@@ -91,7 +92,7 @@ fn create_graph_missing_tables_errors_and_malformed_definition() {
 
     // Proper parse but referencing missing tables should still create the graph; TVFs will fail when used
     let ok_sql = "CREATE GRAPH g2 NODES (Doc KEY(id)) EDGES (Calls FROM Doc TO Doc) USING TABLES (nodes=clarium/public/miss_nodes, edges=clarium/public/miss_edges)";
-    crate::server::exec::execute_query(&shared, ok_sql).unwrap();
-    let show = crate::server::exec::execute_query(&shared, "SHOW GRAPH g2").unwrap();
+    block_on(crate::server::exec::execute_query(&shared, ok_sql)).unwrap();
+    let show = block_on(crate::server::exec::execute_query(&shared, "SHOW GRAPH g2")).unwrap();
     assert_eq!(show.as_array().unwrap().len(), 1);
 }

@@ -1,6 +1,7 @@
 use crate::server::query::{self, Command};
 use crate::server::exec::exec_select::run_select;
 use crate::server::exec::tests::fixtures::*;
+use futures::executor::block_on;
 
 #[test]
 fn view_over_neighbors_and_show_round_trip() {
@@ -13,7 +14,7 @@ fn view_over_neighbors_and_show_round_trip() {
     // Create a view over neighbors
     let create = "CREATE VIEW v_neighbors AS \
                   SELECT * FROM graph_neighbors('clarium/public/know','planner','Calls',2)";
-    crate::server::exec::execute_query(&store, create).unwrap();
+    block_on(crate::server::exec::execute_query(&store, create)).unwrap();
 
     // Selecting from the view should work
     let sql = "SELECT * FROM v_neighbors ORDER BY hop, node_id";
@@ -23,7 +24,7 @@ fn view_over_neighbors_and_show_round_trip() {
     assert!(df.column("node_id").is_ok());
 
     // SHOW VIEW returns definition
-    let show = crate::server::exec::execute_query(&store, "SHOW VIEW v_neighbors").unwrap();
+    let show = block_on(crate::server::exec::execute_query(&store, "SHOW VIEW v_neighbors")).unwrap();
     let arr = show.as_array().unwrap();
     assert_eq!(arr.len(), 1);
     let row = arr[0].as_object().unwrap();
@@ -42,7 +43,7 @@ fn view_with_ann_ordering_selectable() {
     let create = "CREATE VIEW v_docs_ann AS \
                   SELECT id FROM clarium/public/docs \
                   ORDER BY vec_l2(clarium/public/docs.body_embed, '[0.21,0,0]') USING ANN";
-    crate::server::exec::execute_query(&store, create).unwrap();
+    block_on(crate::server::exec::execute_query(&store, create)).unwrap();
 
     let sql = "SELECT * FROM v_docs_ann LIMIT 2";
     let q = match query::parse(sql).unwrap() { Command::Select(q) => q, _ => unreachable!() };

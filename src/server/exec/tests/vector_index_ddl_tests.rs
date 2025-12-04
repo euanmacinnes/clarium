@@ -4,6 +4,7 @@ use crate::server::exec::exec_vector_index::VIndexFile;
 use crate::server::exec::exec_select::run_select;
 use crate::storage::{Store, SharedStore, Record};
 use serde_json::json;
+use futures::executor::block_on;
 
 fn seed_simple_table(tmp: &tempfile::TempDir, name: &str) -> SharedStore {
     let store = Store::new(tmp.path()).unwrap();
@@ -36,11 +37,11 @@ fn create_show_drop_vector_index_happy() {
     // CREATE VECTOR INDEX
     let sql = "CREATE VECTOR INDEX idx_docs_body ON clarium/public/docs(body_embed) USING hnsw WITH (metric='l2', dim=3)";
     let cmd = query::parse(sql).unwrap();
-    let out = crate::server::exec::execute_query(&shared, sql);
+    let out = block_on(crate::server::exec::execute_query(&shared, sql));
     assert!(out.is_ok(), "CREATE VECTOR INDEX failed: {:?}", out.err());
 
     // SHOW VECTOR INDEX
-    let show = crate::server::exec::execute_query(&shared, "SHOW VECTOR INDEX idx_docs_body").unwrap();
+    let show = block_on(crate::server::exec::execute_query(&shared, "SHOW VECTOR INDEX idx_docs_body")).unwrap();
     let arr = show.as_array().cloned().unwrap();
     assert_eq!(arr.len(), 1);
     let row = arr[0].as_object().unwrap();
@@ -54,7 +55,7 @@ fn create_show_drop_vector_index_happy() {
     assert_eq!(vf.column, "body_embed");
 
     // DROP VECTOR INDEX
-    crate::server::exec::execute_query(&shared, "DROP VECTOR INDEX idx_docs_body").unwrap();
+    block_on(crate::server::exec::execute_query(&shared, "DROP VECTOR INDEX idx_docs_body")).unwrap();
     let dropped = read_vindex_sidecar(&shared, "clarium/public/idx_docs_body").is_none();
     assert!(dropped);
 }
@@ -66,15 +67,15 @@ fn create_vector_index_missing_table_and_duplicate() {
 
     // Missing table should error
     let sql = "CREATE VECTOR INDEX idx_x ON clarium/public/missing(body_embed) USING hnsw WITH (metric='cosine', dim=3)";
-    let err = crate::server::exec::execute_query(&shared, sql).err().unwrap();
+    let err = block_on(crate::server::exec::execute_query(&shared, sql)).err().unwrap();
     let msg = format!("{}", err);
     assert!(msg.to_lowercase().contains("table not found"));
 
     // Seed table and create
     let _ = seed_simple_table(&tmp, "clarium/public/docs");
-    crate::server::exec::execute_query(&shared, "CREATE VECTOR INDEX idx1 ON clarium/public/docs(body_embed) USING hnsw WITH (metric='cosine', dim=3)").unwrap();
+    block_on(crate::server::exec::execute_query(&shared, "CREATE VECTOR INDEX idx1 ON clarium/public/docs(body_embed) USING hnsw WITH (metric='cosine', dim=3)")).unwrap();
     // Duplicate name should conflict
-    let err = crate::server::exec::execute_query(&shared, "CREATE VECTOR INDEX idx1 ON clarium/public/docs(body_embed) USING hnsw WITH (metric='cosine', dim=3)").err().unwrap();
+    let err = block_on(crate::server::exec::execute_query(&shared, "CREATE VECTOR INDEX idx1 ON clarium/public/docs(body_embed) USING hnsw WITH (metric='cosine', dim=3)")).err().unwrap();
     assert!(format!("{}", err).to_lowercase().contains("already exists"));
 }
 
@@ -82,9 +83,9 @@ fn create_vector_index_missing_table_and_duplicate() {
 fn show_vector_indexes_enumerates() {
     let tmp = tempfile::tempdir().unwrap();
     let shared = seed_simple_table(&tmp, "clarium/public/docs");
-    crate::server::exec::execute_query(&shared, "CREATE VECTOR INDEX idxa ON clarium/public/docs(body_embed) USING hnsw WITH (metric='cosine', dim=3)").unwrap();
-    crate::server::exec::execute_query(&shared, "CREATE VECTOR INDEX idxb ON clarium/public/docs(body_embed) USING hnsw WITH (metric='l2', dim=3)").unwrap();
-    let json = crate::server::exec::execute_query(&shared, "SHOW VECTOR INDEXES").unwrap();
+    block_on(crate::server::exec::execute_query(&shared, "CREATE VECTOR INDEX idxa ON clarium/public/docs(body_embed) USING hnsw WITH (metric='cosine', dim=3)")).unwrap();
+    block_on(crate::server::exec::execute_query(&shared, "CREATE VECTOR INDEX idxb ON clarium/public/docs(body_embed) USING hnsw WITH (metric='l2', dim=3)")).unwrap();
+    let json = block_on(crate::server::exec::execute_query(&shared, "SHOW VECTOR INDEXES")).unwrap();
     let arr = json.as_array().cloned().unwrap();
     assert!(arr.len() >= 2);
 }

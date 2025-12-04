@@ -24,7 +24,8 @@ fn to_vec_parsing_variants_and_invalid() {
     let q = "SELECT to_vec('1, a, 3') AS v";
     let q = match query::parse(q).unwrap() { Command::Select(q) => q, _ => unreachable!() };
     let df = run_select(&store, &q).unwrap();
-    assert!(df.column("v").unwrap().is_null(0).unwrap());
+    let is_null = df.column("v").unwrap().is_null().get(0) == Some(true);
+    assert!(is_null);
 }
 
 #[test]
