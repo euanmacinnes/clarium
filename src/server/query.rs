@@ -21,6 +21,7 @@ pub mod query_parse_update;
 pub mod query_parse_user;
 pub mod query_parse_where_tokens;
 pub mod query_parse_where;
+pub mod query_parse_txn;
 
 // Import MATCH parser entrypoint for top-level dispatch
 use crate::server::query::query_parse_match::parse_match;
@@ -158,6 +159,16 @@ pub enum Command {
     UseGraph { name: String },
     UnsetGraph,
     ShowCurrentGraph,
+    // Transactional GraphStore DDL (experimental)
+    // BEGIN [GRAPH <name>]
+    BeginGraphTxn { graph: Option<String> },
+    // COMMIT; ABORT; (prepared for future general DML too)
+    CommitGraphTxn,
+    AbortGraphTxn,
+    // INSERT NODE <Label> KEY <key_literal> [AS <node_id>] [GRAPH <name>]
+    InsertNodeTxn { graph: Option<String>, label: String, key: String, node_id: Option<u64> },
+    // INSERT EDGE <src_id> -> <dst_id> [ETYPE <etype_id>] [PART <n>] [GRAPH <name>]
+    InsertEdgeTxn { graph: Option<String>, src: u64, dst: u64, etype_id: Option<u16>, part: Option<u32> },
     // MATCH (rewritten to SELECT)
     MatchRewrite { sql: String },
     // GC DDL
@@ -260,6 +271,10 @@ pub fn parse(input: &str) -> Result<Command> {
     }
     if sup.starts_with("SET ") {
         return parse_set(s);
+    }
+    // GraphStore transactional inserts take precedence over regular SQL INSERT
+    if sup.starts_with("INSERT NODE") || sup.starts_with("INSERT EDGE") || sup == "BEGIN" || sup.starts_with("BEGIN ") || sup == "COMMIT" || sup == "ABORT" {
+        return crate::server::query::query_parse_txn::parse_txn(s);
     }
     if sup.starts_with("INSERT ") {
         return parse_insert(s);

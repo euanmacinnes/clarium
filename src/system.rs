@@ -3,6 +3,7 @@ use polars::prelude::*;
 use tracing::debug;
 use std::cell::Cell;
 use std::path::{Path, PathBuf};
+use std::cell::RefCell;
 
 // JSON helpers for stable OID persistence
 fn read_json(path: &Path) -> Option<serde_json::Value> {
@@ -249,6 +250,47 @@ pub fn unset_current_graph() { TLS_CURRENT_GRAPH.with(|c| c.set(None)); }
 /// Get current graph if set for this thread/session
 pub fn get_current_graph_opt() -> Option<String> {
     TLS_CURRENT_GRAPH.with(|c| c.take()).map(|s| { TLS_CURRENT_GRAPH.with(|c2| c2.set(Some(s.clone()))); s })
+}
+
+// ----------------------------
+// GraphStore transactional TLS
+// ----------------------------
+
+#[derive(Debug, Clone)]
+pub struct GraphTxnCtx {
+    pub graph: String,
+    pub root: PathBuf,
+    pub partitions: u32,
+    pub hash_seed: u64,
+}
+
+thread_local! {
+    static TLS_GRAPH_TXN: RefCell<Option<crate::server::graphstore::txn::GraphTxn>> = const { RefCell::new(None) };
+}
+thread_local! {
+    static TLS_GRAPH_TXN_CTX: RefCell<Option<GraphTxnCtx>> = const { RefCell::new(None) };
+}
+
+pub fn set_graph_txn(tx: crate::server::graphstore::txn::GraphTxn, ctx: GraphTxnCtx) {
+    TLS_GRAPH_TXN.with(|c| *c.borrow_mut() = Some(tx));
+    TLS_GRAPH_TXN_CTX.with(|c| *c.borrow_mut() = Some(ctx));
+}
+
+pub fn take_graph_txn() -> Option<crate::server::graphstore::txn::GraphTxn> {
+    TLS_GRAPH_TXN.with(|c| c.borrow_mut().take())
+}
+
+pub fn peek_graph_txn_active() -> bool {
+    TLS_GRAPH_TXN.with(|c| c.borrow().is_some())
+}
+
+pub fn get_graph_txn_ctx() -> Option<GraphTxnCtx> {
+    TLS_GRAPH_TXN_CTX.with(|c| c.borrow().clone())
+}
+
+pub fn clear_graph_txn() {
+    TLS_GRAPH_TXN.with(|c| *c.borrow_mut() = None);
+    TLS_GRAPH_TXN_CTX.with(|c| *c.borrow_mut() = None);
 }
 
 /// Helper to obtain QueryDefaults from current thread-local session values

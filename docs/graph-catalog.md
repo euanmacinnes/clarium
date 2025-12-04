@@ -43,6 +43,110 @@ EDGES (Follows FROM User TO User)
 USING GRAPHSTORE CONFIG default_cluster;
 ```
 
+Write data into a graph
+-----------------------
+There are two ingestion paths depending on how the graph was created:
+
+- Table-backed graphs (USING TABLES): write rows into the bound node/edge tables using standard SQL DML.
+- GraphStore-backed graphs (USING GRAPHSTORE): append node/edge mutations via the GraphStore write API or tooling; the engine persists a WAL and partitioned delta logs under the graph’s `.gstore` directory.
+
+Table-backed ingestion (SQL)
+----------------------------
+When a graph is created with `USING TABLES (nodes=..., edges=...)`, the catalog records which physical tables store nodes and edges. You write data by inserting into those tables. The traversal TVFs will read from them.
+
+Required and optional columns
+- Nodes table: must include a primary key column per label’s `KEY(...)`; commonly `id` (text or integer). You may include additional attributes like `label`, `name`, `embed`.
+- Edges table: must include `src` and `dst` columns referencing node keys. Optional columns:
+  - `etype` (edge type name; when omitted, the first edge type in the catalog is used by TVFs today)
+  - `cost` (numeric weight)
+  - `_time` (ISO8601 or epoch for time-sliced traversals)
+
+Examples
+```
+-- Example schema (you may adapt types). If the tables already exist, skip DDL.
+CREATE TABLE clarium/public/know_nodes (
+  id TEXT PRIMARY KEY,
+  label TEXT,
+  name TEXT,
+  embed VECTOR(384)
+);
+
+CREATE TABLE clarium/public/know_edges (
+  src TEXT NOT NULL,
+  dst TEXT NOT NULL,
+  etype TEXT DEFAULT 'Calls',
+  cost DOUBLE PRECISION,
+  _time TIMESTAMP
+);
+
+-- Insert nodes
+INSERT INTO clarium/public/know_nodes (id, label, name) VALUES
+  ('planner','Tool','Planner'),
+  ('executor','Tool','Executor');
+
+-- Insert edges
+INSERT INTO clarium/public/know_edges (src, dst, etype, cost)
+VALUES ('planner','executor','Calls', 1.0);
+```
+
+Notes
+- Use `INSERT ... ON CONFLICT (...) DO UPDATE` or `MERGE` to upsert nodes in systems that support it.
+- Keep node keys stable; edges refer to node keys, not internal numeric IDs.
+- Time-aware queries can be supported by populating `_time` and using time-window variants of TVFs where available.
+
+GraphStore-backed ingestion (engine API)
+----------------------------------------
+When a graph is created with `USING GRAPHSTORE [...]`, writes go to the GraphStore engine under `<db>/<schema>/<name>.gstore/`.
+
+Storage layout (relevant for ingestion)
+- WAL: `<graph>.gstore/wal/current.lg` — durable transaction log (append-only; fsync on commit).
+- Edge delta logs (per partition): `<graph>.gstore/edges/delta.PNNN.log` — recent edge mutations for fast visibility.
+- Node delta log: `<graph>.gstore/nodes/delta.log` — node upserts/deletes.
+
+Write semantics
+- Writes are grouped into transactions. On commit, the engine appends `Begin/Data/Commit` records to the WAL, then appends partitioned delta records. Recovery and GC consolidate these into compact segments later.
+- Partitioning for edges is controlled by `WITH (partitions=..., partitioning.strategy=..., partitioning.hash_seed=...)` or the referenced `CONFIG`. If `has_reverse=true`, the engine also maintains reverse adjacency during compaction.
+
+Programmatic API (Rust)
+```
+use clarium::server::graphstore::txn::GraphTxn;
+use std::path::Path;
+
+// Resolve the graph root, e.g., dbs/clarium/public/know.gstore
+let root = Path::new("dbs/clarium").join("public").join("know.gstore");
+
+// Start a transaction (snapshot_epoch can be 0 for now)
+let mut tx = GraphTxn::begin(&root, 0)?;
+
+// Upsert a node (label, key[, optional assigned node_id])
+tx.insert_node("Tool", "planner", None);
+tx.insert_node("Tool", "executor", None);
+
+// Route an edge to a partition (e.g., hash_mod by src with seed)
+let part: u32 = 0; // compute using your partition function if partitions>1
+tx.insert_edge(part, /*src_id*/ 1, /*dst_id*/ 2, /*etype_id*/ 0);
+
+// Commit (durable WAL + delta logs)
+tx.commit(/*commit_epoch*/ 1)?;
+```
+
+CLI/operational notes
+- The engine exposes append-only logs; use the API (or compatible tooling) to batch writes and ensure idempotence via `(txn_id, op_index)` tracking.
+- Set `CLARIUM_GRAPH_COMMIT_WINDOW_MS` to control WAL group-commit latency/throughput trade-offs (default 3ms; 0 disables batching).
+- Recovery replays WAL into delta logs at startup if needed; background GC compacts deltas into segments based on `gc_*` options.
+
+Mapping from external keys to internal IDs
+- For GraphStore, node identity is `(label, key)`. The runtime maintains a node dictionary that maps these to numeric `node_id`s. During initial phases, you may supply a `node_id` when inserting a node; otherwise the engine will assign one during compaction.
+- Edges in deltas reference numeric `src`/`dst` IDs. If you’re ingesting from application-level keys, resolve or upsert nodes first, then emit edges with their IDs.
+
+Consistency and deduplication
+- Within a single transaction, duplicate node operations on the same `(label,key)` are rejected.
+- Delta application is idempotent by `(txn_id, op_index)`; replays won’t double-apply.
+
+Which path should I use?
+- If you already store nodes/edges in SQL tables and need simple batch loads: use table-backed graphs and `INSERT`/`MERGE`.
+- If you need high-throughput streaming writes, partitioned adjacency, and WAL-based durability optimized for graph workloads: prefer GraphStore.
+
 USING GRAPHSTORE — full WITH options
 ------------------------------------
 The `WITH (...)` clause accepts key=value pairs (values may be quoted with single quotes). All keys are case-insensitive; unknown keys are preserved in the engine `options` map for forward compatibility. The following options are recognized today:

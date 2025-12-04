@@ -655,6 +655,11 @@ fn to_ck_and_db(cmd: &query::Command) -> (security::CommandKind, Option<String>)
         | query::Command::UseGraph { .. }
         | query::Command::UnsetGraph
         | query::Command::ShowCurrentGraph
+        | query::Command::BeginGraphTxn { .. }
+        | query::Command::CommitGraphTxn
+        | query::Command::AbortGraphTxn
+        | query::Command::InsertNodeTxn { .. }
+        | query::Command::InsertEdgeTxn { .. }
         | query::Command::GcGraph { .. }
         | query::Command::MatchRewrite { .. } => (security::CommandKind::Other, None),
         // Global session-affecting and SHOW

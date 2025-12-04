@@ -173,6 +173,71 @@ pub async fn execute_query(store: &SharedStore, text: &str) -> Result<serde_json
             }
             Ok(serde_json::json!({"status":"ok"}))
         }
+        // GraphStore transactional DDL
+        Command::BeginGraphTxn { graph } => {
+            use crate::server::graphstore::GraphHandle;
+            use crate::server::graphstore::txn::GraphTxn;
+            // Resolve graph name: explicit > session default
+            let gname = if let Some(g) = graph { g } else {
+                crate::system::get_current_graph_opt().ok_or_else(|| anyhow::anyhow!("BEGIN: no graph specified and no session default; use BEGIN GRAPH <db/schema/name> or USE GRAPH"))?
+            };
+            // Open handle and seed txn/ctx
+            let handle = GraphHandle::open(store, &gname)?;
+            // Prevent nested txn
+            if crate::system::peek_graph_txn_active() {
+                anyhow::bail!("a graph transaction is already active; COMMIT or ABORT before BEGIN");
+            }
+            let mut tx = GraphTxn::begin(&handle.root, 0)?;
+            let seed = handle.manifest.partitioning.as_ref().and_then(|p| p.hash_seed).unwrap_or(0);
+            let ctx = crate::system::GraphTxnCtx { graph: gname.clone(), root: handle.root.clone(), partitions: handle.manifest.partitions, hash_seed: seed };
+            crate::system::set_graph_txn(tx, ctx);
+            Ok(serde_json::json!({"status":"ok","graph": gname}))
+        }
+        Command::CommitGraphTxn => {
+            use std::time::{SystemTime, UNIX_EPOCH};
+            let ctx = crate::system::get_graph_txn_ctx().ok_or_else(|| anyhow::anyhow!("no active graph transaction"))?;
+            if let Some(tx) = crate::system::take_graph_txn() {
+                let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_micros() as u64;
+                tx.commit(now)?;
+                crate::system::clear_graph_txn();
+                Ok(serde_json::json!({"status":"ok","graph": ctx.graph}))
+            } else {
+                anyhow::bail!("no active graph transaction");
+            }
+        }
+        Command::AbortGraphTxn => {
+            if let Some(tx) = crate::system::take_graph_txn() {
+                let _ = tx.abort();
+                crate::system::clear_graph_txn();
+                Ok(serde_json::json!({"status":"ok"}))
+            } else {
+                anyhow::bail!("no active graph transaction");
+            }
+        }
+        Command::InsertNodeTxn { graph, label, key, node_id } => {
+            // Ensure active txn and same graph if provided
+            let ctx = crate::system::get_graph_txn_ctx().ok_or_else(|| anyhow::anyhow!("no active graph transaction; issue BEGIN first"))?;
+            if let Some(g) = &graph { if *g != ctx.graph { anyhow::bail!(format!("INSERT NODE GRAPH '{}' does not match active transaction graph '{}'", g, ctx.graph)); } }
+            let mut tx = crate::system::take_graph_txn().ok_or_else(|| anyhow::anyhow!("no active graph transaction; issue BEGIN first"))?;
+            tx.insert_node(&label, &key, node_id);
+            // place back
+            crate::system::set_graph_txn(tx, ctx);
+            Ok(serde_json::json!({"status":"ok"}))
+        }
+        Command::InsertEdgeTxn { graph, src, dst, etype_id, part } => {
+            let ctx = crate::system::get_graph_txn_ctx().ok_or_else(|| anyhow::anyhow!("no active graph transaction; issue BEGIN first"))?;
+            if let Some(g) = &graph { if *g != ctx.graph { anyhow::bail!(format!("INSERT EDGE GRAPH '{}' does not match active transaction graph '{}'", g, ctx.graph)); } }
+            let mut tx = crate::system::take_graph_txn().ok_or_else(|| anyhow::anyhow!("no active graph transaction; issue BEGIN first"))?;
+            let part_id: u32 = if let Some(p) = part { p } else {
+                // default routing: hash_mod by src with seed
+                let v = (src ^ ctx.hash_seed) % (ctx.partitions as u64);
+                v as u32
+            };
+            let et = etype_id.unwrap_or(0);
+            tx.insert_edge(part_id, src, dst, et);
+            crate::system::set_graph_txn(tx, ctx);
+            Ok(serde_json::json!({"status":"ok"}))
+        }
         Command::UnsetGraph => {
             crate::system::unset_current_graph();
             Ok(serde_json::json!({"status":"ok"}))
