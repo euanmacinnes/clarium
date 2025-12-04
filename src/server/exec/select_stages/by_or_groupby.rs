@@ -21,8 +21,10 @@ use crate::server::exec::select_stages::having::apply_having_with_validation;
 use crate::storage::SharedStore;
 
 pub fn by_or_groupby(store: &SharedStore, df: DataFrame, q: &Query, ctx: &mut DataContext) -> Result<DataFrame> {
+    debug!("[BY_OR_GROUPBY] Entering: by_window={:?}, group_by_cols={:?}, by_slices={:?}", q.by_window_ms.is_some(), q.group_by_cols.as_ref().map(|v| v.len()), q.by_slices.is_some());
     // If no BY/GROUP BY/SLICE requested, passthrough
     if q.by_window_ms.is_none() && q.group_by_cols.is_none() && q.by_slices.is_none() {
+        debug!("[BY_OR_GROUPBY] Passthrough: no BY/GROUP BY/SLICE");
         ctx.register_df_columns_for_stage(SelectStage::ByOrGroupBy, &df);
         return Ok(df);
     }
@@ -535,6 +537,7 @@ pub fn by_or_groupby(store: &SharedStore, df: DataFrame, q: &Query, ctx: &mut Da
             if let Some(func) = &item.func {
                 // Build base expression only when needed; avoid creating literal expressions for COUNT(*)
                 let base = if let Some(ex) = &item.expr {
+                    debug!("[GROUPBY] Building aggregate with expr: func={:?}, expr={:?}", func, ex);
                     build_arith_expr(&qualify_arith_ctx(&df, ctx, ex, "GROUP BY")?, ctx)
                 } else if matches!(func, AggFunc::Count) && item.column == "*" {
                     // Use a concrete column (time) as a safe base for count; we won't aggregate it directly.

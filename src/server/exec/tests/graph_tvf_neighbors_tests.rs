@@ -53,6 +53,10 @@ fn neighbors_join_nodes_semantic_affinity() {
                JOIN clarium/public/know_nodes n ON n.id = g.node_id \
                GROUP BY g.node_id HAVING affinity > 0.0 ORDER BY affinity DESC";
     let q = match query::parse(sql).unwrap() { Command::Select(q) => q, _ => unreachable!() };
+    println!("[TEST] Parsed query: group_by_cols={:?}, select_items={}", q.group_by_cols, q.select.len());
+    for (i, item) in q.select.iter().enumerate() {
+        println!("[TEST] select[{}]: func={:?}, column='{}', expr={:?}, alias={:?}", i, item.func, item.column, item.expr.is_some(), item.alias);
+    }
     let df = run_select(&store, &q).unwrap();
     assert!(df.height() >= 1);
     // Column names exist
