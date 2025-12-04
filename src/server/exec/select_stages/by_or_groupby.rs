@@ -20,7 +20,7 @@ use crate::scripts::get_script_registry;
 use crate::server::exec::select_stages::having::apply_having_with_validation;
 use crate::storage::SharedStore;
 
-pub fn by_or_groupby(store: &SharedStore, df: DataFrame, q: &Query, ctx: &mut DataContext) -> Result<DataFrame> {
+pub fn by_or_groupby(store: &SharedStore, mut df: DataFrame, q: &Query, ctx: &mut DataContext) -> Result<DataFrame> {
     debug!("[BY_OR_GROUPBY] Entering: by_window={:?}, group_by_cols={:?}, by_slices={:?}", q.by_window_ms.is_some(), q.group_by_cols.as_ref().map(|v| v.len()), q.by_slices.is_some());
     // If no BY/GROUP BY/SLICE requested, passthrough
     if q.by_window_ms.is_none() && q.group_by_cols.is_none() && q.by_slices.is_none() {
@@ -537,8 +537,28 @@ pub fn by_or_groupby(store: &SharedStore, df: DataFrame, q: &Query, ctx: &mut Da
             if let Some(func) = &item.func {
                 // Build base expression only when needed; avoid creating literal expressions for COUNT(*)
                 let base = if let Some(ex) = &item.expr {
-                    debug!("[GROUPBY] Building aggregate with expr: func={:?}, expr={:?}", func, ex);
-                    build_arith_expr(&qualify_arith_ctx(&df, ctx, ex, "GROUP BY")?, ctx)
+                    println!("[GROUPBY] Building aggregate with expr: func={:?}, expr={:?}", func, ex);
+                    let qualified_ex = qualify_arith_ctx(&df, ctx, ex, "GROUP BY")?;
+                    // Check if expression contains a UDF call (which uses .map() and can't be directly aggregated)
+                    let contains_udf = matches!(&qualified_ex, ArithExpr::Call { .. });
+                    println!("[GROUPBY] Checking for UDF: contains_udf={}, qualified_ex type={:?}", contains_udf, std::mem::discriminant(&qualified_ex));
+                    if contains_udf {
+                        // Pre-materialize UDF column by adding it to the input dataframe
+                        let temp_col_name = format!("__udf_temp_{}", item.alias.as_ref().unwrap_or(&item.column));
+                        println!("[GROUPBY] Pre-materializing UDF as column '{}'", temp_col_name);
+                        let udf_expr = build_arith_expr(&qualified_ex, ctx).alias(&temp_col_name);
+                        df = df.lazy().with_column(udf_expr).collect()?;
+                        println!("[GROUPBY] UDF materialized, df now has {} rows, {} cols", df.height(), df.width());
+                        if let Ok(temp_col) = df.column(&temp_col_name) {
+                            println!("[GROUPBY] Temp UDF column '{}': dtype={:?}, values={:?}", temp_col_name, temp_col.dtype(), temp_col);
+                        }
+                        // Rebuild lf to include the new column
+                        lf = df.clone().lazy();
+                        // Now aggregate the materialized column
+                        col(&temp_col_name)
+                    } else {
+                        build_arith_expr(&qualified_ex, ctx)
+                    }
                 } else if matches!(func, AggFunc::Count) && item.column == "*" {
                     // Use a concrete column (time) as a safe base for count; we won't aggregate it directly.
                     col(&time_col)
@@ -621,6 +641,12 @@ pub fn by_or_groupby(store: &SharedStore, df: DataFrame, q: &Query, ctx: &mut Da
         tracing::debug!(target: "clarium::groupby", "GROUPBY executing: gb_keys={:?}", resolved_group_cols);
         let mut out = lf.group_by(gb_exprs).agg(agg_cols).collect()?;
         tracing::debug!(target: "clarium::groupby", "GROUPBY raw out: rows={} cols={:?}", out.height(), out.get_column_names());
+        println!("[GROUPBY] After aggregation: rows={}, cols={:?}", out.height(), out.get_column_names());
+        for col_name in out.get_column_names() {
+            if let Ok(col) = out.column(col_name.as_str()) {
+                println!("[GROUPBY] Column '{}': dtype={:?}, first_value={:?}", col_name, col.dtype(), col.get(0));
+            }
+        }
         debug!("[GROUPBY COUNT] After aggregation, checking schema for COUNT columns");
         if cfg!(debug_assertions) {
             let mut dts: Vec<String> = Vec::new();

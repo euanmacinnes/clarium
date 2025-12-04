@@ -620,7 +620,7 @@ fn str_to_dtype(s: &str) -> Result<DataType> {
     let u = s.to_ascii_lowercase();
     Ok(match u.as_str() {
         "int64" | "integer" | "bigint" => DataType::Int64,
-        "float64" | "double" | "float" => DataType::Float64,
+        "float64" | "double" | "float" | "number" => DataType::Float64,
         "boolean" | "bool" => DataType::Boolean,
         "utf8" | "string" | "str" | "text" => DataType::String,
         "null" => DataType::Null,
