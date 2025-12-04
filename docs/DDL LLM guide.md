@@ -133,15 +133,18 @@ CREATE GRAPH <name>
     <EdgeType2> FROM <FromLabel> TO <ToLabel>
   )
   [USING TABLES (nodes=<nodes_table_path>, edges=<edges_table_path>)]
+  [USING GRAPHSTORE [CONFIG <config_name>] [WITH (<opt_key>=<opt_val>[, ...])]]
 ```
 Semantics
 - Defines a graph schema: node labels with their key columns and edge types with endpoints.
 - Optionally binds existing tables for nodes/edges storage via `USING TABLES`.
+- Alternatively, select the GraphStore engine and seed its configuration with `USING GRAPHSTORE`. When this clause is present, the engine writes the logical `.graph` definition and initializes an empty GraphStore manifest under `<db>/<schema>/<name>.gstore/meta/manifest.json`.
 Constraints
 - The `NODES(...)` and `EDGES(...)` blocks must be comma-separated entries following the formats `Label KEY(col)` and `Type FROM A TO B` respectively.
 Resolution and storage
 - If `USING TABLES` is omitted, the engine uses default physical locations under the current database/schema.
 - When provided, `nodes=` and `edges=` should be fully qualified paths of existing tables that hold graph data.
+- If `USING GRAPHSTORE` is specified, the GraphStore directory `<name>.gstore` is created (if needed) with a minimal `manifest.json` marking `engine: "graphstore"` and any provided options.
 Validation
 - Labels and types are parsed but not deeply validated against data until query time.
 - Keys are column names on the bound nodes table; edge endpoints must reference existing labels.
@@ -150,7 +153,7 @@ GraphStore engine variant (manifest-backed)
 Overview
 - Clarium supports two backing implementations for graphs:
   - Table-backed graphs, where edges/nodes are stored in regular tables (the default implied by `USING TABLES` or by omission).
-  - GraphStore-backed graphs, a high-performance, partitioned on-disk format under a graph directory with a manifest. This variant is selected at runtime based on the graph’s manifest metadata and does not require a different DDL syntax.
+  - GraphStore-backed graphs, a high-performance, partitioned on-disk format under a graph directory with a manifest. This variant can be explicitly selected at DDL time with `USING GRAPHSTORE`, which seeds the graph’s manifest.
 
 How GraphStore is detected/selected
 - The planner/executor reads the graph definition file (`<db>/<schema>/<name>.graph`) and, if present, the GraphStore manifest at `<db>/<schema>/<name>.gstore/meta/manifest.json`.
@@ -169,7 +172,7 @@ Storage layout and metadata
 
 DDL and lifecycle
 - `CREATE GRAPH` defines the logical graph schema (labels, edge types). It does not itself write GraphStore data.
-- Population/build of GraphStore data is handled by ingestion/build tools (outside this DDL) that materialize the `.gstore` directory and `manifest.json` with `engine: "graphstore"`.
+- With `USING GRAPHSTORE`, an empty GraphStore manifest is created so the runtime immediately recognizes the engine; population/build of actual GraphStore data is handled by ingestion/build tools that append segments and rotate the manifest.
 - You may also configure a `STORE` (see `CREATE STORE`) that points to the filesystem/root used by GraphStore. The runtime resolves paths using the active store.
 
 Query behavior and compatibility
@@ -212,6 +215,12 @@ Examples
 CREATE GRAPH public/know
   NODES (User KEY(id))
   EDGES (Calls FROM User TO User);
+
+-- GraphStore-backed definition with inline options
+CREATE GRAPH public/know
+  NODES (User KEY(id))
+  EDGES (Calls FROM User TO User)
+  USING GRAPHSTORE WITH (partitions=4, gc_window='10m');
 
 -- After GraphStore build creates public/know.gstore with engine: "graphstore",
 -- MATCH and TVFs automatically use the GraphStore runtime
