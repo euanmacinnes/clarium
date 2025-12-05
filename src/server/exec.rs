@@ -18,6 +18,7 @@ pub mod exec_scripts;   // SCRIPT management (create/drop/rename/load)
 pub mod exec_views;     // VIEW management (create/drop/show)
 pub mod exec_describe;  // DESCRIBE <object> (tables/views)
 pub mod exec_vector_index; // VECTOR INDEX management
+pub mod exec_vector_runtime; // VECTOR ANN runtime (build/search/status)
 pub mod exec_graph;        // GRAPH catalog management
 pub mod exec_graph_runtime; // Graph TVFs runtime (neighbors/paths)
 pub mod exec_alter;        // ALTER TABLE handling

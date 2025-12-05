@@ -32,7 +32,7 @@ fn qualify_name(name: &str) -> String {
     crate::ident::qualify_regular_ident(name, &d)
 }
 
-fn path_for_vindex(store: &SharedStore, qualified: &str) -> std::path::PathBuf {
+pub(crate) fn path_for_vindex(store: &SharedStore, qualified: &str) -> std::path::PathBuf {
     let mut p = store.0.lock().root_path().clone();
     let local = qualified.replace('/', std::path::MAIN_SEPARATOR.to_string().as_str());
     p.push(local);
@@ -40,7 +40,7 @@ fn path_for_vindex(store: &SharedStore, qualified: &str) -> std::path::PathBuf {
     p
 }
 
-fn read_vindex_file(store: &SharedStore, qualified: &str) -> Result<Option<VIndexFile>> {
+pub(crate) fn read_vindex_file(store: &SharedStore, qualified: &str) -> Result<Option<VIndexFile>> {
     let path = path_for_vindex(store, qualified);
     if !path.exists() { return Ok(None); }
     let text = std::fs::read_to_string(&path)?;
@@ -48,20 +48,20 @@ fn read_vindex_file(store: &SharedStore, qualified: &str) -> Result<Option<VInde
     Ok(Some(v))
 }
 
-fn write_vindex_file(store: &SharedStore, qualified: &str, vf: &VIndexFile) -> Result<()> {
+pub(crate) fn write_vindex_file(store: &SharedStore, qualified: &str, vf: &VIndexFile) -> Result<()> {
     let path = path_for_vindex(store, qualified);
     if let Some(parent) = path.parent() { std::fs::create_dir_all(parent).ok(); }
     std::fs::write(&path, serde_json::to_string_pretty(vf)?)?;
     Ok(())
 }
 
-fn delete_vindex_file(store: &SharedStore, qualified: &str) -> Result<()> {
+pub(crate) fn delete_vindex_file(store: &SharedStore, qualified: &str) -> Result<()> {
     let path = path_for_vindex(store, qualified);
     if path.exists() { std::fs::remove_file(&path).ok(); }
     Ok(())
 }
 
-fn now_iso() -> String { chrono::Utc::now().to_rfc3339() }
+pub(crate) fn now_iso() -> String { chrono::Utc::now().to_rfc3339() }
 
 fn table_exists(store: &SharedStore, qualified_table: &str) -> bool {
     let mut p = store.0.lock().root_path().clone();
@@ -171,6 +171,31 @@ pub fn execute_vector_index(store: &SharedStore, cmd: query::Command) -> Result<
         }
         query::Command::ShowVectorIndexes => {
             list_vector_indexes(store)
+        }
+        query::Command::BuildVectorIndex { name, options } => {
+            let qualified = qualify_name(&name);
+            if let Some(mut vf) = read_vindex_file(store, &qualified)? {
+                let out = crate::server::exec::exec_vector_runtime::build_vector_index(store, &mut vf, &options)?;
+                // persist updated status into .vindex
+                write_vindex_file(store, &qualified, &vf)?;
+                Ok(out)
+            } else {
+                Err(AppError::NotFound { code: "not_found".into(), message: format!("Vector index not found: {}", qualified) }.into())
+            }
+        }
+        query::Command::ReindexVectorIndex { name } => {
+            let qualified = qualify_name(&name);
+            if let Some(mut vf) = read_vindex_file(store, &qualified)? {
+                let out = crate::server::exec::exec_vector_runtime::reindex_vector_index(store, &mut vf)?;
+                write_vindex_file(store, &qualified, &vf)?;
+                Ok(out)
+            } else {
+                Err(AppError::NotFound { code: "not_found".into(), message: format!("Vector index not found: {}", qualified) }.into())
+            }
+        }
+        query::Command::ShowVectorIndexStatus { name } => {
+            let out = crate::server::exec::exec_vector_runtime::show_vector_index_status(store, name.as_deref())?;
+            Ok(out)
         }
         _ => Err(AppError::Ddl { code: "unsupported_vector_index".into(), message: "unsupported vector index command".into() }.into()),
     }

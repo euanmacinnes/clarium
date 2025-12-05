@@ -199,6 +199,8 @@ pub enum Command {
 pub fn parse(input: &str) -> Result<Command> {
     let s = input.trim();
     let sup = s.to_uppercase();
+    // Vector lifecycle commands (BUILD/REINDEX/SHOW STATUS)
+    if let Some(res) = parse_vector_ddl(s) { return res; }
     if sup.starts_with("SLICE ") || sup == "SLICE" {
         let plan = parse_slice(s)?;
         return Ok(Command::Slice(plan));

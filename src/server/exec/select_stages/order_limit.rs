@@ -17,6 +17,7 @@ use std::collections::HashMap;
 use std::cmp::Reverse;
 
 use crate::server::exec::vector_utils;
+use crate::server::exec::exec_vector_index::VIndexFile;
 
 pub fn order_limit(mut df: DataFrame, q: &Query, ctx: &mut DataContext) -> Result<DataFrame> {
     // Resolve ORDER BY columns. When strict projection is disabled, tolerate
@@ -94,7 +95,7 @@ pub fn order_limit(mut df: DataFrame, q: &Query, ctx: &mut DataContext) -> Resul
                                         let topk = q.limit.and_then(|n| if n > 0 { Some(n as usize) } else { None });
                                         let ef_search = crate::system::get_vector_ef_search();
                                         tprintln!("[ORDER_LIMIT] ANN executing (exact compute) with ef_search={} topk={:?}", ef_search, topk);
-                                        if let Ok(sorted) = ann_order_dataframe(&df, &p.column, &p.func, metric, dim, &rhs_val, *asc_flag, topk) {
+                                        if let Ok(sorted) = ann_order_dataframe(ctx, &df, &p.column, &p.func, metric, dim, &rhs_val, *asc_flag, topk) {
                                             df = sorted;
                                             ann_applied = true;
                                         } else {
@@ -122,7 +123,7 @@ pub fn order_limit(mut df: DataFrame, q: &Query, ctx: &mut DataContext) -> Resul
                                 let dim = diag.as_ref().and_then(|d| d.dim);
                                 if df.get_column_names().iter().any(|c| c.eq_ignore_ascii_case(&p.column)) {
                                     let topk = q.limit.and_then(|n| if n > 0 { Some(n as usize) } else { None });
-                                    if let Ok(sorted) = ann_order_dataframe(&df, &p.column, &p.func, metric, dim, &rhs_val, *asc_flag, topk) {
+                                    if let Ok(sorted) = ann_order_dataframe(ctx, &df, &p.column, &p.func, metric, dim, &rhs_val, *asc_flag, topk) {
                                         df = sorted;
                                         ann_applied = true;
                                     }
@@ -417,6 +418,7 @@ fn parse_vec_literal_f64(s: &str) -> Option<Vec<f64>> {
 
 // Compute ANN ordering using exact scoring on the provided column containing vector-encoded strings
 fn ann_order_dataframe(
+    ctx: &DataContext,
     df: &DataFrame,
     col_name: &str,
     func: &str,
@@ -438,6 +440,56 @@ fn ann_order_dataframe(
         .map(|c| c.to_string())
         .unwrap_or_else(|| col_name.to_string());
     let col_series = df.column(&cname)?;
+    // Try ANN runtime search first when LIMIT is present and a matching index exists; fallback to exact path on any error
+    if let Some(k) = topk {
+        if k > 0 {
+            if let Some(store) = ctx.store.as_ref() {
+                if let Some(ann) = ann_diag_for_order_by(ctx, &cname) {
+                    // Find the exact .vindex file matching table+column
+                    let root = store.0.lock().root_path().clone();
+                    'outer: for db_ent in std::fs::read_dir(&root).unwrap_or_else(|_| std::fs::read_dir(".").unwrap()) {
+                        if let Ok(db_e) = db_ent {
+                            let dbp = db_e.path(); if !dbp.is_dir() { continue; }
+                            if let Ok(schemas) = std::fs::read_dir(&dbp) {
+                                for sch_ent in schemas.flatten() {
+                                    let sp = sch_ent.path(); if !sp.is_dir() { continue; }
+                                    if let Ok(entries) = std::fs::read_dir(&sp) {
+                                        for e in entries.flatten() {
+                                            let p = e.path();
+                                            if p.is_file() && p.extension().and_then(|s| s.to_str()) == Some("vindex") {
+                                                if let Ok(text) = std::fs::read_to_string(&p) {
+                                                    if let Ok(vf) = serde_json::from_str::<VIndexFile>(&text) {
+                                                        let tbl_match = vf.table.eq_ignore_ascii_case(&ann.table) || vf.table.ends_with(&ann.table);
+                                                        if tbl_match && vf.column.eq_ignore_ascii_case(&ann.column) {
+                                                            // Call runtime search
+                                                            let qf: Vec<f32> = qvec.iter().map(|x| *x as f32).collect();
+                                                            if let Ok(cands) = crate::server::exec::exec_vector_runtime::search_vector_index(store, &vf, &qf, k) {
+                                                                // Map candidate row indices into df rows directly if sizes are compatible
+                                                                if !cands.is_empty() {
+                                                                    let mut idx: Vec<u32> = cands.into_iter().map(|(i,_s)| i).collect();
+                                                                    // Defensive clamp to df height
+                                                                    let h = df.height() as u32;
+                                                                    for ii in idx.iter_mut() { if *ii >= h { *ii = h.saturating_sub(1); } }
+                                                                    let idx_u = UInt32Chunked::from_slice("__take".into(), &idx);
+                                                                    let out = df.take(&idx_u)?;
+                                                                    return Ok(out);
+                                                                }
+                                                            }
+                                                            break 'outer;
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
     // If LIMIT k present, use streaming top-k selection to avoid full sort
     let final_desc = !asc_hint; // true means DESC
     // Provide a total-ordering key for f64 so we can use BinaryHeap without requiring Ord for f64
@@ -454,7 +506,7 @@ fn ann_order_dataframe(
             // Want largest k (DESC): maintain a min-heap of (score, idx); pop when new > smallest
             let mut heap: std::collections::BinaryHeap<Reverse<(u64, u32)>> = std::collections::BinaryHeap::with_capacity(k + 1);
             for i in 0..n {
-                let v = vector_utils::extract_vec_f32(col_series.as_materialized_series(), i).unwrap_or_default().into_iter().map(|x| x as f64).collect::<Vec<f64>>();
+                let v = vector_utils::extract_vec_f32_col(col_series, i).unwrap_or_default().into_iter().map(|x| x as f64).collect::<Vec<f64>>();
                 let score = match func {
                     f if f.eq_ignore_ascii_case("vec_l2") => l2_distance(&v, &qvec),
                     f if f.eq_ignore_ascii_case("cosine_sim") => cosine_similarity(&v, &qvec),
@@ -474,7 +526,7 @@ fn ann_order_dataframe(
             // Want smallest k (ASC): maintain a max-heap of (score, idx); pop when new < largest
             let mut heap: std::collections::BinaryHeap<(u64, u32)> = std::collections::BinaryHeap::with_capacity(k + 1);
             for i in 0..n {
-                let v = vector_utils::extract_vec_f32(col_series.as_materialized_series(), i).unwrap_or_default().into_iter().map(|x| x as f64).collect::<Vec<f64>>();
+                let v = vector_utils::extract_vec_f32_col(col_series, i).unwrap_or_default().into_iter().map(|x| x as f64).collect::<Vec<f64>>();
                 let score = match func {
                     f if f.eq_ignore_ascii_case("vec_l2") => l2_distance(&v, &qvec),
                     f if f.eq_ignore_ascii_case("cosine_sim") => cosine_similarity(&v, &qvec),
@@ -495,7 +547,7 @@ fn ann_order_dataframe(
     // No LIMIT k → compute scores and full sort with IdxSize limit (none)
     let mut scores: Vec<f64> = Vec::with_capacity(df.height());
     for i in 0..col_series.len() {
-        let v = vector_utils::extract_vec_f32(col_series.as_materialized_series(), i).unwrap_or_default().into_iter().map(|x| x as f64).collect::<Vec<f64>>();
+        let v = vector_utils::extract_vec_f32_col(col_series, i).unwrap_or_default().into_iter().map(|x| x as f64).collect::<Vec<f64>>();
         let score = match func {
             f if f.eq_ignore_ascii_case("vec_l2") => l2_distance(&v, &qvec),
             f if f.eq_ignore_ascii_case("cosine_sim") => cosine_similarity(&v, &qvec),

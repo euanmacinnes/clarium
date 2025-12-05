@@ -62,3 +62,35 @@ pub fn extract_vec_f32(series: &Series, i: usize) -> Option<Vec<f32>> {
         Err(_) => None,
     }
 }
+
+/// Same as `extract_vec_f32` but accepts a `&Column` reference, which is what `DataFrame::column` returns in Polars 0.51+.
+pub fn extract_vec_f32_col(series: &Column, i: usize) -> Option<Vec<f32>> {
+    match series.get(i) {
+        Ok(AnyValue::List(inner)) => {
+            let ser = inner;
+            let mut out: Vec<f32> = Vec::with_capacity(ser.len());
+            for li in 0..ser.len() {
+                match ser.get(li) {
+                    Ok(AnyValue::Float64(f)) => out.push(f as f32),
+                    Ok(AnyValue::Float32(f)) => out.push(f),
+                    Ok(AnyValue::Int64(iv)) => out.push(iv as f32),
+                    Ok(AnyValue::Int32(iv)) => out.push(iv as f32),
+                    Ok(other) => {
+                        let s_owned = other.to_string();
+                        if let Some(mut parsed) = parse_vec_literal(&s_owned) {
+                            if parsed.is_empty() { out.push(0.0); } else { out.append(&mut parsed); }
+                        } else {
+                            out.push(0.0);
+                        }
+                    }
+                    Err(_) => out.push(0.0),
+                }
+            }
+            Some(out)
+        }
+        Ok(AnyValue::String(s)) => parse_vec_literal(s),
+        Ok(AnyValue::StringOwned(s)) => parse_vec_literal(s.as_str()),
+        Ok(other) => parse_vec_literal(&other.to_string()),
+        Err(_) => None,
+    }
+}
