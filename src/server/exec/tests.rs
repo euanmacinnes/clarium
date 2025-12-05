@@ -148,6 +148,7 @@ mod udf_vectors_simple_tests;
 mod union_select_tests;
 mod unnamed_and_join_tests;
 mod vector_index_ddl_tests;
+mod vector_index_runtime_tests;
 mod vector_utils_tests;
 mod views_with_tvfs_tests;
 mod where_tests;
