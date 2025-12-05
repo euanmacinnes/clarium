@@ -24,7 +24,7 @@ pub struct ScriptRegistry {
 #[derive(Clone, Debug)]
 #[derive(Default)]
 pub enum ScriptKind { #[default]
-Scalar, Aggregate }
+Scalar, Aggregate, Constraint }
 
 
 #[derive(Clone, Debug, Default)]
@@ -153,7 +153,7 @@ impl ScriptRegistry {
         })
     }
 
-    /// Load all .lua scripts in subfolders `scalars` and `aggregates` into the registry
+    /// Load all .lua scripts in subfolders `scalars`, `aggregates`, and `constraints` into the registry
     /// and fetch optional metadata from one of (in order):
     /// 1) Sidecar JSON file `<name>.meta.json` next to the Lua file
     /// 2) Embedded JSON docstring at the top of the Lua file inside a block comment `--[[ { ... } ]]`
@@ -163,6 +163,7 @@ impl ScriptRegistry {
         if !dir.exists() { return Ok(()); }
         let scalars = dir.join("scalars");
         let aggregates = dir.join("aggregates");
+        let constraints = dir.join("constraints");
         let load_dir = |folder: &Path, kind: ScriptKind| -> Result<()> {
             if !folder.exists() { return Ok(()); }
             for ent in fs::read_dir(folder)? {
@@ -217,6 +218,7 @@ impl ScriptRegistry {
         };
         load_dir(&scalars, ScriptKind::Scalar)?;
         load_dir(&aggregates, ScriptKind::Aggregate)?;
+        load_dir(&constraints, ScriptKind::Constraint)?;
         Ok(())
     }
 
@@ -228,7 +230,9 @@ impl ScriptRegistry {
     fn meta_from_json_value(v: serde_json::Value, default_kind: &ScriptKind) -> Result<ScriptMeta> {
         let mut meta = ScriptMeta { kind: default_kind.clone(), returns: Vec::new(), nullable: true, version: 0 };
         if let Some(k) = v.get("kind").and_then(|x| x.as_str()) {
-            meta.kind = if k.eq_ignore_ascii_case("aggregate") { ScriptKind::Aggregate } else { ScriptKind::Scalar };
+            meta.kind = if k.eq_ignore_ascii_case("aggregate") { ScriptKind::Aggregate }
+                else if k.eq_ignore_ascii_case("constraint") { ScriptKind::Constraint }
+                else { ScriptKind::Scalar };
         }
         if let Some(nul) = v.get("nullable").and_then(|x| x.as_bool()) { meta.nullable = nul; }
         if let Some(arr) = v.get("returns").and_then(|x| x.as_array()) {
@@ -269,7 +273,7 @@ impl ScriptRegistry {
             let v: mlua::Value = mf.call(())?;
             // Expect a table with fields: kind, returns (array of strings), nullable (bool)
             if let mlua::Value::Table(t) = v {
-                if let Ok(k) = t.get::<_, String>("kind") { meta.kind = if k.eq_ignore_ascii_case("aggregate") { ScriptKind::Aggregate } else { ScriptKind::Scalar }; }
+                if let Ok(k) = t.get::<_, String>("kind") { meta.kind = if k.eq_ignore_ascii_case("aggregate") { ScriptKind::Aggregate } else if k.eq_ignore_ascii_case("constraint") { ScriptKind::Constraint } else { ScriptKind::Scalar }; }
                 if let Ok(nul) = t.get::<_, bool>("nullable") { meta.nullable = nul; }
                 if let Ok(arr) = t.get::<_, mlua::Table>("returns") {
                     let mut outs: Vec<DataType> = Vec::new();
@@ -296,7 +300,7 @@ impl ScriptRegistry {
             let meta = m.get(&name);
             match meta {
                 Some(meta) => {
-                    let kind = match meta.kind { ScriptKind::Scalar => "scalar", ScriptKind::Aggregate => "aggregate" };
+                    let kind = match meta.kind { ScriptKind::Scalar => "scalar", ScriptKind::Aggregate => "aggregate", ScriptKind::Constraint => "constraint" };
                     let returns: Vec<&'static str> = meta.returns.iter().map(|dt| match dt {
                         DataType::Boolean => "bool",
                         DataType::Int64 => "int64",
@@ -390,6 +394,7 @@ impl ScriptRegistry {
                 match meta.kind {
                     ScriptKind::Scalar => 0u8.hash(&mut hasher),
                     ScriptKind::Aggregate => 1u8.hash(&mut hasher),
+                    ScriptKind::Constraint => 2u8.hash(&mut hasher),
                 }
                 // returns: hash Debug representation for stability across Polars versions
                 meta.returns.len().hash(&mut hasher);
@@ -688,7 +693,7 @@ pub fn global_scripts_roots() -> Vec<PathBuf> {
 }
 
 /// Check if a function's script file exists under any global scripts root.
-/// Looks in subfolders `scalars` and `aggregates` for `<name>.lua` (case-insensitive logical name).
+/// Looks in subfolders `scalars`, `aggregates`, and `constraints` for `<name>.lua` (case-insensitive logical name).
 fn function_exists_in_global_scripts(name: &str) -> bool {
     let lname = name.to_ascii_lowercase();
     for root in global_scripts_roots() {
@@ -698,6 +703,9 @@ fn function_exists_in_global_scripts(name: &str) -> bool {
         // aggregates/<name>.lua
         let p2 = root.join("aggregates").join(format!("{}.lua", lname));
         if p2.exists() { return true; }
+        // constraints/<name>.lua
+        let p3 = root.join("constraints").join(format!("{}.lua", lname));
+        if p3.exists() { return true; }
     }
     false
 }
@@ -710,12 +718,14 @@ fn find_function_script_in_global_scripts(name: &str) -> Option<(PathBuf, Script
         if p1.exists() { return Some((p1, ScriptKind::Scalar)); }
         let p2 = root.join("aggregates").join(format!("{}.lua", lname));
         if p2.exists() { return Some((p2, ScriptKind::Aggregate)); }
+        let p3 = root.join("constraints").join(format!("{}.lua", lname));
+        if p3.exists() { return Some((p3, ScriptKind::Constraint)); }
     }
     None
 }
 
 /// Return all candidate full paths where the auto-loader will look for the given UDF name.
-/// This includes both `scalars/<name>.lua` and `aggregates/<name>.lua` under each global
+/// This includes `scalars/<name>.lua`, `aggregates/<name>.lua` and `constraints/<name>.lua` under each global
 /// scripts root returned by `global_scripts_roots()`.
 fn candidate_udf_script_paths(name: &str) -> Vec<PathBuf> {
     let lname = name.to_ascii_lowercase();
@@ -723,6 +733,7 @@ fn candidate_udf_script_paths(name: &str) -> Vec<PathBuf> {
     for root in global_scripts_roots() {
         v.push(root.join("scalars").join(format!("{}.lua", lname)));
         v.push(root.join("aggregates").join(format!("{}.lua", lname)));
+        v.push(root.join("constraints").join(format!("{}.lua", lname)));
     }
     v
 }

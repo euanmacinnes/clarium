@@ -94,7 +94,6 @@ fn write_gstore_fixture(store: &SharedStore, qname: &str,
 }
 
 #[test]
-#[ignore]
 fn graphstore_neighbors_bfs_basic() {
     let tmp = tempfile::tempdir().unwrap();
     let store = new_store(&tmp);

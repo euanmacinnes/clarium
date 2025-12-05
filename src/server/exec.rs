@@ -20,6 +20,8 @@ pub mod exec_describe;  // DESCRIBE <object> (tables/views)
 pub mod exec_vector_index; // VECTOR INDEX management
 pub mod exec_graph;        // GRAPH catalog management
 pub mod exec_graph_runtime; // Graph TVFs runtime (neighbors/paths)
+pub mod exec_alter;        // ALTER TABLE handling
+pub mod vector_utils;      // Shared vector parsing/extraction utilities
 
 use anyhow::Result;
 use polars::prelude::*;
@@ -74,6 +76,10 @@ pub async fn execute_query(store: &SharedStore, text: &str) -> Result<serde_json
             let df = run_slice(store, &plan, &ctx)?;
             Ok(dataframe_to_json(&df))
         }
+        // ALTER TABLE operations
+        Command::AlterTable { table, ops } => {
+            self::exec_alter::handle_alter_table(store, &table, &ops)
+        }
         // SHOW commands (global)
         Command::ShowTransactionIsolation
         | Command::ShowStandardConformingStrings
@@ -100,11 +106,14 @@ pub async fn execute_query(store: &SharedStore, text: &str) -> Result<serde_json
         Command::DescribeObject { name } => {
             self::exec_describe::execute_describe(store, &name)
         }
-        // Vector index catalog
+        // Vector index catalog and lifecycle
         Command::CreateVectorIndex { .. }
         | Command::DropVectorIndex { .. }
         | Command::ShowVectorIndex { .. }
-        | Command::ShowVectorIndexes => {
+        | Command::ShowVectorIndexes
+        | Command::BuildVectorIndex { .. }
+        | Command::ReindexVectorIndex { .. }
+        | Command::ShowVectorIndexStatus { .. } => {
             self::exec_vector_index::execute_vector_index(store, cmd)
         }
         // Graph catalogs

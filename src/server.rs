@@ -627,6 +627,10 @@ fn to_ck_and_db(cmd: &query::Command) -> (security::CommandKind, Option<String>)
         query::Command::CreateSchema { .. } | query::Command::DropSchema { .. } | query::Command::RenameSchema { .. } => (security::CommandKind::Schema, None),
         query::Command::CreateTimeTable { .. } | query::Command::DropTimeTable { .. } | query::Command::RenameTimeTable { .. } => (security::CommandKind::Database, None),
         query::Command::CreateTable { .. } | query::Command::DropTable { .. } | query::Command::RenameTable { .. } => (security::CommandKind::Database, None),
+        query::Command::AlterTable { table, .. } => {
+            let db_name = if table.contains('/') { table.split('/').next().map(|s| s.to_string()) } else { None };
+            (security::CommandKind::Database, db_name)
+        }
         query::Command::UserAdd { .. } | query::Command::UserDelete { .. } | query::Command::UserAlter { .. } => (security::CommandKind::Other, None),
         query::Command::CreateScript { .. } | query::Command::DropScript { .. } | query::Command::RenameScript { .. } | query::Command::LoadScript { .. } => (security::CommandKind::Other, None),
         // KV store/key commands
@@ -641,11 +645,15 @@ fn to_ck_and_db(cmd: &query::Command) -> (security::CommandKind, Option<String>)
         query::Command::ListKeys { database, .. } => (security::CommandKind::Other, Some(database.clone())),
         query::Command::DescribeKey { database, .. } => (security::CommandKind::Other, Some(database.clone())),
         query::Command::DescribeObject { .. } => (security::CommandKind::Other, None),
-        // Vector index catalog
+        // Vector index catalog and lifecycle
         query::Command::CreateVectorIndex { .. }
         | query::Command::DropVectorIndex { .. }
         | query::Command::ShowVectorIndex { .. }
-        | query::Command::ShowVectorIndexes => (security::CommandKind::Database, None),
+        | query::Command::ShowVectorIndexes
+        | query::Command::BuildVectorIndex { .. }
+        | query::Command::ReindexVectorIndex { .. }
+        | query::Command::ShowVectorIndexStatus { .. }
+        => (security::CommandKind::Database, None),
         // Graph catalog and graph-related commands
         query::Command::CreateGraph { .. }
         | query::Command::DropGraph { .. }

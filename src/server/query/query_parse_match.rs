@@ -61,7 +61,7 @@ pub fn parse_match(s: &str) -> Result<Command> {
     let from_sql = if is_shortest {
         let dst_sql = normalize_start_expr(dst_expr_raw.ok_or_else(|| anyhow::anyhow!("MATCH SHORTEST requires target node key in t: {{ key: ... }}"))?);
         format!(
-            "graph_paths({}, {}, {}, {}, {})",
+            "graph_paths({},{},{},{},{})",
             quote_graph_if_needed(&gf),
             start_sql,
             dst_sql,
@@ -70,15 +70,15 @@ pub fn parse_match(s: &str) -> Result<Command> {
         )
     } else {
         format!(
-            "graph_neighbors({}, {}, {}, {})",
+            "graph_neighbors({},{},{},{})",
             quote_graph_if_needed(&gf),
             start_sql,
             etype_sql,
             u_sql
         )
     };
-    // Wrap TVF call in a subquery to align with existing planner expectations
-    let mut select_sql = format!("SELECT {} FROM (SELECT * FROM {}) g", proj_sql, from_sql);
+    // Use TVF directly in FROM, aligned with existing parser/tests: FROM graph_neighbors(...) g
+    let mut select_sql = format!("SELECT {} FROM {} g", proj_sql, from_sql);
     if let Some(ws) = where_sql { select_sql.push_str(" WHERE "); select_sql.push_str(ws.trim()); }
     if let Some(os) = order_sql { select_sql.push_str(" ORDER BY "); select_sql.push_str(os.trim()); }
     if let Some(ls) = limit_part { select_sql.push_str(" LIMIT "); select_sql.push_str(ls.trim()); }

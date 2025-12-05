@@ -22,6 +22,8 @@ pub mod query_parse_user;
 pub mod query_parse_where_tokens;
 pub mod query_parse_where;
 pub mod query_parse_txn;
+pub mod query_parse_alter;
+pub mod query_parse_vector;
 
 // Import MATCH parser entrypoint for top-level dispatch
 use crate::server::query::query_parse_match::parse_match;
@@ -47,6 +49,8 @@ pub use query_parse_update::*;
 pub use query_parse_user::*;
 pub use query_parse_where_tokens::*;
 pub use query_parse_where::*;
+pub use query_parse_alter::*;
+pub use query_parse_vector::*;
 
 
 
@@ -88,6 +92,8 @@ pub enum Command {
     CreateTable { table: String, primary_key: Option<Vec<String>>, partitions: Option<Vec<String>> },
     DropTable { table: String, if_exists: bool },
     RenameTable { from: String, to: String },
+    // ALTER TABLE for regular tables
+    AlterTable { table: String, ops: Vec<AlterOp> },
     // KV store/keys DDL/DML
     CreateStore { database: String, store: String },
     DropStore { database: String, store: String },
@@ -137,6 +143,10 @@ pub enum Command {
     DropVectorIndex { name: String },
     ShowVectorIndex { name: String },
     ShowVectorIndexes,
+    // Vector index lifecycle
+    BuildVectorIndex { name: String, options: Vec<(String, String)> },
+    ReindexVectorIndex { name: String },
+    ShowVectorIndexStatus { name: Option<String> },
     // Graph catalog
     // Optional integration with GraphStore engine via `USING GRAPHSTORE [CONFIG <name>] [WITH (k=v, ...)]`.
     CreateGraph {
@@ -253,6 +263,9 @@ pub fn parse(input: &str) -> Result<Command> {
     }
     if sup.starts_with("RENAME ") {
         return parse_rename(s);
+    }
+    if sup.starts_with("ALTER ") {
+        return parse_alter(s);
     }
     if sup.starts_with("WRITE ") {
         return parse_write(s);

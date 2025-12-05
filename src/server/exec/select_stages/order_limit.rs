@@ -14,6 +14,9 @@ use serde::Deserialize;
 use std::fs;
 use std::path::Path;
 use std::collections::HashMap;
+use std::cmp::Reverse;
+
+use crate::server::exec::vector_utils;
 
 pub fn order_limit(mut df: DataFrame, q: &Query, ctx: &mut DataContext) -> Result<DataFrame> {
     // Resolve ORDER BY columns. When strict projection is disabled, tolerate
@@ -407,28 +410,9 @@ fn eval_scalar_expr(ctx: &DataContext, expr: &str) -> Option<String> {
 
 // --- ANN execution helpers ---
 
-// Parse a vector literal string into Vec<f64>; accepts comma or whitespace separated, optional brackets
-fn parse_vec_literal(s: &str) -> Option<Vec<f64>> {
-    let mut txt = s.trim().trim_matches('"').trim_matches('\'').to_string();
-    if txt.len() >= 2 {
-        let first = txt.as_bytes()[0] as char;
-        let last = txt.as_bytes()[txt.len()-1] as char;
-        if (first == '[' && last == ']') || (first == '(' && last == ')') {
-            txt = txt[1..txt.len()-1].to_string();
-        }
-    }
-    // Replace whitespace with commas for easier split
-    let txt = txt.replace(|c: char| c.is_whitespace(), ",");
-    let mut out: Vec<f64> = Vec::new();
-    for part in txt.split(',') {
-        let p = part.trim();
-        if p.is_empty() { continue; }
-        match p.parse::<f64>() {
-            Ok(v) => out.push(v),
-            Err(_) => return None,
-        }
-    }
-    if out.is_empty() { None } else { Some(out) }
+// Vector parsing is centralized in vector_utils; keep a small adapter to f64
+fn parse_vec_literal_f64(s: &str) -> Option<Vec<f64>> {
+    vector_utils::parse_vec_literal(s).map(|v| v.into_iter().map(|x| x as f64).collect())
 }
 
 // Compute ANN ordering using exact scoring on the provided column containing vector-encoded strings
@@ -443,7 +427,7 @@ fn ann_order_dataframe(
     topk: Option<usize>,
 ) -> Result<DataFrame> {
     // Parse query vector once. If parsing fails, bail so caller can fallback to exact ORDER BY path.
-    let qvec = parse_vec_literal(rhs_scalar).ok_or_else(|| anyhow::anyhow!("invalid query vector for ANN"))?;
+    let qvec = parse_vec_literal_f64(rhs_scalar).ok_or_else(|| anyhow::anyhow!("invalid query vector for ANN"))?;
     // Do NOT hard fail on index metric/dimension mismatch; treat index hints as advisory.
     // This enables graceful fallback to exact scoring even when index metadata doesn't align with the request.
     // Ensure the column exists and is String-like
@@ -454,39 +438,64 @@ fn ann_order_dataframe(
         .map(|c| c.to_string())
         .unwrap_or_else(|| col_name.to_string());
     let col_series = df.column(&cname)?;
-    // Create score series
+    // If LIMIT k present, use streaming top-k selection to avoid full sort
+    let final_desc = !asc_hint; // true means DESC
+    // Provide a total-ordering key for f64 so we can use BinaryHeap without requiring Ord for f64
+    #[inline]
+    fn f64_key(v: f64) -> u64 {
+        let b = v.to_bits();
+        // Map IEEE754 to lexicographically ordered bits (NaNs will be ordered but their exact placement is not critical here)
+        if b & (1u64 << 63) != 0 { !b } else { b | (1u64 << 63) }
+    }
+    if let Some(k) = topk {
+        let n = col_series.len();
+        if k == 0 || n == 0 { return Ok(df.clone()); }
+        if final_desc {
+            // Want largest k (DESC): maintain a min-heap of (score, idx); pop when new > smallest
+            let mut heap: std::collections::BinaryHeap<Reverse<(u64, u32)>> = std::collections::BinaryHeap::with_capacity(k + 1);
+            for i in 0..n {
+                let v = vector_utils::extract_vec_f32(col_series.as_materialized_series(), i).unwrap_or_default().into_iter().map(|x| x as f64).collect::<Vec<f64>>();
+                let score = match func {
+                    f if f.eq_ignore_ascii_case("vec_l2") => l2_distance(&v, &qvec),
+                    f if f.eq_ignore_ascii_case("cosine_sim") => cosine_similarity(&v, &qvec),
+                    _ => l2_distance(&v, &qvec),
+                };
+                heap.push(Reverse((f64_key(score), i as u32)));
+                if heap.len() > k { heap.pop(); }
+            }
+            let mut items: Vec<(u64, u32)> = heap.into_iter().map(|Reverse(t)| t).collect();
+            // Sort by key DESC (largest scores first)
+            items.sort_by(|a, b| b.0.cmp(&a.0));
+            let idx: Vec<u32> = items.into_iter().map(|(_, i)| i).collect();
+            let idx_u = UInt32Chunked::from_slice("__take".into(), &idx);
+            let out = df.take(&idx_u)?;
+            return Ok(out);
+        } else {
+            // Want smallest k (ASC): maintain a max-heap of (score, idx); pop when new < largest
+            let mut heap: std::collections::BinaryHeap<(u64, u32)> = std::collections::BinaryHeap::with_capacity(k + 1);
+            for i in 0..n {
+                let v = vector_utils::extract_vec_f32(col_series.as_materialized_series(), i).unwrap_or_default().into_iter().map(|x| x as f64).collect::<Vec<f64>>();
+                let score = match func {
+                    f if f.eq_ignore_ascii_case("vec_l2") => l2_distance(&v, &qvec),
+                    f if f.eq_ignore_ascii_case("cosine_sim") => cosine_similarity(&v, &qvec),
+                    _ => l2_distance(&v, &qvec),
+                };
+                heap.push((f64_key(score), i as u32));
+                if heap.len() > k { heap.pop(); }
+            }
+            let mut items: Vec<(u64, u32)> = heap.into_iter().collect();
+            // Sort by key ASC (smallest scores first)
+            items.sort_by(|a, b| a.0.cmp(&b.0));
+            let idx: Vec<u32> = items.into_iter().map(|(_, i)| i).collect();
+            let idx_u = UInt32Chunked::from_slice("__take".into(), &idx);
+            let out = df.take(&idx_u)?;
+            return Ok(out);
+        }
+    }
+    // No LIMIT k → compute scores and full sort with IdxSize limit (none)
     let mut scores: Vec<f64> = Vec::with_capacity(df.height());
-    // Iterate row-wise and read vectors from either native List(Float64/Int64) cells or fallback string encodings
     for i in 0..col_series.len() {
-        // Polars 0.51+ guideline: use Series::get(i) and AnyValue conversion
-        let v: Vec<f64> = match col_series.get(i) {
-            Ok(AnyValue::List(inner)) => {
-                let ser = inner;
-                let mut out: Vec<f64> = Vec::with_capacity(ser.len());
-                for li in 0..ser.len() {
-                    match ser.get(li) {
-                        Ok(AnyValue::Float64(f)) => out.push(f),
-                        Ok(AnyValue::Int64(iv)) => out.push(iv as f64),
-                        Ok(AnyValue::Float32(f)) => out.push(f as f64),
-                        Ok(AnyValue::Int32(iv)) => out.push(iv as f64),
-                        Ok(other) => {
-                            let s_owned = other.to_string();
-                            let mut parsed = parse_vec_literal(&s_owned).unwrap_or_default();
-                            if parsed.is_empty() { out.push(0.0); } else { out.append(&mut parsed); }
-                        }
-                        Err(_) => out.push(0.0),
-                    }
-                }
-                out
-            }
-            Ok(AnyValue::String(s)) => parse_vec_literal(s).unwrap_or_default(),
-            Ok(AnyValue::StringOwned(s)) => parse_vec_literal(s.as_str()).unwrap_or_default(),
-            Ok(other) => {
-                let s_owned = other.to_string();
-                parse_vec_literal(&s_owned).unwrap_or_default()
-            }
-            Err(_) => Vec::new(),
-        };
+        let v = vector_utils::extract_vec_f32(col_series.as_materialized_series(), i).unwrap_or_default().into_iter().map(|x| x as f64).collect::<Vec<f64>>();
         let score = match func {
             f if f.eq_ignore_ascii_case("vec_l2") => l2_distance(&v, &qvec),
             f if f.eq_ignore_ascii_case("cosine_sim") => cosine_similarity(&v, &qvec),
@@ -494,17 +503,11 @@ fn ann_order_dataframe(
         };
         scores.push(score);
     }
-    // Determine final sort direction:
-    // For cosine_sim: higher is better (DESC by default). For vec_l2: lower is better (ASC by default).
-    let default_desc = func.eq_ignore_ascii_case("cosine_sim");
-    // If user specified ASC/DESC explicitly, honor it; asc_hint=true means ASC, so descending=false
-    // We combine by using the user's flag as the final direction.
-    let final_desc = !asc_hint; // true means DESC
-    // Attach score column
+    let final_desc = !asc_hint;
     let score_series = Series::new("__ann_score".into(), scores);
     let mut df2 = df.clone();
     df2.with_column(score_series)?;
-    let opts = polars::prelude::SortMultipleOptions { descending: vec![final_desc], nulls_last: vec![true], maintain_order: true, multithreaded: true, limit: topk.map(|v| v as polars::prelude::IdxSize) };
+    let opts = polars::prelude::SortMultipleOptions { descending: vec![final_desc], nulls_last: vec![true], maintain_order: true, multithreaded: true, limit: None };
     let orig_cols: Vec<_> = df.get_column_names().iter().map(|s| col(s.as_str())).collect();
     let df_sorted = df2.lazy().sort_by_exprs(vec![col("__ann_score")], opts).select(&orig_cols).collect()?;
     Ok(df_sorted)

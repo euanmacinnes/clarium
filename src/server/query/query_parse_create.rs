@@ -13,6 +13,40 @@ pub fn parse_create(s: &str) -> Result<Command> {
         if name.is_empty() { anyhow::bail!("Invalid CREATE DATABASE: missing database name"); }
         return Ok(Command::CreateDatabase { name: name.to_string() });
     }
+    // CREATE MATCH VIEW <name> AS MATCH ...
+    if up.starts_with("MATCH VIEW ") || up.starts_with("OR ALTER MATCH VIEW ") {
+        // Normalize optional OR ALTER
+        let mut or_alter = false;
+        let after = if up.starts_with("OR ALTER MATCH VIEW ") {
+            or_alter = true;
+            &rest["OR ALTER MATCH VIEW ".len()..]
+        } else {
+            &rest["MATCH VIEW ".len()..]
+        };
+        let after = after.trim();
+        let up_after = after.to_uppercase();
+        let as_pos = up_after.find(" AS ").ok_or_else(|| anyhow::anyhow!("Invalid CREATE MATCH VIEW: expected AS"))?;
+        let name = after[..as_pos].trim();
+        let body = after[as_pos + 4..].trim();
+        if name.is_empty() { anyhow::bail!("Invalid CREATE MATCH VIEW: missing view name"); }
+        if body.is_empty() { anyhow::bail!("Invalid CREATE MATCH VIEW: missing MATCH definition after AS"); }
+        // Body must start with MATCH ...
+        let body_up = body.to_uppercase();
+        if !body_up.starts_with("MATCH") { anyhow::bail!("Invalid CREATE MATCH VIEW: expected MATCH statement after AS"); }
+        // Use the MATCH rewriter to get a SELECT definition
+        match crate::server::query::parse_match(body) {
+            Ok(crate::server::query::Command::MatchRewrite { sql }) => {
+                let normalized_name = crate::ident::normalize_identifier(name);
+                return Ok(Command::CreateView { name: normalized_name, or_alter, definition_sql: sql });
+            }
+            Ok(other) => {
+                anyhow::bail!("CREATE MATCH VIEW: internal error, expected MatchRewrite, got {:?}", other);
+            }
+            Err(e) => {
+                anyhow::bail!("CREATE MATCH VIEW: failed to parse MATCH body: {}", e);
+            }
+        }
+    }
     if up.starts_with("VIEW ") || up.starts_with("OR ALTER VIEW ") {
         // CREATE [OR ALTER] VIEW <name> AS <SELECT...>
         // Capture the definition SQL verbatim after AS (can be SELECT or SELECT UNION)

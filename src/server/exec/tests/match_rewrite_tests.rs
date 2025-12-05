@@ -5,7 +5,6 @@ use crate::storage::{SharedStore, Record};
 use serde_json::json;
 
 #[test]
-#[ignore]
 fn match_neighbors_rewrite_equivalence() {
     let tmp = tempfile::tempdir().unwrap();
     let store = new_store(&tmp);
@@ -40,7 +39,6 @@ fn match_neighbors_rewrite_equivalence() {
 }
 
 #[test]
-#[ignore]
 fn match_shortest_paths_weighted() {
     let tmp = tempfile::tempdir().unwrap();
     let store = new_store(&tmp);

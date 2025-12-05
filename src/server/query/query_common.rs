@@ -112,6 +112,24 @@ pub enum SqlType {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub enum AlterOp {
+    // ADD COLUMN <name> <type> [NULL|NOT NULL] [DEFAULT <expr>]
+    AddColumn { name: String, type_key: String, nullable: bool, default_expr: Option<String> },
+    // RENAME COLUMN <old> TO <new>
+    RenameColumn { from: String, to: String },
+    // ALTER COLUMN <name> TYPE <type>
+    AlterColumnType { name: String, type_key: String },
+    // ADD PRIMARY KEY (col[, ...])
+    AddPrimaryKey { columns: Vec<String> },
+    // DROP PRIMARY KEY
+    DropPrimaryKey,
+    // ADD CONSTRAINT <name> USING <udf_name>
+    AddConstraint { name: String, udf: String },
+    // DROP CONSTRAINT <name>
+    DropConstraint { name: String },
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum WhereExpr {
     Comp { left: ArithExpr, op: CompOp, right: ArithExpr },
     And(Box<WhereExpr>, Box<WhereExpr>),

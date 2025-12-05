@@ -114,6 +114,7 @@ mod join_inner_tests;
 mod join_outer_tests;
 mod like_tests;
 mod match_rewrite_tests;
+mod match_view_tests;
 mod nested_exists_tests;
 mod normalize_tests;
 mod order_mode_tests;
