@@ -90,6 +90,7 @@ mod udf_common {
 
 mod ambiguous_names_tests;
 mod ann_order_by_tests;
+mod ann_topk_heap_tests;
 mod cast_and_regclass_tests;
 mod cast_followups_tests;
 mod clause_errors_tests; // File not found
@@ -147,6 +148,7 @@ mod udf_vectors_simple_tests;
 mod union_select_tests;
 mod unnamed_and_join_tests;
 mod vector_index_ddl_tests;
+mod vector_utils_tests;
 mod views_with_tvfs_tests;
 mod where_tests;
 mod windowing_tests;
