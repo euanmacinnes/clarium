@@ -65,9 +65,16 @@ pgwire = ["dep:pgwire"]
 # Build with pgwire enabled by default so the binary exposes pgwire unless disabled at runtime
 default = ["pgwire"]
 
+# Optional ANN HNSW engine integration (off by default)
+ann_hnsw = ["dep:hnsw_rs"]
+
 # Dev-only SeaORM runner in clarium_test_suite
 seaorm_dev = ["dep:sea-orm", "dep:sea-query"]
 
 [dev-dependencies]
 futures = "0.3.31"
 tempfile = "3"
+
+[dependencies.hnsw_rs]
+version = "0.3"
+optional = true

@@ -1,9 +1,10 @@
 //! exec_vector_runtime
 //! --------------------
-//! Vector index runtime lifecycle scaffolding: BUILD/REINDEX/STATUS and placeholders
-//! for ANN search. This initial implementation persists status metadata only and
-//! prepares file paths for future ANN engines (e.g., HNSW). It is intentionally
-//! conservative to ensure compilation and incremental rollout.
+//! Vector index runtime: BUILD/REINDEX/STATUS and search over flat (exact) engine.
+//!
+//! v2 `.vdata` format adds stable row ids alongside contiguous f32 payload:
+//! magic:u32 | version:u32 | flags:u32 | dim:u32 | rows:u32 | [row_ids: rows*u64 if flags&1] | data: rows*dim*f32
+//! v1 compatibility: magic | version(=1) | dim | rows | data
 
 use anyhow::{Result, bail};
 use serde_json::json;
@@ -11,6 +12,56 @@ use polars::prelude::*;
 
 use crate::server::exec::exec_vector_index::VIndexFile;
 use crate::storage::SharedStore;
+
+#[cfg(feature = "ann_hnsw")]
+mod hnsw_backend {
+    use super::*;
+    use hnsw_rs::prelude::*;
+    use std::fs;
+
+    fn path_for_hnsw(store: &SharedStore, qualified: &str) -> std::path::PathBuf {
+        let mut p = store.0.lock().root_path().clone();
+        let local = qualified.replace('/', std::path::MAIN_SEPARATOR.to_string().as_str());
+        p.push(local);
+        p.set_extension("hnsw");
+        p
+    }
+
+    pub fn build_hnsw_index(store: &SharedStore, v: &VIndexFile) -> Result<()> {
+        // Load vdata (ensures it exists); then build HNSW in-memory and persist via bincode
+        let (dim, rows, _row_ids, data) = super::load_vdata(store, &v.qualified)?;
+        let m = v.params.as_ref().and_then(|p| p.get("M")).and_then(|x| x.as_i64()).unwrap_or(32) as usize;
+        let ef_construction = v.params.as_ref().and_then(|p| p.get("ef_build")).and_then(|x| x.as_i64()).unwrap_or(200) as usize;
+        let metric = v.metric.as_deref().unwrap_or("l2").to_ascii_lowercase();
+        let mut hnsw: Hnsw<f32, DistL2> = HnswBuilder::default().m(m).ef_construct(ef_construction).num_elements(rows as usize).build();
+        // Note: we currently support L2 distance; IP/cosine would require different distance types or normalization
+        for r in 0..rows as usize {
+            let off = r * dim as usize;
+            let vec = data[off..off + dim as usize].to_vec();
+            hnsw.insert((&vec, r)).map_err(|e| anyhow::anyhow!(format!("hnsw insert error: {:?}", e)))?;
+        }
+        hnsw.build();
+        let path = path_for_hnsw(store, &v.qualified);
+        if let Some(parent) = path.parent() { fs::create_dir_all(parent).ok(); }
+        // Serialize
+        let bytes = bincode::serialize(&hnsw).map_err(|e| anyhow::anyhow!(format!("hnsw serialize: {:?}", e)))?;
+        fs::write(&path, bytes)?;
+        Ok(())
+    }
+
+    pub fn search_hnsw_index(store: &SharedStore, v: &VIndexFile, qvec: &[f32], k: usize) -> Option<Vec<(u32, f32)>> {
+        // Try to load .hnsw and run search; fall back to None on any error
+        let path = path_for_hnsw(store, &v.qualified);
+        if !path.exists() { return None; }
+        let bytes = std::fs::read(&path).ok()?;
+        let mut hnsw: Hnsw<f32, DistL2> = bincode::deserialize(&bytes).ok()?;
+        let res = hnsw.search(qvec, k);
+        // Convert to (idx, distance) with L2 distance assumption
+        let mut out: Vec<(u32, f32)> = res.into_iter().map(|ne| (ne.d_id as u32, ne.distance)).collect();
+        // Already in ascending distance order
+        Some(out)
+    }
+}
 
 fn path_for_index_data(store: &SharedStore, qualified: &str) -> std::path::PathBuf {
     let mut p = store.0.lock().root_path().clone();
@@ -20,7 +71,7 @@ fn path_for_index_data(store: &SharedStore, qualified: &str) -> std::path::PathB
     p
 }
 
-pub fn build_vector_index(store: &SharedStore, v: &mut VIndexFile, options: &Vec<(String,String)>) -> Result<serde_json::Value> {
+pub fn build_vector_index(store: &SharedStore, v: &mut VIndexFile, _options: &Vec<(String,String)>) -> Result<serde_json::Value> {
     // Read source table and build a flat f32 vector store for now.
     let data_path = path_for_index_data(store, &v.qualified);
     if let Some(parent) = data_path.parent() { std::fs::create_dir_all(parent).ok(); }
@@ -33,6 +84,7 @@ pub fn build_vector_index(store: &SharedStore, v: &mut VIndexFile, options: &Vec
     let series = df.column(&col)?;
     // Extract vectors and validate dimensions
     let mut buf: Vec<f32> = Vec::new();
+    let mut row_ids: Vec<u64> = Vec::new();
     let mut rows: u32 = 0;
     let mut dim: u32 = 0;
     for i in 0..series.len() {
@@ -42,17 +94,24 @@ pub fn build_vector_index(store: &SharedStore, v: &mut VIndexFile, options: &Vec
             if let Some(req_dim) = v.dim { if req_dim as usize != vv.len() { continue; } }
             if vv.len() as u32 != dim { continue; }
             buf.extend_from_slice(&vv);
+            // For now use row ordinal as stable row id; future: prefer table primary key.
+            row_ids.push(rows as u64);
             rows += 1;
         }
     }
-    // Persist as: magic:u32, version:u32, dim:u32, rows:u32, data: rows*dim f32
-    let mut out: Vec<u8> = Vec::with_capacity(16 + buf.len() * 4);
+    // Persist v2 format with row ids
+    let mut out: Vec<u8> = Vec::with_capacity(20 + row_ids.len() * 8 + buf.len() * 4);
     let magic: u32 = 0x56444346; // 'VDCF'
-    let version: u32 = 1;
+    let version: u32 = 2;
+    let flags: u32 = 1; // bit0: has_rowid
     out.extend_from_slice(&magic.to_le_bytes());
     out.extend_from_slice(&version.to_le_bytes());
+    out.extend_from_slice(&flags.to_le_bytes());
     out.extend_from_slice(&dim.to_le_bytes());
     out.extend_from_slice(&rows.to_le_bytes());
+    // row ids
+    for rid in &row_ids { out.extend_from_slice(&rid.to_le_bytes()); }
+    // f32 payload
     let bytes = unsafe { std::slice::from_raw_parts(buf.as_ptr() as *const u8, buf.len() * 4) };
     out.extend_from_slice(bytes);
     std::fs::write(&data_path, &out)?;
@@ -62,9 +121,18 @@ pub fn build_vector_index(store: &SharedStore, v: &mut VIndexFile, options: &Vec
     status.insert("bytes".into(), json!(out.len() as u64));
     status.insert("last_built_at".into(), json!(crate::server::exec::exec_vector_index::now_iso()));
     status.insert("dim".into(), json!(dim));
+    status.insert("engine".into(), json!("flat"));
     if let Some(m) = &v.metric { status.insert("metric".into(), json!(m)); }
     if let Some(p) = &v.params { for (k, val) in p.iter() { status.insert(format!("param.{}", k), val.clone()); } }
     v.status = Some(status);
+    // Optionally build HNSW artifact when feature enabled; ignore errors, keep flat engine as baseline
+    #[cfg(feature = "ann_hnsw")]
+    {
+        let _ = self::hnsw_backend::build_hnsw_index(store, v);
+        if let Some(st) = v.status.as_mut() {
+            st.insert("engine.hnsw".into(), json!(true));
+        }
+    }
     Ok(json!({"status":"ok","rows_indexed":rows,"dim":dim}))
 }
 
@@ -110,23 +178,51 @@ pub fn show_vector_index_status(store: &SharedStore, name: Option<&str>) -> Resu
     Ok(json!(out))
 }
 
-fn load_vdata(store: &SharedStore, qualified: &str) -> Result<(u32, u32, Vec<f32>)> {
+fn load_vdata(store: &SharedStore, qualified: &str) -> Result<(u32, u32, Option<Vec<u64>>, Vec<f32>)> {
     let p = path_for_index_data(store, qualified);
     let bytes = std::fs::read(&p)?;
     if bytes.len() < 16 { bail!("corrupt vdata: too small"); }
     let magic = u32::from_le_bytes(bytes[0..4].try_into().unwrap());
-    let _version = u32::from_le_bytes(bytes[4..8].try_into().unwrap());
-    let dim = u32::from_le_bytes(bytes[8..12].try_into().unwrap());
-    let rows = u32::from_le_bytes(bytes[12..16].try_into().unwrap());
     if magic != 0x56444346 { bail!("corrupt vdata: bad magic"); }
-    let expected = 16usize + (rows as usize * dim as usize * 4);
-    if bytes.len() != expected { bail!("corrupt vdata: size mismatch"); }
-    let mut data = vec![0f32; (rows * dim) as usize];
-    let src = &bytes[16..];
-    // Safe transmute copy
-    let ptr = data.as_mut_ptr() as *mut u8;
-    unsafe { std::ptr::copy_nonoverlapping(src.as_ptr(), ptr, src.len()); }
-    Ok((dim, rows, data))
+    let version = u32::from_le_bytes(bytes[4..8].try_into().unwrap());
+    if version == 1 {
+        // v1: magic|version|dim|rows|data
+        let dim = u32::from_le_bytes(bytes[8..12].try_into().unwrap());
+        let rows = u32::from_le_bytes(bytes[12..16].try_into().unwrap());
+        let expected = 16usize + (rows as usize * dim as usize * 4);
+        if bytes.len() != expected { bail!("corrupt vdata(v1): size mismatch"); }
+        let mut data = vec![0f32; (rows * dim) as usize];
+        let src = &bytes[16..];
+        let ptr = data.as_mut_ptr() as *mut u8;
+        unsafe { std::ptr::copy_nonoverlapping(src.as_ptr(), ptr, src.len()); }
+        Ok((dim, rows, None, data))
+    } else {
+        // v2+: magic|version|flags|dim|rows|[row_ids]|data
+        if bytes.len() < 20 { bail!("corrupt vdata(v2): too small"); }
+        let flags = u32::from_le_bytes(bytes[8..12].try_into().unwrap());
+        let dim = u32::from_le_bytes(bytes[12..16].try_into().unwrap());
+        let rows = u32::from_le_bytes(bytes[16..20].try_into().unwrap());
+        let has_rowid = (flags & 1) != 0;
+        let mut offset = 20usize;
+        let row_ids = if has_rowid {
+            let mut v = Vec::with_capacity(rows as usize);
+            let need = rows as usize * 8;
+            if bytes.len() < offset + need { bail!("corrupt vdata: row_ids truncated"); }
+            for i in 0..rows as usize {
+                let start = offset + i*8;
+                v.push(u64::from_le_bytes(bytes[start..start+8].try_into().unwrap()));
+            }
+            offset += need;
+            Some(v)
+        } else { None };
+        let need_data = rows as usize * dim as usize * 4;
+        if bytes.len() < offset + need_data { bail!("corrupt vdata: data truncated"); }
+        let mut data = vec![0f32; (rows * dim) as usize];
+        let src = &bytes[offset..offset+need_data];
+        let ptr = data.as_mut_ptr() as *mut u8;
+        unsafe { std::ptr::copy_nonoverlapping(src.as_ptr(), ptr, src.len()); }
+        Ok((dim, rows, row_ids, data))
+    }
 }
 
 fn l2(a: &[f32], b: &[f32]) -> f32 {
@@ -143,7 +239,12 @@ fn cosine(a: &[f32], b: &[f32]) -> f32 {
 }
 
 pub fn search_vector_index(store: &SharedStore, v: &VIndexFile, qvec: &[f32], k: usize) -> Result<Vec<(u32, f32)>> {
-    let (dim, rows, data) = load_vdata(store, &v.qualified)?;
+    // Prefer HNSW when available and feature enabled
+    #[cfg(feature = "ann_hnsw")]
+    if let Some(res) = self::hnsw_backend::search_hnsw_index(store, v, qvec, k) {
+        return Ok(res);
+    }
+    let (dim, rows, row_ids, data) = load_vdata(store, &v.qualified)?;
     if qvec.len() as u32 != dim { bail!("query dim {} mismatch index dim {}", qvec.len(), dim); }
     let metric = v.metric.as_deref().unwrap_or("l2").to_ascii_lowercase();
     // Use ordered key to satisfy Ord: map f32 score to u32 key preserving order
@@ -154,17 +255,30 @@ pub fn search_vector_index(store: &SharedStore, v: &VIndexFile, qvec: &[f32], k:
     for r in 0..rows as usize {
         let off = r * dim as usize;
         let slice = &data[off..off + dim as usize];
-        let score = match metric.as_str() {
-            "ip" | "dot" => dot(slice, qvec),
-            "cosine" => cosine(slice, qvec),
-            _ => -l2(slice, qvec), // store negative distance, so larger is better in max-heap
+        let (key, _raw_score) = match metric.as_str() {
+            "ip" | "dot" => { let s = dot(slice, qvec); (f32_key(s), s) },
+            "cosine" => { let s = cosine(slice, qvec); (f32_key(s), s) },
+            _ => { let d = l2(slice, qvec); let s = -d; (f32_key(s), d) }, // key on negative distance; raw score is positive distance
         };
-        heap.push((f32_key(score), r as u32));
+        heap.push((key, r as u32));
         if heap.len() > k { heap.pop(); }
     }
     let mut items: Vec<(u32, u32)> = heap.into_iter().collect();
     // Sort descending by score key
     items.sort_by(|a,b| b.0.cmp(&a.0));
-    // We no longer return the raw score; return key-less (id, 0.0) placeholder score for now
-    Ok(items.into_iter().map(|(_k,i)| (i, 0.0f32)).collect())
+    // Recompute true score for outputs (k is small) to avoid carrying raw in heap across metrics
+    let mut out: Vec<(u32, f32)> = Vec::with_capacity(items.len());
+    for (_k, i) in items.into_iter() {
+        let off = i as usize * dim as usize;
+        let slice = &data[off..off + dim as usize];
+        let s = match metric.as_str() {
+            "ip" | "dot" => dot(slice, qvec),
+            "cosine" => cosine(slice, qvec),
+            _ => l2(slice, qvec),
+        };
+        // Use row_ids if present; else positional index
+        let id = row_ids.as_ref().and_then(|v| v.get(i as usize)).cloned().unwrap_or(i as u64) as u32;
+        out.push((id, s));
+    }
+    Ok(out)
 }
