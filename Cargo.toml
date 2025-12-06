@@ -54,6 +54,8 @@ sea-query = { version = "0.30", optional = true }
 # Lua scripting engine for UDFs
 mlua = { version = "0.9", features = ["lua54", "vendored", "serialize"] }
 once_cell = "1"
+xxhash-rust = { version = "0.8", features = ["xxh3"] }
+bincode = "1"
 
 [profile.release]
 lto = true
@@ -62,11 +64,14 @@ codegen-units = 1
 [features]
 # Enable the optional pgwire dependency via a named feature that matches cfg(feature = "pgwire") in code
 pgwire = ["dep:pgwire"]
-# Build with pgwire enabled by default so the binary exposes pgwire unless disabled at runtime
-default = ["pgwire"]
+# Build with pgwire and ANN HNSW (with mmap) enabled by default
+default = ["pgwire", "ann_hnsw", "ann_hnsw_mmap"]
 
-# Optional ANN HNSW engine integration (off by default)
+# Optional ANN HNSW engine integration (on by default)
 ann_hnsw = ["dep:hnsw_rs"]
+
+# Optional mmap-backed loading for ANN HNSW artifacts
+ann_hnsw_mmap = []
 
 # Dev-only SeaORM runner in clarium_test_suite
 seaorm_dev = ["dep:sea-orm", "dep:sea-query"]

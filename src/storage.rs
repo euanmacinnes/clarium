@@ -53,6 +53,34 @@ pub struct Record {
 }
 
 impl Store {
+    /// Read primary key columns from schema.json if present.
+    pub fn get_primary_key(&self, table: &str) -> Option<Vec<String>> {
+        let p = self.schema_path(table);
+        if !p.exists() { return None; }
+        if let Ok(text) = std::fs::read_to_string(&p) {
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
+                if let Some(arr) = v.get("primaryKey").and_then(|x| x.as_array()) {
+                    let cols: Vec<String> = arr.iter().filter_map(|e| e.as_str().map(|s| s.to_string())).collect();
+                    if !cols.is_empty() { return Some(cols); }
+                }
+            }
+        }
+        None
+    }
+
+    /// Read partitions list from schema.json if present.
+    pub fn get_partitions(&self, table: &str) -> Vec<String> {
+        let p = self.schema_path(table);
+        if !p.exists() { return Vec::new(); }
+        if let Ok(text) = std::fs::read_to_string(&p) {
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
+                if let Some(arr) = v.get("partitions").and_then(|x| x.as_array()) {
+                    return arr.iter().filter_map(|e| e.as_str().map(|s| s.to_string())).collect();
+                }
+            }
+        }
+        Vec::new()
+    }
     /// Create a new Store rooted at the given filesystem path.
     /// The directory is created if it does not already exist.
     pub fn new<P: AsRef<Path>>(root: P) -> Result<Self> {
@@ -148,14 +176,100 @@ impl Store {
         let mut locks: HashSet<String> = HashSet::new();
         for k in existing_locks { if schema.contains_key(&k) { locks.insert(k); } }
         self.save_schema_with_locks(table, &schema, &locks)?;
-        // For regular tables (no .time suffix): write a single data.parquet and return
+        // For regular tables (no .time suffix): if partitions are defined, write partitioned files.
+        // Otherwise write a single data.parquet and return.
         if !table.ends_with(".time") {
-            let path = self.db_file(table);
-            let mut file = std::fs::File::create(&path)?;
-            ParquetWriter::new(&mut file)
-                .with_statistics(StatisticsOptions::default())
-                .finish(&mut df)?;
-            return Ok(());
+            // Check for partitions in schema.json
+            let sp = self.schema_path(table);
+            let mut wrote_partitioned = false;
+            if sp.exists() {
+                if let Ok(text) = fs::read_to_string(&sp) {
+                    if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
+                        if let Some(parts_arr) = v.get("partitions").and_then(|x| x.as_array()) {
+                            let partitions: Vec<String> = parts_arr
+                                .iter()
+                                .filter_map(|e| e.as_str().map(|s| s.to_string()))
+                                .collect();
+                            if !partitions.is_empty() {
+                                // Group rows by partition key tuple
+                                use std::collections::HashMap as Map;
+                                let mut groups: Map<String, Vec<usize>> = Map::new();
+                                let n = df.height();
+                                let val_to_string = |av: AnyValue| -> String {
+                                    match av {
+                                        AnyValue::String(s) => s.to_string(),
+                                        AnyValue::StringOwned(s) => s.to_string(),
+                                        AnyValue::Int64(i) => i.to_string(),
+                                        AnyValue::Float64(f) => {
+                                            let mut s = format!("{}", f);
+                                            if s.contains('.') { s = s.trim_end_matches('0').trim_end_matches('.').to_string(); }
+                                            s
+                                        }
+                                        _ => av.to_string(),
+                                    }
+                                };
+                                for i in 0..n {
+                                    let mut key_parts: Vec<String> = Vec::with_capacity(partitions.len());
+                                    for pcol in &partitions {
+                                        let av = df.column(pcol.as_str()).ok().and_then(|s| s.get(i).ok());
+                                        let sval = av.map(|a| val_to_string(a)).unwrap_or_else(|| "NULL".to_string());
+                                        key_parts.push(format!("{}={}", pcol, sval));
+                                    }
+                                    let key = key_parts.join(",");
+                                    groups.entry(key).or_default().push(i);
+                                }
+                                // Remove any existing parquet files before rewrite
+                                let dir = self.db_dir(table);
+                                if dir.exists() {
+                                    for entry in fs::read_dir(&dir)? {
+                                        let p = entry?.path();
+                                        if let Some(name) = p.file_name().and_then(|s| s.to_str()) {
+                                            if name.starts_with("data-") && name.ends_with(".parquet") { let _ = fs::remove_file(p); }
+                                            if name == "data.parquet" { let _ = fs::remove_file(p); }
+                                        }
+                                    }
+                                }
+                                // Write one parquet per group
+                                use polars::prelude::ParquetWriter;
+                                use std::time::{SystemTime, UNIX_EPOCH};
+                                fs::create_dir_all(&dir).ok();
+                                let sanitize = |s: &str| -> String {
+                                    let mut out = String::with_capacity(s.len());
+                                    for ch in s.chars() {
+                                        if ch.is_ascii_alphanumeric() { out.push(ch); }
+                                        else if ch == '=' || ch == '-' || ch == '_' { out.push(ch); }
+                                        else if ch == ',' { out.push('_'); } else { out.push('-'); }
+                                    }
+                                    out
+                                };
+                                for (k, idxs) in groups.into_iter() {
+                                    let idx_vec: Vec<u32> = idxs.into_iter().map(|i| i as u32).collect();
+                                    let idx_u = UInt32Chunked::from_vec("idx".into(), idx_vec);
+                                    let mut part_df = df.take(&idx_u)?;
+                                    let now_ms: u128 = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis();
+                                    let fname = format!("data-part-{}-{}.parquet", sanitize(&k), now_ms);
+                                    let path = dir.join(fname);
+                                    let mut file = std::fs::File::create(&path)?;
+                                    ParquetWriter::new(&mut file)
+                                        .with_statistics(StatisticsOptions::default())
+                                        .finish(&mut part_df)?;
+                                }
+                                wrote_partitioned = true;
+                            }
+                        }
+                    }
+                }
+            }
+            if wrote_partitioned {
+                return Ok(());
+            } else {
+                let path = self.db_file(table);
+                let mut file = std::fs::File::create(&path)?;
+                ParquetWriter::new(&mut file)
+                    .with_statistics(StatisticsOptions::default())
+                    .finish(&mut df)?;
+                return Ok(());
+            }
         }
         // Ensure _time is i64 for time-series tables
         if df.column("_time").map(|s| s.dtype() != &DataType::Int64).unwrap_or(true)

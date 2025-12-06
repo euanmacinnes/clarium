@@ -17,6 +17,11 @@ pub fn handle_update(store: &SharedStore, table: String, assignments: Vec<(Strin
     if n == 0 {
         return Ok(serde_json::json!({"status":"ok","updated":0}));
     }
+    // Fetch primary key and partitions metadata (for regular tables)
+    let (pk_cols_opt, partitions_cols): (Option<Vec<String>>, Vec<String>) = {
+        let g = store.0.lock();
+        (g.get_primary_key(&table), g.get_partitions(&table))
+    };
     // Build mask: rows to update
     let mask_bool = if let Some(w) = &where_clause {
         let registry_snapshot = crate::scripts::get_script_registry().and_then(|r| r.snapshot().ok());
@@ -33,6 +38,14 @@ pub fn handle_update(store: &SharedStore, table: String, assignments: Vec<(Strin
         let v: Vec<bool> = vec![true; n];
         BooleanChunked::from_slice("__m__".into(), &v)
     };
+
+    // Determine whether assignments touch primary key columns or partition columns
+    let mut pk_touched = false;
+    let mut partitions_touched = false;
+    for (col, _term) in &assignments {
+        if let Some(pk_cols) = &pk_cols_opt { if pk_cols.iter().any(|c| c == col) { pk_touched = true; } }
+        if !partitions_cols.is_empty() && partitions_cols.iter().any(|c| c == col) { partitions_touched = true; }
+    }
 
     // Apply assignments one by one
     for (col, term) in assignments {
@@ -136,7 +149,48 @@ pub fn handle_update(store: &SharedStore, table: String, assignments: Vec<(Strin
         // Replace/insert column
         df_all.replace(col.as_str(), new_series)?;
     }
+    // If PK columns were touched, validate non-null and uniqueness across all rows
+    if let Some(pk_cols) = &pk_cols_opt {
+        if pk_touched && !pk_cols.is_empty() {
+            use std::collections::HashSet;
+            let mut seen: HashSet<String> = HashSet::with_capacity(df_all.height());
+            let mut key_buf = String::new();
+            for i in 0..df_all.height() {
+                key_buf.clear();
+                let mut first = true;
+                for c in pk_cols {
+                    if !df_all.get_column_names().iter().any(|n| n.as_str() == c) {
+                        anyhow::bail!(format!("UPDATE references missing primary key column '{}'", c));
+                    }
+                    let av = df_all.column(c.as_str())?.get(i).ok();
+                    if matches!(av, Some(AnyValue::Null) | None) {
+                        anyhow::bail!("PRIMARY KEY cannot be NULL");
+                    }
+                    let sval = match av.unwrap() {
+                        AnyValue::String(s) => s.to_string(),
+                        AnyValue::StringOwned(s) => s.to_string(),
+                        AnyValue::Int64(v) => v.to_string(),
+                        AnyValue::Float64(f) => {
+                            let mut s = format!("{}", f);
+                            if s.contains('.') { s = s.trim_end_matches('0').trim_end_matches('.').to_string(); }
+                            s
+                        }
+                        v => v.to_string(),
+                    };
+                    if !first { key_buf.push(','); }
+                    first = false;
+                    key_buf.push_str(c);
+                    key_buf.push('=');
+                    key_buf.push_str(&sval);
+                }
+                if !seen.insert(key_buf.clone()) {
+                    anyhow::bail!("PRIMARY KEY violation: duplicate key after UPDATE");
+                }
+            }
+        }
+    }
     let guard = store.0.lock();
+    // rewrite_table_df for regular tables is partition-aware now; time tables path is unchanged
     guard.rewrite_table_df(&table, df_all)?;
     Ok(serde_json::json!({"status":"ok"}))
 }

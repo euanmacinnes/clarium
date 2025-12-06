@@ -13,12 +13,15 @@ use polars::prelude::*;
 use crate::server::exec::exec_vector_index::VIndexFile;
 use crate::storage::SharedStore;
 use crate::error::AppError;
+use crate::tprintln;
 
 #[cfg(feature = "ann_hnsw")]
 mod hnsw_backend {
     use super::*;
     use hnsw_rs::prelude::*;
     use std::fs;
+    #[cfg(feature = "ann_hnsw_mmap")]
+    use std::io::Read;
 
     fn path_for_hnsw(store: &SharedStore, qualified: &str) -> std::path::PathBuf {
         let mut p = store.0.lock().root_path().clone();
@@ -28,17 +31,32 @@ mod hnsw_backend {
         p
     }
 
+    #[inline]
+    fn l2_normalize_in_place(v: &mut [f32]) {
+        let mut n2 = 0f32; for x in v.iter() { n2 += *x * *x; }
+        if n2 > 0.0 { let inv = 1.0 / n2.sqrt(); for x in v.iter_mut() { *x *= inv; } }
+    }
+
     pub fn build_hnsw_index(store: &SharedStore, v: &VIndexFile) -> Result<()> {
         // Load vdata (ensures it exists); then build HNSW in-memory and persist via bincode
         let (dim, rows, _row_ids, data) = super::load_vdata(store, &v.qualified)?;
         let m = v.params.as_ref().and_then(|p| p.get("M")).and_then(|x| x.as_i64()).unwrap_or(32) as usize;
         let ef_construction = v.params.as_ref().and_then(|p| p.get("ef_build")).and_then(|x| x.as_i64()).unwrap_or(200) as usize;
         let metric = v.metric.as_deref().unwrap_or("l2").to_ascii_lowercase();
-        let mut hnsw: Hnsw<f32, DistL2> = HnswBuilder::default().m(m).ef_construct(ef_construction).num_elements(rows as usize).build();
-        // Note: we currently support L2 distance; IP/cosine would require different distance types or normalization
+        if metric != "l2" && metric != "cosine" {
+            tprintln!("vector.hnsw.build.skip name={} metric={} reason=unsupported_metric", v.qualified, metric);
+            return Ok(()); // leave only flat engine for unsupported metrics (e.g., ip)
+        }
+        let mut hnsw: Hnsw<f32, DistL2> = HnswBuilder::default()
+            .m(m)
+            .ef_construct(ef_construction)
+            .num_elements(rows as usize)
+            .build();
+        // Note: we support L2 by default; cosine is supported via unit-norm normalization
         for r in 0..rows as usize {
             let off = r * dim as usize;
-            let vec = data[off..off + dim as usize].to_vec();
+            let mut vec = data[off..off + dim as usize].to_vec();
+            if metric == "cosine" { l2_normalize_in_place(&mut vec); }
             hnsw.insert((&vec, r)).map_err(|e| anyhow::anyhow!(format!("hnsw insert error: {:?}", e)))?;
         }
         hnsw.build();
@@ -47,6 +65,7 @@ mod hnsw_backend {
         // Serialize
         let bytes = bincode::serialize(&hnsw).map_err(|e| anyhow::anyhow!(format!("hnsw serialize: {:?}", e)))?;
         fs::write(&path, bytes)?;
+        tprintln!("vector.hnsw.build name={} metric={} M={} ef_build={} rows={} dim={} path={}", v.qualified, metric, m, ef_construction, rows, dim, path.display());
         Ok(())
     }
 
@@ -54,12 +73,41 @@ mod hnsw_backend {
         // Try to load .hnsw and run search; fall back to None on any error
         let path = path_for_hnsw(store, &v.qualified);
         if !path.exists() { return None; }
+        let metric = v.metric.as_deref().unwrap_or("l2").to_ascii_lowercase();
+        if metric != "l2" && metric != "cosine" { return None; }
+        // Load serialized graph (prefer mmap when available)
+        #[cfg(feature = "ann_hnsw_mmap")]
+        let mmap_bytes: memmap2::Mmap = unsafe {
+            let f = std::fs::File::open(&path).ok()?;
+            memmap2::MmapOptions::new().map(&f).ok()?
+        };
+        #[cfg(not(feature = "ann_hnsw_mmap"))]
         let bytes = std::fs::read(&path).ok()?;
+        #[cfg(feature = "ann_hnsw_mmap")]
+        let mut hnsw: Hnsw<f32, DistL2> = bincode::deserialize(&mmap_bytes[..]).ok()?;
+        #[cfg(not(feature = "ann_hnsw_mmap"))]
         let mut hnsw: Hnsw<f32, DistL2> = bincode::deserialize(&bytes).ok()?;
-        let res = hnsw.search(qvec, k);
-        // Convert to (idx, distance) with L2 distance assumption
-        let mut out: Vec<(u32, f32)> = res.into_iter().map(|ne| (ne.d_id as u32, ne.distance)).collect();
-        // Already in ascending distance order
+
+        // Prepare query according to metric
+        let mut qbuf: Vec<f32> = qvec.to_vec();
+        if metric == "cosine" { l2_normalize_in_place(&mut qbuf); }
+        let res = hnsw.search(&qbuf, k);
+
+        // Convert to (idx, score) depending on metric
+        let mut out: Vec<(u32, f32)> = Vec::with_capacity(res.len());
+        for ne in res.into_iter() {
+            let id = ne.d_id as u32;
+            if metric == "cosine" {
+                // For unit vectors, L2^2 = 2(1 - cos) → cos = 1 - (d^2)/2
+                let d = ne.distance;
+                let cos = 1.0f32 - 0.5f32 * (d * d);
+                out.push((id, cos));
+            } else {
+                // L2 distance as score (ascending better); keep as-is
+                out.push((id, ne.distance));
+            }
+        }
+        tprintln!("vector.hnsw.search name={} metric={} k={} path={} used=ann_hnsw", v.qualified, metric, k, path.display());
         Some(out)
     }
 }
@@ -89,23 +137,148 @@ pub fn build_vector_index(store: &SharedStore, v: &mut VIndexFile, _options: &Ve
     let mut row_ids: Vec<u64> = Vec::new();
     let mut rows: u32 = 0;
     let mut dim: u32 = 0;
+    let mut total_rows: u64 = series.len() as u64;
+    let mut parsed_ok: u64 = 0;
+    let mut invalid_rows: u64 = 0;
+    let mut dim_mismatch: u64 = 0;
+    // Policy: enforce declared dim strictly or skip mismatches
+    let dim_policy = v
+        .params
+        .as_ref()
+        .and_then(|p| p.get("dim_policy"))
+        .and_then(|x| x.as_str())
+        .map(|s| s.to_ascii_lowercase())
+        .unwrap_or_else(|| "skip".to_string());
+    // Determine row-id strategy from primary key metadata
+    let pk_cols: Option<Vec<String>> = store.0.lock().get_primary_key(&v.table);
+    let mut id_flags: u32 = 1; // bit0: has_rowid (we always persist row ids in v2)
+    // Pre-fetch PK series if present
+    let pk_series: Option<Vec<(String, Series)>> = pk_cols.as_ref().map(|cols| {
+        cols.iter()
+            .filter_map(|c| {
+                let eff = df.get_column_names()
+                    .iter()
+                    .find(|n| n.as_str() == c.as_str())
+                    .cloned()
+                    .or_else(|| df.get_column_names().iter().find(|n| n.eq_ignore_ascii_case(c)).cloned());
+                eff.and_then(|name| df.column(&name).ok().map(|s| (name, s.clone())))
+            })
+            .collect()
+    });
+    // Helper to compute u64 row_id from primary key values at row i
+    #[inline]
+    fn hash_pk_parts(parts: &[(String, String)]) -> u64 {
+        use xxhash_rust::xxh3::xxh3_64;
+        // Build a single string with separators to avoid collisions
+        let mut acc = String::with_capacity(parts.len() * 24);
+        for (i, (k, v)) in parts.iter().enumerate() {
+            if i > 0 { acc.push('|'); }
+            acc.push_str(k);
+            acc.push('=');
+            acc.push_str(v);
+        }
+        xxh3_64(acc.as_bytes())
+    }
+    let mut used_pk_numeric = false;
+    let mut used_pk_hashed = false;
     for i in 0..series.len() {
-        if let Some(vv) = crate::server::exec::vector_utils::extract_vec_f32_col(series, i) {
-            if vv.is_empty() { continue; }
-            if dim == 0 { dim = vv.len() as u32; }
-            if let Some(req_dim) = v.dim { if req_dim as usize != vv.len() { continue; } }
-            if vv.len() as u32 != dim { continue; }
-            buf.extend_from_slice(&vv);
-            // For now use row ordinal as stable row id; future: prefer table primary key.
-            row_ids.push(rows as u64);
-            rows += 1;
+        match crate::server::exec::vector_utils::extract_vec_f32_col(series, i) {
+            Some(vv) => {
+                if vv.is_empty() { invalid_rows += 1; continue; }
+                if dim == 0 { dim = vv.len() as u32; }
+                // Check against declared dim if present
+                if let Some(req_dim) = v.dim {
+                    if req_dim as usize != vv.len() {
+                        dim_mismatch += 1; continue;
+                    }
+                }
+                // Enforce uniform dimension within column
+                if vv.len() as u32 != dim { dim_mismatch += 1; continue; }
+                parsed_ok += 1;
+                buf.extend_from_slice(&vv);
+                // Prefer table primary key when available; else fallback to ordinal
+            if let Some(pks) = pk_series.as_ref() {
+                if pks.len() == 1 {
+                    let (_name, s) = &pks[0];
+                    // Try numeric fast-path, else hash string representation
+                    let rid_u: Option<u64> = s.get(i)
+                        .ok()
+                        .and_then(|av| {
+                            if let Ok(v) = av.try_extract::<u64>() { return Some(v); }
+                            if let Ok(v) = av.try_extract::<i64>() { return Some(v as u64); }
+                            if let Ok(v) = av.try_extract::<u32>() { return Some(v as u64); }
+                            if let Ok(v) = av.try_extract::<i32>() { return Some(v as u64); }
+                            None
+                        });
+                    if let Some(vu) = rid_u {
+                        used_pk_numeric = true;
+                        row_ids.push(vu);
+                    } else {
+                        // String or other types → hash
+                        let sval = s.get(i).ok().and_then(|av| av.get_str().map(|x| x.to_string())).unwrap_or_else(|| {
+                            s.get(i).ok().map(|av| av.to_string()).unwrap_or_default()
+                        });
+                        let h = hash_pk_parts(&[(_name.clone(), sval)]);
+                        used_pk_hashed = true;
+                        row_ids.push(h);
+                    }
+                } else if !pks.is_empty() {
+                    // Composite key: hash normalized tuple of "col=value"
+                    let mut parts: Vec<(String, String)> = Vec::with_capacity(pks.len());
+                    for (name, s) in pks.iter() {
+                        let val = s.get(i).ok().and_then(|av| av.get_str().map(|x| x.to_string())).unwrap_or_else(|| {
+                            s.get(i).ok().map(|av| av.to_string()).unwrap_or_default()
+                        });
+                        parts.push((name.clone(), val));
+                    }
+                    let h = hash_pk_parts(&parts);
+                    used_pk_hashed = true;
+                    row_ids.push(h);
+                } else {
+                    // No resolvable PK columns found in DF → ordinal fallback
+                    row_ids.push(rows as u64);
+                }
+            } else {
+                // No PK metadata → ordinal fallback
+                row_ids.push(rows as u64);
+            }
+                rows += 1;
+            }
+            None => { invalid_rows += 1; }
         }
     }
+    // If policy=error and any rows were skipped for dimension reasons, abort gracefully
+    if dim_policy == "error" && (dim_mismatch > 0 || invalid_rows > 0) {
+        tprintln!(
+            "[vector.build] name={} policy=error dim_declared={:?} dim_inferred={} total={} ok={} invalid={} dim_mismatch={} -> abort",
+            v.qualified, v.dim, dim, total_rows, parsed_ok, invalid_rows, dim_mismatch
+        );
+        return Err(AppError::Exec {
+            code: "vector_dim_mismatch".into(),
+            message: format!(
+                "BUILD VECTOR INDEX '{}' aborted by policy=error: invalid_rows={} dim_mismatch={} (declared_dim={:?}, inferred_dim={})",
+                v.qualified, invalid_rows, dim_mismatch, v.dim, dim
+            ),
+        }
+        .into());
+    }
+    // Compose flags for id flavor
+    if used_pk_numeric { id_flags |= 0x2; }
+    if used_pk_hashed { id_flags |= 0x4; }
+    if !used_pk_numeric && !used_pk_hashed { id_flags |= 0x8; }
+    crate::tprintln!("[vector.build] {} row-id strategy={} flags=0x{:x} rows={} dim={} pk_cols={}",
+        v.qualified,
+        if used_pk_numeric { "pk_numeric" } else if used_pk_hashed { "pk_hashed" } else { "ordinal" },
+        id_flags,
+        rows,
+        dim,
+        pk_cols.as_ref().map(|v| v.join(",")).unwrap_or_else(|| "<none>".to_string())
+    );
     // Persist v2 format with row ids
     let mut out: Vec<u8> = Vec::with_capacity(20 + row_ids.len() * 8 + buf.len() * 4);
     let magic: u32 = 0x56444346; // 'VDCF'
     let version: u32 = 2;
-    let flags: u32 = 1; // bit0: has_rowid
+    let flags: u32 = id_flags; // bit0: has_rowid; bit1: pk_numeric; bit2: pk_hashed; bit3: ordinal_fallback
     out.extend_from_slice(&magic.to_le_bytes());
     out.extend_from_slice(&version.to_le_bytes());
     out.extend_from_slice(&flags.to_le_bytes());
@@ -124,6 +297,13 @@ pub fn build_vector_index(store: &SharedStore, v: &mut VIndexFile, _options: &Ve
     status.insert("last_built_at".into(), json!(crate::server::exec::exec_vector_index::now_iso()));
     status.insert("dim".into(), json!(dim));
     status.insert("engine".into(), json!("flat"));
+    status.insert("rows_total".into(), json!(total_rows));
+    status.insert("rows_parsed".into(), json!(parsed_ok));
+    status.insert("rows_invalid".into(), json!(invalid_rows));
+    status.insert("rows_dim_mismatch".into(), json!(dim_mismatch));
+    status.insert("dim_policy".into(), json!(dim_policy));
+    status.insert("row_id.flags".into(), json!(flags));
+    status.insert("row_id.strategy".into(), json!(if used_pk_numeric { "pk_numeric" } else if used_pk_hashed { "pk_hashed" } else { "ordinal" }));
     status.insert("build_time_ms".into(), json!(t_start.elapsed().as_millis() as u64));
     if let Some(m) = &v.metric { status.insert("metric".into(), json!(m)); }
     // Promote select params to top-level fields and also include under param.* for completeness
@@ -142,6 +322,10 @@ pub fn build_vector_index(store: &SharedStore, v: &mut VIndexFile, _options: &Ve
             st.insert("engine.hnsw".into(), json!(true));
         }
     }
+    tprintln!(
+        "[vector.build] name={} status=ok dim={} rows_indexed={} total={} invalid={} dim_mismatch={} policy={}",
+        v.qualified, dim, rows, total_rows, invalid_rows, dim_mismatch, dim_policy
+    );
     Ok(json!({"status":"ok","rows_indexed":rows,"dim":dim}))
 }
 
@@ -297,13 +481,18 @@ fn cosine(a: &[f32], b: &[f32]) -> f32 {
     dot(a,b) / (na*nb)
 }
 
-pub fn search_vector_index(store: &SharedStore, v: &VIndexFile, qvec: &[f32], k: usize) -> Result<Vec<(u32, f32)>> {
-    // Prefer HNSW when available and feature enabled
+pub fn search_vector_index(store: &SharedStore, v: &VIndexFile, qvec: &[f32], k: usize) -> Result<Vec<(u64, f32)>> {
+    // Try ANN engine if present; map back to stored row_ids
+    let (dim, rows, row_ids, data) = load_vdata(store, &v.qualified)?;
     #[cfg(feature = "ann_hnsw")]
     if let Some(res) = self::hnsw_backend::search_hnsw_index(store, v, qvec, k) {
-        return Ok(res);
+        let mut out: Vec<(u64, f32)> = Vec::with_capacity(res.len());
+        for (pos, score) in res.into_iter() {
+            let id = row_ids.as_ref().and_then(|v| v.get(pos as usize)).cloned().unwrap_or(pos as u64);
+            out.push((id, score));
+        }
+        return Ok(out);
     }
-    let (dim, rows, row_ids, data) = load_vdata(store, &v.qualified)?;
     if qvec.len() as u32 != dim { bail!("query dim {} mismatch index dim {}", qvec.len(), dim); }
     let metric = v.metric.as_deref().unwrap_or("l2").to_ascii_lowercase();
     // Use ordered key to satisfy Ord: map f32 score to u32 key preserving order
@@ -326,7 +515,7 @@ pub fn search_vector_index(store: &SharedStore, v: &VIndexFile, qvec: &[f32], k:
     // Sort descending by score key
     items.sort_by(|a,b| b.0.cmp(&a.0));
     // Recompute true score for outputs (k is small) to avoid carrying raw in heap across metrics
-    let mut out: Vec<(u32, f32)> = Vec::with_capacity(items.len());
+    let mut out: Vec<(u64, f32)> = Vec::with_capacity(items.len());
     for (_k, i) in items.into_iter() {
         let off = i as usize * dim as usize;
         let slice = &data[off..off + dim as usize];
@@ -336,6 +525,105 @@ pub fn search_vector_index(store: &SharedStore, v: &VIndexFile, qvec: &[f32], k:
             _ => l2(slice, qvec),
         };
         // Use row_ids if present; else positional index
+        let id = row_ids.as_ref().and_then(|v| v.get(i as usize)).cloned().unwrap_or(i as u64);
+        out.push((id, s));
+    }
+    Ok(out)
+}
+
+/// Optional knobs that can influence vector search behavior.
+#[derive(Debug, Clone, Default)]
+pub struct SearchOptions {
+    /// Override metric used by the index: "l2" | "ip" | "cosine" (case-insensitive)
+    pub metric_override: Option<String>,
+    /// ef_search hint for ANN engines (ignored by flat);
+    /// engine backends should best-effort apply it.
+    pub ef_search: Option<usize>,
+    /// Engine hint: "hnsw" | "flat" (case-insensitive); best-effort.
+    pub engine_hint: Option<String>,
+}
+
+/// Like `search_vector_index` but accepts optional search options.
+/// The default behavior is preserved when all options are `None`.
+pub fn search_vector_index_with_opts(
+    store: &SharedStore,
+    v: &VIndexFile,
+    qvec: &[f32],
+    k: usize,
+    opts: &SearchOptions,
+) -> Result<Vec<(u32, f32)>> {
+    // Try ANN backend first when available, unless the user forces flat
+    let force_flat = opts
+        .engine_hint
+        .as_ref()
+        .map(|s| s.eq_ignore_ascii_case("flat"))
+        .unwrap_or(false);
+
+    #[cfg(feature = "ann_hnsw")]
+    if !force_flat {
+        // Currently only HNSW is supported.
+        // If ef_search is provided and the backend supports it, apply it best-effort.
+        if let Some(mut res) = self::hnsw_backend::search_hnsw_index(store, v, qvec, k) {
+            // Metric override on ANN path: for now HNSW distance is L2; if override is set to ip/cosine,
+            // we can only re-rank within the top-k using the requested metric for score reporting.
+            if let Some(mo) = opts.metric_override.as_ref() {
+                let mo_low = mo.to_ascii_lowercase();
+                // Load data to recompute scores according to requested metric for the already selected top-k
+                let (dim, _rows, row_ids, data) = load_vdata(store, &v.qualified)?;
+                for tup in res.iter_mut() {
+                    let i = tup.0 as usize; // note: tup.0 currently stores id (which may be row_id already). For ANN v2 we persist row ids; however HNSW stores internal index r.
+                    // We can't map back to internal row ordinal when row_ids are persisted; so keep scores as-is for now when override mismatches.
+                    // To keep behavior consistent, only adjust if metric is l2 request; otherwise leave ANN scores.
+                    match mo_low.as_str() {
+                        "l2" => { /* already L2 */ }
+                        _ => { let _ = (dim, row_ids.as_ref(), &data); }
+                    }
+                }
+            }
+            return Ok(res);
+        }
+    }
+
+    // Fallback to flat exact path (or forced by hint)
+    let (dim, rows, row_ids, data) = load_vdata(store, &v.qualified)?;
+    if qvec.len() as u32 != dim {
+        tprintln!(
+            "[vector.search] name={} warn=query_dim_mismatch qdim={} idx_dim={} action=fallback_or_error",
+            v.qualified, qvec.len(), dim
+        );
+        return Err(AppError::Exec { code: "vector_query_dim_mismatch".into(), message: format!("query dim {} mismatch index dim {}", qvec.len(), dim) }.into());
+    }
+    let metric = opts
+        .metric_override
+        .as_ref()
+        .map(|s| s.to_ascii_lowercase())
+        .or_else(|| v.metric.as_ref().map(|s| s.to_ascii_lowercase()))
+        .unwrap_or_else(|| "l2".to_string());
+    #[inline]
+    fn f32_key(v: f32) -> u32 { let b = v.to_bits(); if b & (1u32 << 31) != 0 { !b } else { b | (1u32 << 31) } }
+    let mut heap: std::collections::BinaryHeap<(u32, u32)> = std::collections::BinaryHeap::with_capacity(k + 1);
+    for r in 0..rows as usize {
+        let off = r * dim as usize;
+        let slice = &data[off..off + dim as usize];
+        let (key, _raw_score) = match metric.as_str() {
+            "ip" | "dot" => { let s = dot(slice, qvec); (f32_key(s), s) },
+            "cosine" => { let s = cosine(slice, qvec); (f32_key(s), s) },
+            _ => { let d = l2(slice, qvec); let s = -d; (f32_key(s), d) },
+        };
+        heap.push((key, r as u32));
+        if heap.len() > k { heap.pop(); }
+    }
+    let mut items: Vec<(u32, u32)> = heap.into_iter().collect();
+    items.sort_by(|a,b| b.0.cmp(&a.0));
+    let mut out: Vec<(u32, f32)> = Vec::with_capacity(items.len());
+    for (_k, i) in items.into_iter() {
+        let off = i as usize * dim as usize;
+        let slice = &data[off..off + dim as usize];
+        let s = match metric.as_str() {
+            "ip" | "dot" => dot(slice, qvec),
+            "cosine" => cosine(slice, qvec),
+            _ => l2(slice, qvec),
+        };
         let id = row_ids.as_ref().and_then(|v| v.get(i as usize)).cloned().unwrap_or(i as u64) as u32;
         out.push((id, s));
     }

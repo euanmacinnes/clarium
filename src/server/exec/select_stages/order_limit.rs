@@ -559,10 +559,14 @@ fn ann_order_dataframe(
                                                                             }
                                                                         }
                                                                     } else {
-                                                                        // Fallback: treat ids as positional row indices
-                                                                        let mut idx: Vec<u32> = cands.into_iter().map(|(i,_s)| i).collect();
+                                                                        // Fallback: treat ids as positional row indices (only valid for ordinal ids)
                                                                         let h = df.height() as u32;
-                                                                        for ii in idx.iter_mut() { if *ii >= h { *ii = h.saturating_sub(1); } }
+                                                                        let mut idx: Vec<u32> = Vec::with_capacity(cands.len());
+                                                                        for (rid, _s) in cands.into_iter() {
+                                                                            let mut ii = rid as u32;
+                                                                            if ii >= h { ii = h.saturating_sub(1); }
+                                                                            idx.push(ii);
+                                                                        }
                                                                         let idx_u = UInt32Chunked::from_slice("__take".into(), &idx);
                                                                         let mut df_w = df.take(&idx_u)?;
                                                                         // Compute exact scores on W and sort with secondary keys

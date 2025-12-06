@@ -691,6 +691,7 @@ fn to_ck_and_db(cmd: &query::Command) -> (security::CommandKind, Option<String>)
         | query::Command::ShowTables
         | query::Command::ShowObjects
         | query::Command::ShowScripts => (security::CommandKind::Other, None),
+        query::Command::Explain { .. } => (security::CommandKind::Other, None),
         query::Command::SelectUnion { .. } => (security::CommandKind::Select, None),
         query::Command::Slice(_) => (security::CommandKind::Select, None),
         query::Command::Insert { table, .. } => {

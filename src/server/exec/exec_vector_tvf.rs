@@ -1,10 +1,10 @@
 //! exec_vector_tvf
 //! ----------------
 //! Table-valued functions for vectors:
-//! - nearest_neighbors(table, column, qvec, k [, metric, ef_search])
-//! - vector_search(index_name, qvec, k)
+//! - nearest_neighbors(table, column, qvec, k [, metric, ef_search, with_ord])
+//! - vector_search(index_name, qvec, k [, topk, engine])
 //!
-//! Returns a DataFrame with columns: row_id (UInt32), score (Float32)
+//! Returns a DataFrame with columns: row_id (UInt32), score (Float32) and optional ord (UInt32)
 //! Polars 0.51+ compliant DataFrame construction.
 
 use anyhow::{Result, anyhow};
@@ -52,11 +52,13 @@ pub fn try_vector_tvf(store: &crate::storage::SharedStore, raw: &str) -> Result<
     let fname_low = fname.to_ascii_lowercase();
     match fname_low.as_str() {
         "vector_search" => {
-            // vector_search(index_name, qvec, k)
+            // vector_search(index_name, qvec, k [, topk, engine])
             if args.len() < 3 { anyhow::bail!("vector_search(index_name, qvec, k) requires 3 args"); }
             let index_name = strip_quotes(&args[0]);
             let qvec_s = strip_quotes(&args[1]);
             let k: usize = strip_quotes(&args[2]).parse::<usize>().unwrap_or(10);
+            let topk_opt = args.get(3).and_then(|a| strip_quotes(a).parse::<usize>().ok());
+            let engine_hint = args.get(4).map(|a| strip_quotes(a));
             let qvec = vector_utils::parse_vec_literal(&qvec_s).ok_or_else(|| anyhow!("invalid qvec for vector_search"))?;
             let qualified = crate::ident::qualify_regular_ident(&index_name, &crate::system::current_query_defaults());
             let vf = match crate::server::exec::exec_vector_index::read_vindex_file(store, &qualified)? {
@@ -74,9 +76,16 @@ pub fn try_vector_tvf(store: &crate::storage::SharedStore, raw: &str) -> Result<
             };
             #[cfg(not(feature = "ann_hnsw"))]
             let ann_path_exists = false;
-            let engine = if ann_path_exists { "hnsw" } else { "flat" };
-            tprintln!("[ann.tvf] vector_search index={} engine={} metric={} ef_search={} k={}", qualified, engine, metric, ef_search, k);
-            let res = crate::server::exec::exec_vector_runtime::search_vector_index(store, &vf, &qvec, k)?;
+            let engine_auto = if ann_path_exists { "hnsw" } else { "flat" };
+            let engine_effective = engine_hint.as_deref().unwrap_or(engine_auto);
+            tprintln!("[ann.tvf] vector_search index={} engine={} metric={} ef_search={} k={} topk={:?}", qualified, engine_effective, metric, ef_search, k, topk_opt);
+            let opts = crate::server::exec::exec_vector_runtime::SearchOptions {
+                metric_override: None,
+                ef_search: ef_search.try_into().ok(),
+                engine_hint: engine_hint.clone(),
+            };
+            let mut res = crate::server::exec::exec_vector_runtime::search_vector_index_with_opts(store, &vf, &qvec, k, &opts)?;
+            if let Some(topk) = topk_opt { if topk < res.len() { res.truncate(topk); } }
             let (mut ids, mut scores): (Vec<u32>, Vec<f32>) = (Vec::with_capacity(res.len()), Vec::with_capacity(res.len()));
             for (id, sc) in res { ids.push(id); scores.push(sc); }
             let df = DataFrame::new(vec![
@@ -86,14 +95,18 @@ pub fn try_vector_tvf(store: &crate::storage::SharedStore, raw: &str) -> Result<
             return Ok(Some(df));
         }
         "nearest_neighbors" => {
-            // nearest_neighbors(table, column, qvec, k [, metric, ef_search])
+            // nearest_neighbors(table, column, qvec, k [, metric, ef_search, with_ord])
             if args.len() < 4 { anyhow::bail!("nearest_neighbors(table, column, qvec, k) requires at least 4 args"); }
             let table = strip_quotes(&args[0]);
             let column = strip_quotes(&args[1]);
             let qvec_s = strip_quotes(&args[2]);
             let k: usize = strip_quotes(&args[3]).parse::<usize>().unwrap_or(10);
             let metric = args.get(4).map(|a| strip_quotes(a).to_ascii_lowercase());
-            let _ef_search = args.get(5).and_then(|a| strip_quotes(a).parse::<usize>().ok());
+            let ef_search_opt = args.get(5).and_then(|a| strip_quotes(a).parse::<usize>().ok());
+            let with_ord = args.get(6).map(|a| strip_quotes(a)).map(|s| {
+                let ls = s.to_ascii_lowercase();
+                ls == "1" || ls == "true" || ls == "yes"
+            }).unwrap_or(false);
             let qvec = vector_utils::parse_vec_literal(&qvec_s).ok_or_else(|| anyhow!("invalid qvec for nearest_neighbors"))?;
             // Try to find matching index first; else exact scan
             let qualified_table = crate::ident::qualify_regular_ident(&table, &crate::system::current_query_defaults());
@@ -134,11 +147,22 @@ pub fn try_vector_tvf(store: &crate::storage::SharedStore, raw: &str) -> Result<
                 #[cfg(not(feature = "ann_hnsw"))]
                 let ann_available = false;
                 let engine = if ann_available { "hnsw" } else { "flat" };
-                tprintln!("[ann.tvf] nearest_neighbors table={} col={} engine={} metric={} ef_search={} k={}", qualified_table, column, engine, metric_used, ef_search, k);
-                let res = crate::server::exec::exec_vector_runtime::search_vector_index(store, &vf, &qvec, k)?;
+                tprintln!("[ann.tvf] nearest_neighbors table={} col={} engine={} metric={} ef_search={} k={} with_ord={}", qualified_table, column, engine, metric_used, ef_search, k, with_ord);
+                let opts = crate::server::exec::exec_vector_runtime::SearchOptions {
+                    metric_override: metric.clone(),
+                    ef_search: ef_search_opt.or_else(|| ef_search.try_into().ok()),
+                    engine_hint: None,
+                };
+                let res = crate::server::exec::exec_vector_runtime::search_vector_index_with_opts(store, &vf, &qvec, k, &opts)?;
                 let (mut ids, mut scores): (Vec<u32>, Vec<f32>) = (Vec::with_capacity(res.len()), Vec::with_capacity(res.len()));
                 for (id, sc) in res { ids.push(id); scores.push(sc); }
-                let df = DataFrame::new(vec![Series::new("row_id".into(), ids).into(), Series::new("score".into(), scores).into()])?;
+                let mut cols: Vec<Column> = vec![Series::new("row_id".into(), ids).into(), Series::new("score".into(), scores).into()];
+                if with_ord {
+                    // We cannot recover original row ordinal from the vindex without scanning source; leave absent on index path.
+                    // Include an empty ord column for schema stability when requested.
+                    cols.push(Series::new("ord".into(), Vec::<u32>::new()).into());
+                }
+                let df = DataFrame::new(cols)?;
                 return Ok(Some(df));
             } else {
                 // Exact scan of table
@@ -148,7 +172,7 @@ pub fn try_vector_tvf(store: &crate::storage::SharedStore, raw: &str) -> Result<
                     .iter()
                     .find(|c| c.eq_ignore_ascii_case(&column))
                     .map(|c| c.as_str().to_string())
-                    .unwrap_or(column);
+                    .unwrap_or_else(|| column.clone());
                 let col = df.column(cname.as_str())?;
                 // Build heap depending on metric
                 let use_desc = match metric.as_deref() { Some("ip") | Some("dot") | Some("cosine") => true, _ => false };
@@ -164,9 +188,11 @@ pub fn try_vector_tvf(store: &crate::storage::SharedStore, raw: &str) -> Result<
                     }
                     let mut items: Vec<(u32,u32)> = heap.into_iter().map(|std::cmp::Reverse(t)| t).collect();
                     items.sort_by(|a,b| b.0.cmp(&a.0));
-                    let mut ids = Vec::with_capacity(items.len()); let mut scores = Vec::with_capacity(items.len());
-                    for (_k, i) in items { ids.push(i); let vv = vector_utils::extract_vec_f32_col(col, i as usize).unwrap_or_default(); let sc = match metric.as_deref(){Some("cosine")=>cosine(&vv,&qvec),Some("ip")|Some("dot")=>dot(&vv,&qvec), _=>l2(&vv,&qvec)}; scores.push(sc);}                
-                    let df = DataFrame::new(vec![Series::new("row_id".into(), ids).into(), Series::new("score".into(), scores).into()])?;
+                    let mut ids: Vec<u32> = Vec::with_capacity(items.len()); let mut scores: Vec<f32> = Vec::with_capacity(items.len()); let mut ords: Vec<u32> = Vec::with_capacity(items.len());
+                    for (_k, i) in items { ids.push(i); let vv = vector_utils::extract_vec_f32_col(col, i as usize).unwrap_or_default(); let sc = match metric.as_deref(){Some("cosine")=>cosine(&vv,&qvec),Some("ip")|Some("dot")=>dot(&vv,&qvec), _=>l2(&vv,&qvec)}; scores.push(sc); ords.push(i);}
+                    let mut cols: Vec<Column> = vec![Series::new("row_id".into(), ids).into(), Series::new("score".into(), scores).into()];
+                    if with_ord { cols.push(Series::new("ord".into(), ords).into()); }
+                    let df = DataFrame::new(cols)?;
                     tprintln!("[ann.tvf] nearest_neighbors table={} col={} engine=flat metric={} k={} note=exact-scan-no-index", qualified_table, column, metric.as_deref().unwrap_or("l2"), k);
                     return Ok(Some(df));
                 } else {
@@ -181,9 +207,11 @@ pub fn try_vector_tvf(store: &crate::storage::SharedStore, raw: &str) -> Result<
                     }
                     let mut items: Vec<(u32,u32)> = heap.into_iter().collect();
                     items.sort_by(|a,b| b.0.cmp(&a.0));
-                    let mut ids = Vec::with_capacity(items.len()); let mut scores = Vec::with_capacity(items.len());
-                    for (_k, i) in items { ids.push(i); let vv = vector_utils::extract_vec_f32_col(col, i as usize).unwrap_or_default(); scores.push(l2(&vv,&qvec)); }
-                    let df = DataFrame::new(vec![Series::new("row_id".into(), ids).into(), Series::new("score".into(), scores).into()])?;
+                    let mut ids: Vec<u32> = Vec::with_capacity(items.len()); let mut scores: Vec<f32> = Vec::with_capacity(items.len()); let mut ords: Vec<u32> = Vec::with_capacity(items.len());
+                    for (_k, i) in items { ids.push(i); let vv = vector_utils::extract_vec_f32_col(col, i as usize).unwrap_or_default(); scores.push(l2(&vv,&qvec)); ords.push(i); }
+                    let mut cols: Vec<Column> = vec![Series::new("row_id".into(), ids).into(), Series::new("score".into(), scores).into()];
+                    if with_ord { cols.push(Series::new("ord".into(), ords).into()); }
+                    let df = DataFrame::new(cols)?;
                     tprintln!("[ann.tvf] nearest_neighbors table={} col={} engine=flat metric={} k={} note=exact-scan-no-index", qualified_table, column, metric.as_deref().unwrap_or("l2"), k);
                     return Ok(Some(df));
                 }

@@ -32,6 +32,11 @@ pub fn parse_vec_literal(s: &str) -> Option<Vec<f32>> {
 /// Extract a row value from a Series as a vector of f32, supporting:
 /// - Native List(Float64/Float32/Int64/Int32)
 /// - String or other scalar encodings parsable by `parse_vec_literal`
+///
+/// Hygiene rules:
+/// - Coerce numeric values f64→f32 at boundaries.
+/// - If any element in a List is non-numeric, treat the entire cell as null (None) instead of fabricating values.
+/// - Invalid formats never panic; return None.
 pub fn extract_vec_f32(series: &Series, i: usize) -> Option<Vec<f32>> {
     match series.get(i) {
         Ok(AnyValue::List(inner)) => {
@@ -43,18 +48,11 @@ pub fn extract_vec_f32(series: &Series, i: usize) -> Option<Vec<f32>> {
                     Ok(AnyValue::Float32(f)) => out.push(f),
                     Ok(AnyValue::Int64(iv)) => out.push(iv as f32),
                     Ok(AnyValue::Int32(iv)) => out.push(iv as f32),
-                    Ok(other) => {
-                        let s_owned = other.to_string();
-                        if let Some(mut parsed) = parse_vec_literal(&s_owned) {
-                            if parsed.is_empty() { out.push(0.0); } else { out.append(&mut parsed); }
-                        } else {
-                            out.push(0.0);
-                        }
-                    }
-                    Err(_) => out.push(0.0),
+                    // Any non-numeric inner value invalidates the whole cell (treated as null)
+                    _ => return None,
                 }
             }
-            Some(out)
+            if out.is_empty() { None } else { Some(out) }
         }
         Ok(AnyValue::String(s)) => parse_vec_literal(s),
         Ok(AnyValue::StringOwned(s)) => parse_vec_literal(s.as_str()),
@@ -75,18 +73,10 @@ pub fn extract_vec_f32_col(series: &Column, i: usize) -> Option<Vec<f32>> {
                     Ok(AnyValue::Float32(f)) => out.push(f),
                     Ok(AnyValue::Int64(iv)) => out.push(iv as f32),
                     Ok(AnyValue::Int32(iv)) => out.push(iv as f32),
-                    Ok(other) => {
-                        let s_owned = other.to_string();
-                        if let Some(mut parsed) = parse_vec_literal(&s_owned) {
-                            if parsed.is_empty() { out.push(0.0); } else { out.append(&mut parsed); }
-                        } else {
-                            out.push(0.0);
-                        }
-                    }
-                    Err(_) => out.push(0.0),
+                    _ => return None,
                 }
             }
-            Some(out)
+            if out.is_empty() { None } else { Some(out) }
         }
         Ok(AnyValue::String(s)) => parse_vec_literal(s),
         Ok(AnyValue::StringOwned(s)) => parse_vec_literal(s.as_str()),
