@@ -12,6 +12,7 @@ use polars::prelude::*;
 
 use crate::server::exec::exec_vector_index::VIndexFile;
 use crate::storage::SharedStore;
+use crate::error::AppError;
 
 #[cfg(feature = "ann_hnsw")]
 mod hnsw_backend {
@@ -73,6 +74,7 @@ fn path_for_index_data(store: &SharedStore, qualified: &str) -> std::path::PathB
 
 pub fn build_vector_index(store: &SharedStore, v: &mut VIndexFile, _options: &Vec<(String,String)>) -> Result<serde_json::Value> {
     // Read source table and build a flat f32 vector store for now.
+    let t_start = std::time::Instant::now();
     let data_path = path_for_index_data(store, &v.qualified);
     if let Some(parent) = data_path.parent() { std::fs::create_dir_all(parent).ok(); }
     // Load source table dataframe
@@ -122,8 +124,15 @@ pub fn build_vector_index(store: &SharedStore, v: &mut VIndexFile, _options: &Ve
     status.insert("last_built_at".into(), json!(crate::server::exec::exec_vector_index::now_iso()));
     status.insert("dim".into(), json!(dim));
     status.insert("engine".into(), json!("flat"));
+    status.insert("build_time_ms".into(), json!(t_start.elapsed().as_millis() as u64));
     if let Some(m) = &v.metric { status.insert("metric".into(), json!(m)); }
-    if let Some(p) = &v.params { for (k, val) in p.iter() { status.insert(format!("param.{}", k), val.clone()); } }
+    // Promote select params to top-level fields and also include under param.* for completeness
+    if let Some(p) = &v.params {
+        for (k, val) in p.iter() { status.insert(format!("param.{}", k), val.clone()); }
+        if let Some(efb) = p.get("ef_build").and_then(|x| x.as_i64()) { status.insert("ef_build".into(), json!(efb)); }
+        if let Some(efs) = p.get("ef_search").and_then(|x| x.as_i64()) { status.insert("ef_search".into(), json!(efs)); }
+    }
+    if let Some(mode) = &v.mode { status.insert("mode".into(), json!(mode)); }
     v.status = Some(status);
     // Optionally build HNSW artifact when feature enabled; ignore errors, keep flat engine as baseline
     #[cfg(feature = "ann_hnsw")]
@@ -142,16 +151,49 @@ pub fn reindex_vector_index(store: &SharedStore, v: &mut VIndexFile) -> Result<s
 }
 
 pub fn show_vector_index_status(store: &SharedStore, name: Option<&str>) -> Result<serde_json::Value> {
-    // Delegate to exec_vector_index list/read utilities by reading .vindex files
+    // Build normalized rows per index with agreed fields
+    fn normalize_row(name: &str, v: &VIndexFile) -> serde_json::Value {
+        let st = v.status.as_ref();
+        let get_i64 = |k: &str| st.and_then(|m| m.get(k)).and_then(|x| x.as_i64()).unwrap_or(0);
+        let get_u64 = |k: &str| st.and_then(|m| m.get(k)).and_then(|x| x.as_u64()).unwrap_or(0);
+        let get_str = |k: &str| st.and_then(|m| m.get(k)).and_then(|x| x.as_str()).unwrap_or("").to_string();
+        let state = get_str("state");
+        let rows_indexed = if rows_indexed_present(st) { get_u64("rows_indexed") } else { 0 };
+        let bytes = if bytes_present(st) { get_u64("bytes") } else { 0 };
+        let dim = if let Some(d) = v.dim { d as i64 } else { st.and_then(|m| m.get("dim")).and_then(|x| x.as_i64()).unwrap_or(0) };
+        let metric = v.metric.clone().unwrap_or_else(|| get_str("metric"));
+        // engine: prefer explicit status.engine else fallback to "flat"
+        let mut engine = get_str("engine");
+        if engine.is_empty() { engine = "flat".to_string(); }
+        let build_time_ms = get_u64("build_time_ms");
+        let ef_build = get_i64("ef_build");
+        let ef_search = get_i64("ef_search");
+        let mode = v.mode.clone().unwrap_or_else(|| get_str("mode"));
+        serde_json::json!({
+            "name": name,
+            "state": state,
+            "rows_indexed": rows_indexed,
+            "bytes": bytes,
+            "dim": dim,
+            "metric": if metric.is_empty() { serde_json::Value::Null } else { serde_json::Value::String(metric) },
+            "engine": engine,
+            "build_time_ms": build_time_ms,
+            "ef_build": ef_build,
+            "ef_search": ef_search,
+            "mode": if mode.is_empty() { serde_json::Value::Null } else { serde_json::Value::String(mode) }
+        })
+    }
+    fn rows_indexed_present(st: Option<&serde_json::Map<String, serde_json::Value>>) -> bool { st.and_then(|m| m.get("rows_indexed")).is_some() }
+    fn bytes_present(st: Option<&serde_json::Map<String, serde_json::Value>>) -> bool { st.and_then(|m| m.get("bytes")).is_some() }
+
     if let Some(n) = name {
         let qualified = crate::ident::qualify_regular_ident(n, &crate::system::current_query_defaults());
         if let Some(vf) = super::exec_vector_index::read_vindex_file(store, &qualified)? {
-            return Ok(json!([vf.status]));
+            return Ok(json!([normalize_row(&vf.name, &vf)]));
         }
         return Ok(json!([]));
     }
-    // All statuses
-    let mut out = Vec::new();
+    let mut out_rows: Vec<serde_json::Value> = Vec::new();
     let root = store.0.lock().root_path().clone();
     if let Ok(dbs) = std::fs::read_dir(&root) {
         for db_ent in dbs.flatten() {
@@ -165,7 +207,7 @@ pub fn show_vector_index_status(store: &SharedStore, name: Option<&str>) -> Resu
                             if tp.is_file() && tp.extension().and_then(|s| s.to_str()) == Some("vindex") {
                                 if let Ok(text) = std::fs::read_to_string(&tp) {
                                     if let Ok(v) = serde_json::from_str::<VIndexFile>(&text) {
-                                        out.push(v.status);
+                                        out_rows.push(normalize_row(&v.name, &v));
                                     }
                                 }
                             }
@@ -175,7 +217,24 @@ pub fn show_vector_index_status(store: &SharedStore, name: Option<&str>) -> Resu
             }
         }
     }
-    Ok(json!(out))
+    Ok(json!(out_rows))
+}
+
+/// Placeholder for incremental DML application according to index mode.
+/// For now, all modes except REBUILD_ONLY are not supported and will return a friendly error.
+pub fn apply_vector_dml(_store: &SharedStore, v: &VIndexFile, op: &str) -> Result<serde_json::Value> {
+    let mode = v.mode.as_deref().unwrap_or("REBUILD_ONLY").to_ascii_uppercase();
+    match mode.as_str() {
+        "REBUILD_ONLY" => {
+            Err(AppError::Exec { code: "vector_dml_rebuild_only".into(), message: format!("Vector index '{}' is REBUILD_ONLY; incremental '{}' not supported. Use BUILD/REINDEX to refresh.", v.qualified, op) }.into())
+        }
+        "IMMEDIATE" | "BATCHED" | "ASYNC" => {
+            Err(AppError::Exec { code: "vector_dml_not_supported".into(), message: format!("Vector index mode '{}' for '{}' does not support incremental '{}' yet.", mode, v.qualified, op) }.into())
+        }
+        other => {
+            Err(AppError::Exec { code: "vector_dml_bad_mode".into(), message: format!("Unrecognized vector index mode '{}' for '{}'.", other, v.qualified) }.into())
+        }
+    }
 }
 
 fn load_vdata(store: &SharedStore, qualified: &str) -> Result<(u32, u32, Option<Vec<u64>>, Vec<f32>)> {

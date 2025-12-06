@@ -161,6 +161,7 @@ thread_local! {
     static TLS_VECTOR_EF_SEARCH: Cell<i32> = const { Cell::new(64) };      // query-time HNSW ef_search
     static TLS_VECTOR_HNSW_M: Cell<i32> = const { Cell::new(32) };         // HNSW M (graph degree)
     static TLS_VECTOR_HNSW_EF_BUILD: Cell<i32> = const { Cell::new(200) }; // HNSW ef_build
+    static TLS_VECTOR_PRESELECT_ALPHA: Cell<i32> = const { Cell::new(8) }; // ANN preselect alpha (W = alpha * k)
 }
 
 pub fn get_vector_ef_search() -> i32 { TLS_VECTOR_EF_SEARCH.with(|c| c.get()) }
@@ -171,6 +172,10 @@ pub fn set_vector_hnsw_m(v: i32) { TLS_VECTOR_HNSW_M.with(|c| c.set(v)); }
 
 pub fn get_vector_hnsw_ef_build() -> i32 { TLS_VECTOR_HNSW_EF_BUILD.with(|c| c.get()) }
 pub fn set_vector_hnsw_ef_build(v: i32) { TLS_VECTOR_HNSW_EF_BUILD.with(|c| c.set(v)); }
+
+/// ANN preselect alpha knob (W = alpha * k). Used by ORDER BY ANN two-phase path when LIMIT is absent.
+pub fn get_vector_preselect_alpha() -> i32 { TLS_VECTOR_PRESELECT_ALPHA.with(|c| c.get()) }
+pub fn set_vector_preselect_alpha(v: i32) { TLS_VECTOR_PRESELECT_ALPHA.with(|c| c.set(v.max(1))); }
 
 /// Helper to accept common SET variable aliases (case-insensitive) for vector knobs
 pub fn apply_vector_setting(var: &str, val: &str) -> bool {
@@ -187,6 +192,11 @@ pub fn apply_vector_setting(var: &str, val: &str) -> bool {
         }
         "vector.hnsw.ef_build" | "vector_hnsw_ef_build" | "vector.ef_build" => {
             if let Ok(n) = val.parse::<i32>() { set_vector_hnsw_ef_build(n); return true; }
+            return false;
+        }
+        // Two-phase ANN preselect multiplier
+        "vector.preselect_alpha" | "vector.preselect.alpha" | "vector_preselect_alpha" | "vector.ann.preselect_alpha" => {
+            if let Ok(n) = val.parse::<i32>() { set_vector_preselect_alpha(n); return true; }
             return false;
         }
         _ => false,

@@ -72,7 +72,6 @@ fn write_users(path: &Path, mut df: DataFrame) -> Result<()> {
 pub fn ensure_default_admin(db_root: &str) -> Result<()> {
     let p = global_user_path(db_root);
     if p.exists() { return Ok(()); }
-    let mut df = mk_schema_df();
     let hash = hash_password("clarium")?;
     let usernames = Series::new("username".into(), vec!["clarium".to_string()]);
     let hashes = Series::new("password_hash".into(), vec![hash]);
@@ -81,7 +80,7 @@ pub fn ensure_default_admin(db_root: &str) -> Result<()> {
     let perm_insert = Series::new("perm_insert".into(), vec![true]);
     let perm_calculate = Series::new("perm_calculate".into(), vec![true]);
     let perm_delete = Series::new("perm_delete".into(), vec![true]);
-    df = DataFrame::new(vec![usernames.into(), hashes.into(), is_admin.into(), perm_select.into(), perm_insert.into(), perm_calculate.into(), perm_delete.into()])?;
+    let df = DataFrame::new(vec![usernames.into(), hashes.into(), is_admin.into(), perm_select.into(), perm_insert.into(), perm_calculate.into(), perm_delete.into()])?;
     write_users(&p, df)
 }
 
@@ -89,17 +88,20 @@ pub fn add_user(db_root: &str, scope: Scope, username: &str, password: &str, per
     use polars::prelude::{AnyValue, BooleanType, ChunkedArray};
     let p = match scope { Scope::Global => global_user_path(db_root), Scope::Database(db) => db_user_path(db_root, db) };
     let mut df = read_users(&p)?;
-    // Filter out any existing row(s) for this username
+    // Filter out any existing row(s) for this username (Polars 0.51+ safe access)
     if df.height() > 0 && df.get_column_names().iter().any(|n| n.as_str() == "username") {
-        let user_s = df.column("username")?.clone();
-        if let Some(series) = user_s.as_series() {
-            let mask: ChunkedArray<BooleanType> = series.iter().map(|av| match av {
-                AnyValue::String(s) => s != username,
-                AnyValue::StringOwned(s) => s.as_str() != username,
+        let series = df.column("username")?;
+        let mut mask_vec: Vec<bool> = Vec::with_capacity(series.len());
+        for i in 0..series.len() {
+            let keep = match series.get(i) {
+                Ok(AnyValue::String(s)) => s != username,
+                Ok(AnyValue::StringOwned(s)) => s.as_str() != username,
                 _ => true,
-            }).collect();
-            df = df.filter(&mask)?;
+            };
+            mask_vec.push(keep);
         }
+        let mask_series = Series::new("__mask".into(), mask_vec);
+        df = df.filter(mask_series.bool()?)?;
     }
     let hash = hash_password(password)?;
     // Append row

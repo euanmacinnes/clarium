@@ -4,6 +4,29 @@ use crate::server::query::Command;
 
 pub fn parse_vector_ddl(s: &str) -> Option<Result<Command>> {
     let up = s.trim().to_uppercase();
+    if up.starts_with("ALTER VECTOR INDEX ") {
+        // ALTER VECTOR INDEX <name> SET MODE = <mode>
+        let tail = s.trim()["ALTER VECTOR INDEX ".len()..].trim();
+        if tail.is_empty() { return Some(Err(anyhow::anyhow!("ALTER VECTOR INDEX: missing name"))); }
+        let tail_up = tail.to_uppercase();
+        let set_pos = tail_up.find(" SET ");
+        if set_pos.is_none() { return Some(Err(anyhow::anyhow!("ALTER VECTOR INDEX: expected SET clause"))); }
+        let set_pos = set_pos.unwrap();
+        let name = tail[..set_pos].trim();
+        let after = tail[set_pos + 5..].trim(); // past " SET "
+        let after_up = after.to_uppercase();
+        if !after_up.starts_with("MODE") { return Some(Err(anyhow::anyhow!("ALTER VECTOR INDEX: only SET MODE is supported"))); }
+        // Accept forms: MODE = <value> | MODE=<value>
+        let mut mode_val = String::new();
+        if let Some(eq) = after.find('=') {
+            mode_val = after[eq+1..].trim().trim_matches('\'').trim_matches('"').to_string();
+        } else {
+            return Some(Err(anyhow::anyhow!("ALTER VECTOR INDEX: expected MODE = <value>")));
+        }
+        if name.is_empty() { return Some(Err(anyhow::anyhow!("ALTER VECTOR INDEX: missing index name"))); }
+        let normalized = crate::ident::normalize_identifier(name);
+        return Some(Ok(Command::AlterVectorIndexSetMode { name: normalized, mode: mode_val }));
+    }
     if up.starts_with("BUILD VECTOR INDEX ") {
         let tail = s.trim()["BUILD VECTOR INDEX ".len()..].trim();
         // Optional WITH (k=v,...)

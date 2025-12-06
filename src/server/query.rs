@@ -143,6 +143,7 @@ pub enum Command {
     DropVectorIndex { name: String },
     ShowVectorIndex { name: String },
     ShowVectorIndexes,
+    AlterVectorIndexSetMode { name: String, mode: String },
     // Vector index lifecycle
     BuildVectorIndex { name: String, options: Vec<(String, String)> },
     ReindexVectorIndex { name: String },
@@ -189,6 +190,8 @@ pub enum Command {
     DescribeObject { name: String },
     Slice(SlicePlan),
     Insert { table: String, columns: Vec<String>, values: Vec<Vec<ArithTerm>> },
+    // EXPLAIN <stmt>
+    Explain { sql: String },
 }
 
 
@@ -199,6 +202,11 @@ pub enum Command {
 pub fn parse(input: &str) -> Result<Command> {
     let s = input.trim();
     let sup = s.to_uppercase();
+    if sup.starts_with("EXPLAIN ") {
+        let rest = s[7..].trim();
+        if rest.is_empty() { bail!("EXPLAIN requires a statement"); }
+        return Ok(Command::Explain { sql: rest.to_string() });
+    }
     // Vector lifecycle commands (BUILD/REINDEX/SHOW STATUS)
     if let Some(res) = parse_vector_ddl(s) { return res; }
     if sup.starts_with("SLICE ") || sup == "SLICE" {

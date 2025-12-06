@@ -149,34 +149,27 @@ pub fn graph_neighbors_df(
     time_end: Option<&str>,
 ) -> Result<DataFrame> {
     let qname = qualify_graph_name(graph);
-    let gf = read_graph_file(store, &qname)?;
-    // If the graph is configured to use the direct GraphStore engine AND a manifest exists,
-    // delegate to the GraphStore runtime. Otherwise fall back to table-backed traversal.
-    if let Some(engine) = gf.engine.as_ref().map(|s| s.to_ascii_lowercase()) {
-        if engine == "graphstore" {
-            let mpath = path_for_graph_manifest(store, &qname);
-            if mpath.exists() {
-                #[allow(unused_imports)]
-                use crate::server::graphstore;
-                if let Some(api) = graphstore::runtime_api() {
-                    return api.neighbors_bfs(
-                        store,
-                        &qname,
-                        start,
-                        etype,
-                        max_hops,
-                        time_start,
-                        time_end,
-                    );
-                } else {
-                    // If graphstore module is present but not available at runtime, report a clear error.
-                    return Err(anyhow!(
-                        "GraphStore engine configured but runtime is not available"
-                    ));
-                }
-            }
+    // If a GraphStore manifest exists for this graph, delegate directly to GraphStore runtime
+    let mpath = path_for_graph_manifest(store, &qname);
+    if mpath.exists() {
+        #[allow(unused_imports)]
+        use crate::server::graphstore;
+        if let Some(api) = graphstore::runtime_api() {
+            return api.neighbors_bfs(
+                store,
+                &qname,
+                start,
+                etype,
+                max_hops,
+                time_start,
+                time_end,
+            );
+        } else {
+            return Err(anyhow!("GraphStore engine manifest found but runtime is not available"));
         }
     }
+    // Fallback to table-backed traversal using the .graph catalog
+    let gf = read_graph_file(store, &qname)?;
     let (mut edges_df, src_col, dst_col, _cost, time_col_opt) = load_edges_df(store, &gf, etype)?;
     // Optional temporal filter: apply if at least one bound is supplied and time column exists
     if let Some(time_col) = time_col_opt.clone() {
@@ -281,6 +274,8 @@ pub fn graph_paths_df(
     time_end: Option<&str>,
 ) -> Result<DataFrame> {
     let qname = qualify_graph_name(graph);
+    // For now, even if a GraphStore manifest exists, we fall back to table-backed implementation
+    // for graph_paths until the GraphRuntime trait exposes a shortest_path API.
     let gf = read_graph_file(store, &qname)?;
     let (mut edges_df, src_col, dst_col, cost_col_opt, time_col_opt) = load_edges_df(store, &gf, etype)?;
     if let Some(time_col) = time_col_opt.clone() {
@@ -406,10 +401,12 @@ pub fn graph_paths_df(
         nodes.reverse();
         let ord: Vec<i64> = (0..nodes.len() as i64).collect();
         let path_id: Vec<i64> = vec![1; nodes.len()];
+        // Provide both 'ord' and a compatibility alias 'hop' expected by MATCH rewrite/order tests.
         return Ok(DataFrame::new(vec![
             Series::new("path_id".into(), path_id).into(),
             Series::new("node_id".into(), nodes).into(),
-            Series::new("ord".into(), ord).into(),
+            Series::new("ord".into(), ord.clone()).into(),
+            Series::new("hop".into(), ord).into(),
         ])?);
     } else {
         // Unweighted BFS shortest hops
@@ -446,7 +443,8 @@ pub fn graph_paths_df(
         Ok(DataFrame::new(vec![
             Series::new("path_id".into(), path_id).into(),
             Series::new("node_id".into(), nodes).into(),
-            Series::new("ord".into(), ord).into(),
+            Series::new("ord".into(), ord.clone()).into(),
+            Series::new("hop".into(), ord).into(),
         ])?)
     }
 }

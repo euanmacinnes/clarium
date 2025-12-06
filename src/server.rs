@@ -653,6 +653,7 @@ fn to_ck_and_db(cmd: &query::Command) -> (security::CommandKind, Option<String>)
         | query::Command::BuildVectorIndex { .. }
         | query::Command::ReindexVectorIndex { .. }
         | query::Command::ShowVectorIndexStatus { .. }
+        | query::Command::AlterVectorIndexSetMode { .. }
         => (security::CommandKind::Database, None),
         // Graph catalog and graph-related commands
         query::Command::CreateGraph { .. }

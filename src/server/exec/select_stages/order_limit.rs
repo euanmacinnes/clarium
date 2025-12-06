@@ -95,7 +95,9 @@ pub fn order_limit(mut df: DataFrame, q: &Query, ctx: &mut DataContext) -> Resul
                                         let topk = q.limit.and_then(|n| if n > 0 { Some(n as usize) } else { None });
                                         let ef_search = crate::system::get_vector_ef_search();
                                         tprintln!("[ORDER_LIMIT] ANN executing (exact compute) with ef_search={} topk={:?}", ef_search, topk);
-                                        if let Ok(sorted) = ann_order_dataframe(ctx, &df, &p.column, &p.func, metric, dim, &rhs_val, *asc_flag, topk) {
+                                        // Secondary keys are the remaining ORDER BY keys after the primary
+                                        let sec: Option<Vec<(String,bool)>> = q.order_by.as_ref().map(|v| v.iter().skip(1).cloned().collect());
+                                        if let Ok(sorted) = ann_order_dataframe(ctx, &df, &p.column, &p.func, metric, dim, &rhs_val, *asc_flag, topk, sec.as_ref()) {
                                             df = sorted;
                                             ann_applied = true;
                                         } else {
@@ -123,7 +125,8 @@ pub fn order_limit(mut df: DataFrame, q: &Query, ctx: &mut DataContext) -> Resul
                                 let dim = diag.as_ref().and_then(|d| d.dim);
                                 if df.get_column_names().iter().any(|c| c.eq_ignore_ascii_case(&p.column)) {
                                     let topk = q.limit.and_then(|n| if n > 0 { Some(n as usize) } else { None });
-                                    if let Ok(sorted) = ann_order_dataframe(ctx, &df, &p.column, &p.func, metric, dim, &rhs_val, *asc_flag, topk) {
+                                    let sec: Option<Vec<(String,bool)>> = q.order_by.as_ref().map(|v| v.iter().skip(1).cloned().collect());
+                                    if let Ok(sorted) = ann_order_dataframe(ctx, &df, &p.column, &p.func, metric, dim, &rhs_val, *asc_flag, topk, sec.as_ref()) {
                                         df = sorted;
                                         ann_applied = true;
                                     }
@@ -427,6 +430,8 @@ fn ann_order_dataframe(
     rhs_scalar: &str,
     asc_hint: bool,
     topk: Option<usize>,
+    // Secondary ORDER BY keys (beyond the primary vector function), in order
+    secondary_keys: Option<&Vec<(String, bool)>>,
 ) -> Result<DataFrame> {
     // Parse query vector once. If parsing fails, bail so caller can fallback to exact ORDER BY path.
     let qvec = parse_vec_literal_f64(rhs_scalar).ok_or_else(|| anyhow::anyhow!("invalid query vector for ANN"))?;
@@ -440,6 +445,36 @@ fn ann_order_dataframe(
         .map(|c| c.to_string())
         .unwrap_or_else(|| col_name.to_string());
     let col_series = df.column(&cname)?;
+    // Identify a stable row-id column if present (prefer namespaced __row_id.<alias>, else __row_id)
+    let mut rid_col_name: Option<String> = None;
+    for n in df.get_column_names() {
+        let ns = n.as_str();
+        if ns == "__row_id" || ns.starts_with("__row_id.") { rid_col_name = Some(ns.to_string()); break; }
+    }
+    // Helper: build final sort expressions combining primary score + secondary keys + stable row-id tie-break
+    let build_sort_keys = |df_cols: &DataFrame, rid_name: Option<&str>, final_desc: bool| -> (Vec<Expr>, Vec<bool>) {
+        let mut exprs: Vec<Expr> = vec![col("__ann_score")];
+        let mut desc: Vec<bool> = vec![final_desc];
+        if let Some(keys) = secondary_keys {
+            for (name, asc) in keys.iter() {
+                // Skip function-like expressions here; those are not supported in exact path inside this stage
+                if name.contains('(') || name.contains(')') { continue; }
+                // Resolve approximately by exact match or case-insensitive match in DF
+                let effective: String = df_cols
+                    .get_column_names()
+                    .iter()
+                    .find(|c| c.as_str() == name.as_str())
+                    .map(|c| c.to_string())
+                    .or_else(|| df_cols.get_column_names().iter().find(|c| c.eq_ignore_ascii_case(name)).map(|c| c.to_string()))
+                    .unwrap_or_else(|| name.clone());
+                exprs.push(col(effective.as_str()));
+                desc.push(!*asc);
+            }
+        }
+        if let Some(rn) = rid_name { exprs.push(col(rn)); desc.push(false); }
+        (exprs, desc)
+    };
+
     // Try ANN runtime search first when LIMIT is present and a matching index exists; fallback to exact path on any error
     if let Some(k) = topk {
         if k > 0 {
@@ -463,16 +498,100 @@ fn ann_order_dataframe(
                                                         if tbl_match && vf.column.eq_ignore_ascii_case(&ann.column) {
                                                             // Call runtime search
                                                             let qf: Vec<f32> = qvec.iter().map(|x| *x as f32).collect();
-                                                            if let Ok(cands) = crate::server::exec::exec_vector_runtime::search_vector_index(store, &vf, &qf, k) {
-                                                                // Map candidate row indices into df rows directly if sizes are compatible
+                                                            // Preselect W = alpha * k candidates using ANN engine (or flat as baseline)
+                                                            let alpha = crate::system::get_vector_preselect_alpha().max(1) as usize;
+                                                            let w = k.saturating_mul(alpha);
+                                                            if let Ok(cands) = crate::server::exec::exec_vector_runtime::search_vector_index(store, &vf, &qf, w) {
                                                                 if !cands.is_empty() {
-                                                                    let mut idx: Vec<u32> = cands.into_iter().map(|(i,_s)| i).collect();
-                                                                    // Defensive clamp to df height
-                                                                    let h = df.height() as u32;
-                                                                    for ii in idx.iter_mut() { if *ii >= h { *ii = h.saturating_sub(1); } }
-                                                                    let idx_u = UInt32Chunked::from_slice("__take".into(), &idx);
-                                                                    let out = df.take(&idx_u)?;
-                                                                    return Ok(out);
+                                                                    // If a stable __row_id column exists, map candidates by row_id; otherwise treat ids as positional indices
+                                                                    if let Some(rn) = rid_col_name.as_deref() {
+                                                                        if let Ok(rid_col) = df.column(rn) {
+                                                                            // Build map from row_id -> row_index
+                                                                            use std::collections::HashMap;
+                                                                            let mut pos: HashMap<u64, u32> = HashMap::with_capacity(df.height());
+                                                                            for i in 0..rid_col.len() {
+                                                                                if let Ok(av) = rid_col.get(i) {
+                                                                                    if let Ok(id) = av.try_extract::<u64>() {
+                                                                                        pos.insert(id, i as u32);
+                                                                                    } else if let Ok(id32) = av.try_extract::<u32>() {
+                                                                                        pos.insert(id32 as u64, i as u32);
+                                                                                    } else if let Ok(id64) = av.try_extract::<i64>() {
+                                                                                        pos.insert(id64 as u64, i as u32);
+                                                                                    }
+                                                                                }
+                                                                            }
+                                                                            // Collect DF indices for preselected candidates, preserving ANN order
+                                                                            let mut idx: Vec<u32> = Vec::with_capacity(cands.len());
+                                                                            for (rid, _s) in cands.iter() {
+                                                                                if let Some(pi) = pos.get(&(*rid as u64)) { idx.push(*pi); }
+                                                                            }
+                                                                            if !idx.is_empty() {
+                                                                                // Slice DF to W candidates
+                                                                                let idx_u = UInt32Chunked::from_slice("__take".into(), &idx);
+                                                                                let mut df_w = df.take(&idx_u)?;
+                                                                                // Compute exact scores on W and attach column
+                                                                                let mut scores: Vec<f64> = Vec::with_capacity(df_w.height());
+                                                                                let series_w = df_w.column(&cname)?;
+                                                                                for i in 0..series_w.len() {
+                                                                                    let v = vector_utils::extract_vec_f32_col(series_w, i).unwrap_or_default().into_iter().map(|x| x as f64).collect::<Vec<f64>>();
+                                                                                    let s = match func {
+                                                                                        f if f.eq_ignore_ascii_case("vec_l2") => l2_distance(&v, &qvec),
+                                                                                        f if f.eq_ignore_ascii_case("cosine_sim") => cosine_similarity(&v, &qvec),
+                                                                                        _ => l2_distance(&v, &qvec),
+                                                                                    };
+                                                                                    scores.push(s);
+                                                                                }
+                                                                                df_w.with_column(Series::new("__ann_score".into(), scores))?;
+                                                                                // Build final sort: score + secondary keys + row-id
+                                                                                let final_desc = !asc_hint;
+                                                                                let (exprs, desc) = build_sort_keys(&df_w, rid_col_name.as_deref(), final_desc);
+                                                                                let opts = polars::prelude::SortMultipleOptions {
+                                                                                    descending: desc,
+                                                                                    nulls_last: vec![true; exprs.len()],
+                                                                                    maintain_order: true,
+                                                                                    multithreaded: true,
+                                                                                    limit: Some((k as polars::prelude::IdxSize).min(df_w.height() as polars::prelude::IdxSize)),
+                                                                                };
+                                                                                let orig_cols: Vec<_> = df.get_column_names().iter().map(|s| col(s.as_str())).collect();
+                                                                                let df_sorted = df_w.lazy().sort_by_exprs(exprs, opts).select(&orig_cols).collect()?;
+                                                                                tprintln!("[ORDER_LIMIT][ANN] LIMIT path: engine=flat metric_hint={:?} alpha={} W={} final_k={} secondary_keys={} rid={} -> took {} rows", index_metric, alpha, w, k, secondary_keys.map(|v| v.len()).unwrap_or(0), rid_col_name.as_deref().unwrap_or("<none>"), df_sorted.height());
+                                                                                return Ok(df_sorted);
+                                                                            }
+                                                                        }
+                                                                    } else {
+                                                                        // Fallback: treat ids as positional row indices
+                                                                        let mut idx: Vec<u32> = cands.into_iter().map(|(i,_s)| i).collect();
+                                                                        let h = df.height() as u32;
+                                                                        for ii in idx.iter_mut() { if *ii >= h { *ii = h.saturating_sub(1); } }
+                                                                        let idx_u = UInt32Chunked::from_slice("__take".into(), &idx);
+                                                                        let mut df_w = df.take(&idx_u)?;
+                                                                        // Compute exact scores on W and sort with secondary keys
+                                                                        let mut scores: Vec<f64> = Vec::with_capacity(df_w.height());
+                                                                        let series_w = df_w.column(&cname)?;
+                                                                        for i in 0..series_w.len() {
+                                                                            let v = vector_utils::extract_vec_f32_col(series_w, i).unwrap_or_default().into_iter().map(|x| x as f64).collect::<Vec<f64>>();
+                                                                            let s = match func {
+                                                                                f if f.eq_ignore_ascii_case("vec_l2") => l2_distance(&v, &qvec),
+                                                                                f if f.eq_ignore_ascii_case("cosine_sim") => cosine_similarity(&v, &qvec),
+                                                                                _ => l2_distance(&v, &qvec),
+                                                                            };
+                                                                            scores.push(s);
+                                                                        }
+                                                                        df_w.with_column(Series::new("__ann_score".into(), scores))?;
+                                                                        let final_desc = !asc_hint;
+                                                                        let (exprs, desc) = build_sort_keys(&df_w, rid_col_name.as_deref(), final_desc);
+                                                                        let opts = polars::prelude::SortMultipleOptions {
+                                                                            descending: desc,
+                                                                            nulls_last: vec![true; exprs.len()],
+                                                                            maintain_order: true,
+                                                                            multithreaded: true,
+                                                                            limit: Some((k as polars::prelude::IdxSize).min(df_w.height() as polars::prelude::IdxSize)),
+                                                                        };
+                                                                        let orig_cols: Vec<_> = df.get_column_names().iter().map(|s| col(s.as_str())).collect();
+                                                                        let df_sorted = df_w.lazy().sort_by_exprs(exprs, opts).select(&orig_cols).collect()?;
+                                                                        tprintln!("[ORDER_LIMIT][ANN] LIMIT path (positional ids): alpha={} W={} final_k={} secondary_keys={} -> took {} rows", alpha, w, k, secondary_keys.map(|v| v.len()).unwrap_or(0), df_sorted.height());
+                                                                        return Ok(df_sorted);
+                                                                    }
                                                                 }
                                                             }
                                                             break 'outer;
@@ -516,12 +635,34 @@ fn ann_order_dataframe(
                 if heap.len() > k { heap.pop(); }
             }
             let mut items: Vec<(u64, u32)> = heap.into_iter().map(|Reverse(t)| t).collect();
-            // Sort by key DESC (largest scores first)
-            items.sort_by(|a, b| b.0.cmp(&a.0));
+            // Sort by key DESC (largest scores first); tie-break by row index ASC for stability
+            items.sort_by(|a, b| {
+                match b.0.cmp(&a.0) {
+                    std::cmp::Ordering::Equal => a.1.cmp(&b.1),
+                    other => other,
+                }
+            });
             let idx: Vec<u32> = items.into_iter().map(|(_, i)| i).collect();
             let idx_u = UInt32Chunked::from_slice("__take".into(), &idx);
-            let out = df.take(&idx_u)?;
-            return Ok(out);
+            let mut out = df.take(&idx_u)?;
+            // Attach exact scores to selected top-k to allow secondary key ordering
+            let mut scores2: Vec<f64> = Vec::with_capacity(out.height());
+            let ser2 = out.column(&cname)?;
+            for i in 0..ser2.len() {
+                let v = vector_utils::extract_vec_f32_col(ser2, i).unwrap_or_default().into_iter().map(|x| x as f64).collect::<Vec<f64>>();
+                let s = match func {
+                    f if f.eq_ignore_ascii_case("vec_l2") => l2_distance(&v, &qvec),
+                    f if f.eq_ignore_ascii_case("cosine_sim") => cosine_similarity(&v, &qvec),
+                    _ => l2_distance(&v, &qvec),
+                };
+                scores2.push(s);
+            }
+            out.with_column(Series::new("__ann_score".into(), scores2))?;
+            let (exprs, desc) = build_sort_keys(&out, rid_col_name.as_deref(), final_desc);
+            let opts = polars::prelude::SortMultipleOptions { descending: desc, nulls_last: vec![true; exprs.len()], maintain_order: true, multithreaded: true, limit: Some(out.height() as polars::prelude::IdxSize) };
+            let orig_cols: Vec<_> = df.get_column_names().iter().map(|s| col(s.as_str())).collect();
+            let out2 = out.lazy().sort_by_exprs(exprs, opts).select(&orig_cols).collect()?;
+            return Ok(out2);
         } else {
             // Want smallest k (ASC): maintain a max-heap of (score, idx); pop when new < largest
             let mut heap: std::collections::BinaryHeap<(u64, u32)> = std::collections::BinaryHeap::with_capacity(k + 1);
@@ -536,15 +677,87 @@ fn ann_order_dataframe(
                 if heap.len() > k { heap.pop(); }
             }
             let mut items: Vec<(u64, u32)> = heap.into_iter().collect();
-            // Sort by key ASC (smallest scores first)
-            items.sort_by(|a, b| a.0.cmp(&b.0));
+            // Sort by key ASC (smallest scores first); tie-break by row index ASC for stability
+            items.sort_by(|a, b| {
+                match a.0.cmp(&b.0) {
+                    std::cmp::Ordering::Equal => a.1.cmp(&b.1),
+                    other => other,
+                }
+            });
             let idx: Vec<u32> = items.into_iter().map(|(_, i)| i).collect();
             let idx_u = UInt32Chunked::from_slice("__take".into(), &idx);
-            let out = df.take(&idx_u)?;
-            return Ok(out);
+            let mut out = df.take(&idx_u)?;
+            // Attach exact scores to selected top-k to allow secondary key ordering
+            let mut scores2: Vec<f64> = Vec::with_capacity(out.height());
+            let ser2 = out.column(&cname)?;
+            for i in 0..ser2.len() {
+                let v = vector_utils::extract_vec_f32_col(ser2, i).unwrap_or_default().into_iter().map(|x| x as f64).collect::<Vec<f64>>();
+                let s = match func {
+                    f if f.eq_ignore_ascii_case("vec_l2") => l2_distance(&v, &qvec),
+                    f if f.eq_ignore_ascii_case("cosine_sim") => cosine_similarity(&v, &qvec),
+                    _ => l2_distance(&v, &qvec),
+                };
+                scores2.push(s);
+            }
+            out.with_column(Series::new("__ann_score".into(), scores2))?;
+            let (exprs, desc) = build_sort_keys(&out, rid_col_name.as_deref(), final_desc);
+            let opts = polars::prelude::SortMultipleOptions { descending: desc, nulls_last: vec![true; exprs.len()], maintain_order: true, multithreaded: true, limit: Some(out.height() as polars::prelude::IdxSize) };
+            let orig_cols: Vec<_> = df.get_column_names().iter().map(|s| col(s.as_str())).collect();
+            let out2 = out.lazy().sort_by_exprs(exprs, opts).select(&orig_cols).collect()?;
+            return Ok(out2);
         }
     }
     // No LIMIT k → compute scores and full sort with IdxSize limit (none)
+    // Two-phase ANN preselect (diagnostic): if an index exists, preselect W = alpha * k' candidates first
+    if let Some(store) = ctx.store.as_ref() {
+        if let Some(ann) = ann_diag_for_order_by(ctx, &cname) {
+            let n = df.height().max(1);
+            let alpha = crate::system::get_vector_preselect_alpha().max(1) as usize;
+            // Derive a working k' when LIMIT is absent; use min(100, n)
+            let final_k = std::cmp::min(100usize, n);
+            let w = std::cmp::min(n, alpha.saturating_mul(final_k));
+            // Try to locate the matching .vindex and issue a preselect search
+            let mut used_engine = "flat".to_string();
+            let mut preselect_count: usize = 0;
+            // Locate vindex matching table+column
+            let root = store.0.lock().root_path().clone();
+            'outer2: for db_ent in std::fs::read_dir(&root).unwrap_or_else(|_| std::fs::read_dir(".").unwrap()) {
+                if let Ok(db_e) = db_ent {
+                    let dbp = db_e.path(); if !dbp.is_dir() { continue; }
+                    if let Ok(schemas) = std::fs::read_dir(&dbp) {
+                        for sch_ent in schemas.flatten() {
+                            let sp = sch_ent.path(); if !sp.is_dir() { continue; }
+                            if let Ok(entries) = std::fs::read_dir(&sp) {
+                                for e in entries.flatten() {
+                                    let p = e.path();
+                                    if p.is_file() && p.extension().and_then(|s| s.to_str()) == Some("vindex") {
+                                        if let Ok(text) = std::fs::read_to_string(&p) {
+                                            if let Ok(vf) = serde_json::from_str::<VIndexFile>(&text) {
+                                                let tbl_match = vf.table.eq_ignore_ascii_case(&ann.table) || vf.table.ends_with(&ann.table);
+                                                if tbl_match && vf.column.eq_ignore_ascii_case(&ann.column) {
+                                                    let qf: Vec<f32> = qvec.iter().map(|x| *x as f32).collect();
+                                                    if let Ok(cands) = crate::server::exec::exec_vector_runtime::search_vector_index(store, &vf, &qf, w) {
+                                                        preselect_count = cands.len();
+                                                        #[cfg(feature = "ann_hnsw")]
+                                                        { used_engine = "hnsw".to_string(); }
+                                                    }
+                                                    break 'outer2;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            tprintln!(
+                "[ORDER_LIMIT][ANN] two-phase (no LIMIT): engine={}, metric_hint={:?}, alpha={}, W={}, final_k_derived={}, n={}; preselect_count={}",
+                used_engine, index_metric, alpha, w, final_k, n, preselect_count
+            );
+        }
+    }
     let mut scores: Vec<f64> = Vec::with_capacity(df.height());
     for i in 0..col_series.len() {
         let v = vector_utils::extract_vec_f32_col(col_series, i).unwrap_or_default().into_iter().map(|x| x as f64).collect::<Vec<f64>>();
@@ -559,9 +772,17 @@ fn ann_order_dataframe(
     let score_series = Series::new("__ann_score".into(), scores);
     let mut df2 = df.clone();
     df2.with_column(score_series)?;
-    let opts = polars::prelude::SortMultipleOptions { descending: vec![final_desc], nulls_last: vec![true], maintain_order: true, multithreaded: true, limit: None };
+    // Build sort keys: primary by __ann_score, then by secondary ORDER BY keys, then stable row-id tie-break
+    let (mut sort_exprs, mut descending) = build_sort_keys(&df2, rid_col_name.as_deref(), final_desc);
+    let opts = polars::prelude::SortMultipleOptions {
+        descending,
+        nulls_last: vec![true; sort_exprs.len()],
+        maintain_order: true,
+        multithreaded: true,
+        limit: None,
+    };
     let orig_cols: Vec<_> = df.get_column_names().iter().map(|s| col(s.as_str())).collect();
-    let df_sorted = df2.lazy().sort_by_exprs(vec![col("__ann_score")], opts).select(&orig_cols).collect()?;
+    let df_sorted = df2.lazy().sort_by_exprs(sort_exprs, opts).select(&orig_cols).collect()?;
     Ok(df_sorted)
 }
 

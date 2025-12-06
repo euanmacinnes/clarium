@@ -23,6 +23,7 @@ pub mod exec_graph;        // GRAPH catalog management
 pub mod exec_graph_runtime; // Graph TVFs runtime (neighbors/paths)
 pub mod exec_alter;        // ALTER TABLE handling
 pub mod vector_utils;      // Shared vector parsing/extraction utilities
+pub mod exec_vector_tvf;   // Vector TVFs (nearest_neighbors, vector_search)
 
 use anyhow::Result;
 use polars::prelude::*;
@@ -66,6 +67,25 @@ pub async fn execute_query(store: &SharedStore, text: &str) -> Result<serde_json
     }
     let cmd = parse(text)?;
     match cmd {
+        Command::Explain { sql } => {
+            // Minimal EXPLAIN: annotate vector paths (ANN vs EXACT), index used, metric, ef_search, preselect W placeholder
+            // Try vector TVFs first
+            if let Some(exp) = self::exec_vector_tvf::explain_vector_expr(store, &sql) {
+                return Ok(serde_json::json!({"explain": exp}));
+            }
+            // If SELECT contains TVF call, try to extract substring
+            let low = sql.to_ascii_lowercase();
+            for key in ["nearest_neighbors(", "vector_search("] {
+                if let Some(pos) = low.find(key) {
+                    let sub = &sql[pos..];
+                    if let Some(exp) = self::exec_vector_tvf::explain_vector_expr(store, sub) {
+                        return Ok(serde_json::json!({"explain": exp}));
+                    }
+                }
+            }
+            // Fallback generic message
+            return Ok(serde_json::json!({"explain": "EXPLAIN: not implemented for this statement"}));
+        }
         Command::Slice(plan) => {
             // Create DataContext with registry snapshot for SLICE query
             let registry_snapshot = crate::scripts::get_script_registry()
@@ -114,7 +134,8 @@ pub async fn execute_query(store: &SharedStore, text: &str) -> Result<serde_json
         | Command::ShowVectorIndexes
         | Command::BuildVectorIndex { .. }
         | Command::ReindexVectorIndex { .. }
-        | Command::ShowVectorIndexStatus { .. } => {
+        | Command::ShowVectorIndexStatus { .. }
+        | Command::AlterVectorIndexSetMode { .. } => {
             self::exec_vector_index::execute_vector_index(store, cmd)
         }
         // Graph catalogs

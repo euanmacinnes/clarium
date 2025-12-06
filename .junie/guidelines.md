@@ -8,7 +8,7 @@ Search for existing functions, and change from private to public and relocate th
 
 Ensure unit tests are comprehensive and cover multiple levels.
 
-The preference will be towards fully-featured and complex scalable, performant and robust solutions for enterprise use, not MVP.
+Instead of minimal features, the preference will be towards fully-featured and complex scalable, performant and robust solutions for enterprise use, not MVP.
 
 Keep query paring and execution separate and keep each DDL in separate files for each.
 

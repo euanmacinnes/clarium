@@ -28,11 +28,11 @@ fn build_and_search_vector_index_flat_v2() {
 
     // Create and build index
     let sql_create = "CREATE VECTOR INDEX idx_t_vec ON clarium/public/t(vec) USING HNSW WITH (metric='l2', dim=3, M=16, ef_build=64)";
-    let _ = crate::server::exec::execute_query(&shared, sql_create);
-    let _ = crate::server::exec::execute_query(&shared, "BUILD VECTOR INDEX clarium/public/idx_t_vec");
+    let _ = futures::executor::block_on(crate::server::exec::execute_query(&shared, sql_create));
+    let _ = futures::executor::block_on(crate::server::exec::execute_query(&shared, "BUILD VECTOR INDEX clarium/public/idx_t_vec"));
 
     // Status should exist
-    let status = crate::server::exec::execute_query(&shared, "SHOW VECTOR INDEX STATUS clarium/public/idx_t_vec").unwrap();
+    let status = futures::executor::block_on(crate::server::exec::execute_query(&shared, "SHOW VECTOR INDEX STATUS clarium/public/idx_t_vec")).unwrap();
     let arr = status.as_array().unwrap();
     assert_eq!(arr.len(), 1);
 

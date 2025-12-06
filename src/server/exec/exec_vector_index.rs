@@ -24,7 +24,9 @@ pub struct VIndexFile {
     pub dim: Option<i32>,
     pub params: Option<serde_json::Map<String, serde_json::Value>>, // M, ef_build, ef_search (optional)
     pub status: Option<serde_json::Map<String, serde_json::Value>>,  // state/last_built_at/rows_indexed
+    pub mode: Option<String>, // IMMEDIATE | BATCHED | ASYNC | REBUILD_ONLY
     pub created_at: Option<String>,
+    pub updated_at: Option<String>,
 }
 
 fn qualify_name(name: &str) -> String {
@@ -91,7 +93,8 @@ fn list_vector_indexes(store: &SharedStore) -> Result<Value> {
                                             "column": v.column,
                                             "algo": v.algo,
                                             "metric": v.metric,
-                                            "dim": v.dim
+                                            "dim": v.dim,
+                                            "mode": v.mode
                                         }));
                                     }
                                 }
@@ -121,12 +124,25 @@ pub fn execute_vector_index(store: &SharedStore, cmd: query::Command) -> Result<
             let mut params = serde_json::Map::new();
             let mut metric: Option<String> = None;
             let mut dim: Option<i32> = None;
+            let mut mode: Option<String> = None;
             for (k, v) in options.into_iter() {
                 let kl = k.to_lowercase();
                 if kl == "metric" { metric = Some(v.trim_matches('\'').to_string()); continue; }
                 if kl == "dim" { dim = v.parse::<i32>().ok(); continue; }
+                if kl == "mode" { mode = Some(v.trim_matches('\'').to_ascii_uppercase()); continue; }
                 params.insert(k, serde_json::Value::String(v));
             }
+            // Validate/normalize mode; default to REBUILD_ONLY if absent
+            let allowed = ["IMMEDIATE", "BATCHED", "ASYNC", "REBUILD_ONLY"];
+            let mode = match mode {
+                Some(m) => {
+                    if !allowed.contains(&m.as_str()) {
+                        return Err(AppError::Ddl { code: "vector_mode".into(), message: format!("Invalid vector index mode '{}'; expected one of IMMEDIATE|BATCHED|ASYNC|REBUILD_ONLY", m) }.into());
+                    }
+                    Some(m)
+                }
+                None => Some("REBUILD_ONLY".to_string()),
+            };
             let vf = VIndexFile {
                 version: 1,
                 name: qualified.clone(),
@@ -138,7 +154,9 @@ pub fn execute_vector_index(store: &SharedStore, cmd: query::Command) -> Result<
                 dim,
                 params: if params.is_empty() { None } else { Some(params) },
                 status: None,
+                mode,
                 created_at: Some(now_iso()),
+                updated_at: None,
             };
             write_vindex_file(store, &qualified, &vf)?;
             info!(target: "clarium::ddl", "CREATE VECTOR INDEX saved '{}.vindex'", qualified);
@@ -163,7 +181,8 @@ pub fn execute_vector_index(store: &SharedStore, cmd: query::Command) -> Result<
                     "metric": vf.metric,
                     "dim": vf.dim,
                     "params": vf.params,
-                    "status": vf.status
+                    "status": vf.status,
+                    "mode": vf.mode
                 });
                 return Ok(serde_json::json!([row]));
             }
@@ -171,6 +190,22 @@ pub fn execute_vector_index(store: &SharedStore, cmd: query::Command) -> Result<
         }
         query::Command::ShowVectorIndexes => {
             list_vector_indexes(store)
+        }
+        query::Command::AlterVectorIndexSetMode { name, mode } => {
+            let qualified = qualify_name(&name);
+            if let Some(mut vf) = read_vindex_file(store, &qualified)? {
+                let up = mode.to_ascii_uppercase();
+                let allowed = ["IMMEDIATE", "BATCHED", "ASYNC", "REBUILD_ONLY"];
+                if !allowed.contains(&up.as_str()) {
+                    return Err(AppError::Ddl { code: "vector_mode".into(), message: format!("Invalid vector index mode '{}'; expected one of IMMEDIATE|BATCHED|ASYNC|REBUILD_ONLY", mode) }.into());
+                }
+                vf.mode = Some(up);
+                vf.updated_at = Some(now_iso());
+                write_vindex_file(store, &qualified, &vf)?;
+                Ok(serde_json::json!({"status":"ok"}))
+            } else {
+                Err(AppError::NotFound { code: "not_found".into(), message: format!("Vector index not found: {}", qualified) }.into())
+            }
         }
         query::Command::BuildVectorIndex { name, options } => {
             let qualified = qualify_name(&name);

@@ -5,7 +5,7 @@ use std::rc::Rc;
 use std::cell::RefCell;
 
 use anyhow::Result;
-use polars::prelude::DataFrame;
+use polars::prelude::{DataFrame, Series, NamedFrom};
 use tracing::debug;
 
 use crate::server::query::query_common::*;
@@ -484,6 +484,10 @@ impl DataContext {
                 if let Some(df) = Self::try_graph_tvf(store, name)? {
                     return Self::prefix_columns(df, t);
                 }
+                // Vector TVFs as table-like sources: nearest_neighbors(...), vector_search(...)
+                if let Some(df) = crate::server::exec::exec_vector_tvf::try_vector_tvf(store, name)? {
+                    return Self::prefix_columns(df, t);
+                }
                 // Check CTEs first - they take precedence over everything
                 if let Some(cte_df) = self.cte_tables.get(name) {
                     tracing::debug!(target: "clarium::exec", "load_source_df: CTE hit name='{}' alias={:?}", name, alias);
@@ -544,7 +548,16 @@ impl DataContext {
                     }
                 };
                 let pref = alias.as_deref().unwrap_or(name.as_str());
-                let prefixed = Self::prefix_columns(df, t)?;
+                let mut prefixed = Self::prefix_columns(df, t)?;
+                // Inject a stable ordinal __row_id.<alias> to aid ANN row-id mapping and avoid name collisions in joins
+                let rid_name = format!("__row_id.{}", pref);
+                if !prefixed.get_column_names().iter().any(|c| c.as_str() == rid_name.as_str()) {
+                    let h = prefixed.height();
+                    let mut ids: Vec<u64> = Vec::with_capacity(h);
+                    for i in 0..h { ids.push(i as u64); }
+                    let s = Series::new(rid_name.into(), ids);
+                    let _ = prefixed.with_column(s);
+                }
                 tracing::debug!(target: "clarium::exec", "load_source_df: prefixed with '{}' -> cols={:?}", pref, prefixed.get_column_names());
                 Ok(prefixed)
             }
@@ -564,7 +577,9 @@ impl DataContext {
     // graph_paths(graph,src,dst,max_hops[, etype[, time_start, time_end]])
     fn try_graph_tvf(store: &crate::storage::SharedStore, raw: &str) -> anyhow::Result<Option<DataFrame>> {
         let s = raw.trim();
-        let low = s.to_ascii_lowercase();
+        // Robustly extract function name before '('
+        let fname = s.split('(').next().unwrap_or("").trim();
+        let fname_low = fname.to_ascii_lowercase();
         fn extract_args(fcall: &str) -> Option<Vec<String>> {
             let open = fcall.find('(')?;
             if !fcall.ends_with(')') { return None; }
@@ -590,7 +605,7 @@ impl DataContext {
             }
             t.to_string()
         }
-        if low.starts_with("graph_neighbors(") && s.ends_with(')') {
+        if fname_low == "graph_neighbors" {
             if let Some(args) = extract_args(s) {
                 // graph, start, etype, max_hops [, time_start, time_end]
                 let graph = args.get(0).map(|a| strip_quotes(a)).unwrap_or_default();
@@ -605,7 +620,7 @@ impl DataContext {
                 return Ok(Some(df));
             }
         }
-        if low.starts_with("graph_paths(") && s.ends_with(')') {
+        if fname_low == "graph_paths" {
             if let Some(args) = extract_args(s) {
                 // graph, src, dst, max_hops [, etype [, time_start, time_end]]
                 let graph = args.get(0).map(|a| strip_quotes(a)).unwrap_or_default();

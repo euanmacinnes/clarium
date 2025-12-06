@@ -15,15 +15,15 @@ fn parse_vec_literal_accepts_various_formats() {
 #[test]
 fn extract_vec_f32_from_list_series() {
     // Create a List(Float64) series: [[1.0, 2.0, 3.0]]
-    let inner = Series::new("inner", &[1.0f64, 2.0, 3.0]);
-    let list = Series::new("vec", &[inner]);
+    let inner = Series::new("inner".into(), &[1.0f64, 2.0, 3.0]);
+    let list = Series::new("vec".into(), &[inner]);
     let v = extract_vec_f32(&list, 0).unwrap();
     assert_eq!(v, vec![1.0f32, 2.0, 3.0]);
 }
 
 #[test]
 fn extract_vec_f32_from_string_series() {
-    let s = Series::new("vec", &["1,2,3"]);
+    let s = Series::new("vec".into(), &["1,2,3"]);
     let v = extract_vec_f32(&s, 0).unwrap();
     assert_eq!(v, vec![1.0f32,2.0,3.0]);
 }
