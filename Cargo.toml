@@ -79,7 +79,29 @@ seaorm_dev = ["dep:sea-orm", "dep:sea-query"]
 [dev-dependencies]
 futures = "0.3.31"
 tempfile = "3"
+criterion = { version = "0.5", features = ["html_reports"] }
+rand = "0.8"
 
 [dependencies.hnsw_rs]
 version = "0.3"
 optional = true
+
+[[bench]]
+name = "vector_ann"
+harness = false
+
+[[bench]]
+name = "tables"
+harness = false
+
+[[bench]]
+name = "time_series"
+harness = false
+
+[[bench]]
+name = "graph"
+harness = false
+
+[[bench]]
+name = "kv"
+harness = false

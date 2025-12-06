@@ -23,6 +23,50 @@
 
 ---
 
+### Addendum — v2 storage and query semantics (reference)
+
+- Storage files
+  - Metadata sidecar: `<db>/<schema>/<name>.vindex` with `version=2`, `algo`, `metric`, `dim`, `mode`, `params`, `status`.
+  - Binary data: `<db>/<schema>/<name>.vdata` containing ANN graph and a compact row‑ID map.
+  - Row‑ID strategy: prefer table primary key(s). If integral → store as `u64`; if string/composite → store hashed `u64`. If no PK → store ordinal. A `flags` field denotes flavor (`ordinal | pk_u64 | pk_hashed`).
+
+- Modes (freshness policy)
+  - `.vindex.mode` ∈ { IMMEDIATE, BATCHED, ASYNC, REBUILD_ONLY }.
+  - Current runtime: REBUILD_ONLY is supported; others surface friendly “not supported yet” for incremental updates; never panic.
+
+- ORDER BY ... USING ANN behavior
+  - With `LIMIT k`: use ANN top‑k; optional exact re‑score for parity; apply secondary ORDER BY keys after score.
+  - Without `LIMIT`: two‑phase — preselect `W = alpha·k` candidates (`vector.preselect_alpha`, default 6), exact re‑score, then final sort with secondary keys.
+  - Deterministic ties broken by stable `row_id`/ordinal.
+
+- Metrics and ordering
+  - L2 ascending (smaller is better); cosine/IP descending (larger is better). Zero vectors treated as null for cosine.
+
+- TVFs
+  - `nearest_neighbors(table, column, qvec, k [, metric, ef_search])` → returns `(row_id u64, score f64 [, ord i64])`.
+  - `vector_search(index_name, qvec, k [, topk, engine])` → direct index search with optional engine hint (`ann|exact`).
+
+- Config knobs (session `SET`)
+  - `vector.hnsw.M`, `vector.hnsw.ef_build`, `vector.search.ef_search`, `vector.preselect_alpha`.
+
+- Examples
+  - ANN in ORDER BY:
+    ```
+    WITH q AS (SELECT to_vec('[0.1,0.2,0.3]') AS v)
+    SELECT id, cosine_sim(body_embed, (SELECT v FROM q)) AS score
+    FROM docs
+    ORDER BY cosine_sim(docs.body_embed, (SELECT v FROM q)) USING ANN
+    LIMIT 10;
+    ```
+  - TVF join‑back by `row_id`:
+    ```
+    WITH q AS (SELECT to_vec('[0.1,0.2,0.3]') AS v)
+    SELECT d.id, nn.score
+    FROM nearest_neighbors('public.docs', 'body_embed', (SELECT v FROM q), 10, 'cosine', 96) AS nn
+    JOIN docs AS d ON d.__row_id.docs = nn.row_id
+    ORDER BY nn.score DESC, d.id;
+    ```
+
 ### Major gaps and risks
 
 1) ANN execution runtime is missing
