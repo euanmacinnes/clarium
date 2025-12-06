@@ -89,6 +89,7 @@ mod udf_common {
 }
 
 mod ambiguous_names_tests;
+mod ann_no_limit_parity_tests;
 mod ann_order_by_tests;
 mod ann_topk_heap_tests;
 mod cast_and_regclass_tests;
@@ -116,14 +117,17 @@ mod join_outer_tests;
 mod like_tests;
 mod match_rewrite_tests;
 mod match_view_tests;
+mod metric_semantics_tests;
 mod nested_exists_tests;
 mod normalize_tests;
 mod order_mode_tests;
 mod perf_tests;
 mod perf_tests_month;
 mod pg_catalog_tests;
+mod primary_key_tests;
 mod quick_checks_udf;
 mod raw_tests;
+mod row_id_mapping_tests;
 mod rolling_tests;
 mod session_defaults_tests;
 mod show_describe_tests;
@@ -147,8 +151,12 @@ mod udf_vectors_tests;
 mod udf_vectors_simple_tests;
 mod union_select_tests;
 mod unnamed_and_join_tests;
+mod vector_column_type_tests;
+mod vector_hnsw_smoke;
 mod vector_index_ddl_tests;
+mod vector_index_modes_tests;
 mod vector_index_runtime_tests;
+mod vector_tvf_tests;
 mod vector_utils_tests;
 mod views_with_tvfs_tests;
 mod where_tests;
