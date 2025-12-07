@@ -11,12 +11,11 @@ use anyhow::{anyhow, Context, Result};
 use polars::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use crate::storage::SharedStore;
 use crate::server::graphstore::segments::{AdjSegment, NodeDict};
-use crate::server::graphstore::delta::{PartitionDeltaIndex, build_indexes_from_records};
-use crate::server::graphstore::wal::{WalReader, WalRecord};
+use crate::server::graphstore::delta::PartitionDeltaIndex;
 use crate::server::graphstore::manifest as mfutil;
 use crate::server::graphstore::delta_log::{DeltaLogReader, apply_edge_deltas, NodeDeltaLogReader};
 use crate::server::graphstore::metrics as gsm;

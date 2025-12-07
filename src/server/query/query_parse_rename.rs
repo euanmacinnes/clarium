@@ -1,4 +1,3 @@
-use crate::server::query::query_common::*;
 use crate::server::query::*;
 
 pub fn parse_rename(s: &str) -> Result<Command> {

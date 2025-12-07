@@ -179,5 +179,4 @@ impl EffectiveConfig {
     }
 }
 
-#[cfg(test)]
-mod config_tests;
+// Tests for filestore config live under tests/ and are wired via tests.rs

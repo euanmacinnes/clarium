@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tracing::{error, info, debug, warn};
 
-use crate::{storage::{SharedStore, Record}, server::exec};
+use crate::{storage::SharedStore, server::exec};
 use regex::Regex;
 
 const PG_TYPE_TEXT: i32 = 25; // use text for all columns for simplicity

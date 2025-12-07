@@ -4,7 +4,7 @@ use polars::prelude::Column;
 use regex::Regex;
 
 
-use crate::server::query::{query_common::{ArithExpr, ArithOp, ArithTerm, CompOp, WhereExpr, SqlType, DateFunc, DatePart, StrSliceBound, Query}};
+use crate::server::query::query_common::{ArithExpr, ArithOp, ArithTerm, CompOp, WhereExpr, SqlType, DateFunc, DatePart, StrSliceBound};
 
 
 #[inline]
@@ -417,7 +417,7 @@ pub fn build_arith_expr(a: &ArithExpr, ctx: &crate::server::data_context::DataCo
                 let store_opt = ctx.store.clone();
                 return arg_expr.map(
                     move |col: Column| {
-                        use polars::prelude::AnyValue;
+                        
                         let s = col.as_materialized_series();
                         let ca = s.i64()?;
                         let len = ca.len();
@@ -500,7 +500,7 @@ pub fn build_arith_expr(a: &ArithExpr, ctx: &crate::server::data_context::DataCo
             for (i, a) in args.iter().enumerate() {
                 let fname = format!("__arg{}", i);
                 field_names.push(fname.clone());
-                let mut built = build_arith_expr(a, ctx);
+                let built = build_arith_expr(a, ctx);
                 arg_exprs.push(built.alias(&fname));
             }
             let struct_expr = polars::lazy::dsl::as_struct(arg_exprs);

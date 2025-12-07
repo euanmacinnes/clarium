@@ -99,6 +99,3 @@ pub fn etag_composite(child_etags: &[String], total_size: u64) -> String {
     let h = xxh3_64(&buf);
     format!("{h:016x}")
 }
-
-#[cfg(test)]
-mod kv_tests;

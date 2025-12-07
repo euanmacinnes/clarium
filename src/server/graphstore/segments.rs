@@ -6,7 +6,6 @@
 //! compression is used at this stage to minimize CPU overhead.
 
 use anyhow::{anyhow, Context, Result};
-use crc32fast::Hasher as Crc32;
 use memmap2::Mmap;
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};

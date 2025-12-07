@@ -12,7 +12,6 @@ use crate::system; // for strict_projection flag
 use tracing::debug;
 use serde::Deserialize;
 use std::fs;
-use std::path::Path;
 use std::collections::HashMap;
 use std::cmp::Reverse;
 
@@ -780,7 +779,7 @@ fn ann_order_dataframe(
     let mut df2 = df.clone();
     df2.with_column(score_series)?;
     // Build sort keys: primary by __ann_score, then by secondary ORDER BY keys, then stable row-id tie-break
-    let (mut sort_exprs, mut descending) = build_sort_keys(&df2, rid_col_name.as_deref(), final_desc);
+    let (sort_exprs, descending) = build_sort_keys(&df2, rid_col_name.as_deref(), final_desc);
     let opts = polars::prelude::SortMultipleOptions {
         descending,
         nulls_last: vec![true; sort_exprs.len()],

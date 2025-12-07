@@ -8,7 +8,7 @@ use parking_lot::{Mutex, RwLock};
 use xxhash_rust::xxh3::xxh3_64;
 use anyhow::{Result, Context};
 
-use crate::storage::{SharedStore, KvValue};
+use crate::storage::SharedStore;
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 struct CacheKey {

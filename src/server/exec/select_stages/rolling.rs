@@ -6,18 +6,9 @@ use polars::prelude::*;
 
 use crate::server::data_context::{DataContext, SelectStage};
 use crate::server::query::query_common::Query;
-use crate::server::query::query_common::WhereExpr;
-use crate::server::query::query_common::CompOp;
-use crate::server::query::query_common::ArithExpr as AE;
-use crate::server::query::query_common::ArithTerm as AT;
-use crate::server::query::query_common::WhereExpr as WE;
 use crate::server::query::query_common::ArithTerm;
 use crate::server::query::query_common::AggFunc;
 use crate::server::query::query_common::ArithExpr;
-use crate::server::query::query_common::DateFunc;
-use crate::server::query::query_common::WindowFunc;
-use crate::server::query::query_common::StrSliceBound;
-use crate::server::query::query_common::JoinType;
 
 pub fn rolling(mut df: DataFrame, q: &Query, ctx: &mut DataContext) -> Result<DataFrame> {
     let win = q.rolling_window_ms.ok_or_else(|| anyhow::anyhow!("ROLLING BY requires a window"))?;

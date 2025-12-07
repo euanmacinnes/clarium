@@ -4,7 +4,7 @@
 //! per-partition delta logs idempotently. This bounds WAL replay cost and
 //! lets readers rebuild in-memory indexes from delta logs quickly.
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 

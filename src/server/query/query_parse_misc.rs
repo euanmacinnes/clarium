@@ -282,7 +282,7 @@ pub fn parse_type_name(s: &str) -> Option<(SqlType, usize)> {
     let (kw, mut consumed_kw) = parse_pg_type_keyword(s_trim)?;
     let kw_lc = kw.to_ascii_lowercase();
     // Default: no params
-    let mut rest = &s_trim[consumed_kw..];
+    let rest = &s_trim[consumed_kw..];
     // Parse optional ( ... ) parameters
     let mut params: Option<Vec<i32>> = None;
     {

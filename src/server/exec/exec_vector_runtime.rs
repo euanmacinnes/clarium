@@ -145,7 +145,7 @@ pub fn build_vector_index(store: &SharedStore, v: &mut VIndexFile, _options: &Ve
     let mut row_ids: Vec<u64> = Vec::new();
     let mut rows: u32 = 0;
     let mut dim: u32 = 0;
-    let mut total_rows: u64 = series.len() as u64;
+    let total_rows: u64 = series.len() as u64;
     let mut parsed_ok: u64 = 0;
     let mut invalid_rows: u64 = 0;
     let mut dim_mismatch: u64 = 0;

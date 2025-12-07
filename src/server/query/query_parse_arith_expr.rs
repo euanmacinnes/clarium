@@ -479,7 +479,7 @@ pub fn parse_arith_expr(tokens: &[String]) -> Result<ArithExpr> {
                         if ch.is_ascii_alphanumeric() || ch == '_' || ch == '.' { j += 1; } else { break; }
                     }
                     // Handle identifiers and f-strings
-                    let mut name = &src[i..j];
+                    let name = &src[i..j];
                     // Support alias."identifier.with.dots" and alias.'identifier.with.dots'
                     // If the parsed name ends with a dot, and the next char is a quote, consume the quoted part and combine
                     if name.ends_with('.') {

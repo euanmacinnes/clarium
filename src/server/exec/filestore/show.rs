@@ -390,9 +390,6 @@ pub fn show_files_df_paged(
     Ok(df_all.slice(start, len))
 }
 
-#[cfg(test)]
-mod show_tests;
-
 /// Health summary: orphaned chunks, stale refs, and config mismatches.
 /// Current implementation provides conservative counts; deeper checks will be added later.
 pub fn show_health_df(store: &SharedStore, database: &str, filestore: &str) -> Result<DataFrame> {

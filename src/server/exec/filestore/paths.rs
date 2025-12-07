@@ -47,6 +47,4 @@ pub fn split_normalized_segments(path: &str) -> Result<Vec<String>> {
     Ok(n.split('/').map(|s| s.to_string()).collect())
 }
 
-#[cfg(test)]
-#[path = "paths_tests.rs"]
-mod paths_tests;
+// Unit tests for paths live under tests/ and are wired via tests.rs

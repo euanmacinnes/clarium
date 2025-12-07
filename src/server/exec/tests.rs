@@ -102,6 +102,7 @@ mod delete_tests;
 mod end_to_end_planning_tests;
 mod exists_tests;
 mod expressive_exec_tests;
+mod exec_show_tests;
 mod fixtures;
 mod graph_catalog_tests;
 mod graph_tvf_neighbors_tests;

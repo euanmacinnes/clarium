@@ -214,7 +214,7 @@ pub fn parse_create(s: &str) -> Result<Command> {
                 let tail = &after_using[x..]; let tail_up = tail.to_uppercase();
                 let mut consumed = 0usize;
                 if tail_up.starts_with("CONFIG ") {
-                    let mut c = 7; // after CONFIG 
+                    let c = 7; // after CONFIG 
                     let (cfg_name, c2) = read_word(tail, c);
                     if cfg_name.is_empty() { anyhow::bail!("Invalid USING GRAPHSTORE: expected config name after CONFIG"); }
                     graphstore_config = Some(cfg_name.to_string());

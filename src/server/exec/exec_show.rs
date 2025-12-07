@@ -218,7 +218,3 @@ fn show_scripts(store: &SharedStore) -> Result<Value> {
     }
     Ok(Value::Array(out))
 }
-
-
-#[cfg(test)]
-mod exec_show_tests;

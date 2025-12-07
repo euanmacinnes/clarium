@@ -29,3 +29,6 @@ pub use show::{show_filestores_df, show_filestore_config_df, show_files_df, show
 pub use ops::{create_tree_from_prefix, commit_tree, load_tree, list_trees, list_commits};
 pub use ddl::{create_filestore, alter_filestore_ddl, drop_filestore};
 pub use gc::{gc_dry_run, gc_apply};
+
+#[cfg(test)]
+mod tests;

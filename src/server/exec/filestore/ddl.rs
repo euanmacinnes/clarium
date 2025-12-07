@@ -8,7 +8,7 @@ use crate::storage::SharedStore;
 
 use super::config::FilestoreConfig;
 use super::kv::Keys;
-use super::registry::{FilestoreConfigUpdate, FilestoreRegistryEntry, save_filestore_entry, load_filestore_entry, alter_filestore_entry, drop_filestore_entry};
+use super::registry::{FilestoreConfigUpdate, FilestoreRegistryEntry, save_filestore_entry, alter_filestore_entry, drop_filestore_entry};
 
 /// Create or overwrite a filestore registry entry.
 pub fn create_filestore(

@@ -120,7 +120,7 @@ pub fn handle_rename_table(store: &SharedStore, from: &str, to: &str) -> Result<
 /// This function is used by pgwire to support CREATE TABLE commands from SQL clients.
 /// Syntax: CREATE TABLE [IF NOT EXISTS] <db>/<schema>/<table> (col type, ...)
 pub fn do_create_table(store: &SharedStore, q: &str) -> Result<()> {
-    use anyhow::anyhow;
+    
     // Parse: CREATE TABLE [IF NOT EXISTS] <db>/<schema>/<table> (col type, ...)
     debug!(target: "clarium::exec", "do_create_table: begin q='{}'", q);
     let mut s = q.trim();

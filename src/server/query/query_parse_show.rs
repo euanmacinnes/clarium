@@ -1,4 +1,3 @@
-use crate::server::query::query_common::*;
 use crate::server::query::*;
 
 
@@ -75,7 +74,7 @@ pub fn parse_show(s: &str) -> Result<Command> {
         let tail = s.trim()["SHOW FILES IN FILESTORE ".len()..].trim().trim_end_matches(';').trim();
         // Extract filestore name (first token)
         let mut rest = tail;
-        let mut tok_end = rest.find(' ').unwrap_or(rest.len());
+        let tok_end = rest.find(' ').unwrap_or(rest.len());
         let fs = crate::ident::normalize_identifier(&rest[..tok_end]);
         rest = rest.get(tok_end..).unwrap_or("").trim();
         let mut prefix: Option<String> = None;

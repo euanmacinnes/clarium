@@ -274,7 +274,7 @@ impl Store {
 
     pub fn write_records(&self, table: &str, records: &[Record]) -> Result<()> {
         use std::collections::HashMap;
-        use std::time::{SystemTime, UNIX_EPOCH};
+        use std::time::UNIX_EPOCH;
 
         fs::create_dir_all(self.db_dir(table))?;
 

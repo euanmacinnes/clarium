@@ -32,7 +32,6 @@ use anyhow::Result;
 use polars::prelude::*;
 use crate::storage::{SharedStore, KvValue};
 use crate::ident::QueryDefaults;
-use crate::scripts::get_script_registry;
 use crate::lua_bc::{LuaBytecodeCache, DEFAULT_DB, DEFAULT_KV_STORE};
 // Bring frequently used helpers from submodules into scope
 use crate::server::exec::exec_select::run_select;
@@ -46,7 +45,6 @@ use crate::server::exec::df_utils::read_df_or_kv;
 pub use crate::server::exec::exec_helpers::{execute_select_df, dataframe_to_tabular, normalize_query_with_defaults};
 pub use crate::server::exec::exec_create::do_create_table;
 
-use crate::server::query::query_common::*;
 use crate::server::query::*;
 use crate::server::exec::filestore as fs;
 use crate::server::exec::filestore::{FilestoreConfig, EffectiveConfig};
@@ -344,7 +342,7 @@ pub async fn execute_query(store: &SharedStore, text: &str) -> Result<serde_json
             if crate::system::peek_graph_txn_active() {
                 anyhow::bail!("a graph transaction is already active; COMMIT or ABORT before BEGIN");
             }
-            let mut tx = GraphTxn::begin(&handle.root, 0)?;
+            let tx = GraphTxn::begin(&handle.root, 0)?;
             let seed = handle.manifest.partitioning.as_ref().and_then(|p| p.hash_seed).unwrap_or(0);
             let ctx = crate::system::GraphTxnCtx { graph: gname.clone(), root: handle.root.clone(), partitions: handle.manifest.partitions, hash_seed: seed };
             crate::system::set_graph_txn(tx, ctx);

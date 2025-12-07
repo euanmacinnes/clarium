@@ -5,7 +5,7 @@
 //! the new segment under `edges/adj.PXXX.seg.N+1` and returns its relative
 //! path. Manifest rotation (atomic swap) can then reference the new segment.
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result};
 use std::fs::File;
 use std::io::Write;
 use std::path::{Path, PathBuf};

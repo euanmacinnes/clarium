@@ -361,7 +361,7 @@ pub fn graph_paths_df(
     let use_weighted = costs.is_some();
     if use_weighted {
         // Dijkstra (bounded by max_hops via a depth map) to minimize total cost
-        use std::cmp::Ordering;
+        
         #[derive(Clone)]
         struct State { node: String, cost: f64, hops: i64 }
         let mut dist: HashMap<String, f64> = HashMap::new();

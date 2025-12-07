@@ -17,7 +17,7 @@ fn sql_type_to_key(ty: &str) -> String {
 }
 
 /// Parse comma-separated operations inside an ALTER TABLE statement tail
-fn parse_ops(mut s: &str) -> Result<Vec<AlterOp>> {
+fn parse_ops(s: &str) -> Result<Vec<AlterOp>> {
     let mut ops: Vec<AlterOp> = Vec::new();
     // Split by commas not inside parentheses
     let mut cur = String::new();
@@ -86,7 +86,7 @@ fn parse_one_op(s: &str) -> Result<AlterOp> {
 
 fn parse_add_column(s: &str) -> Result<AlterOp> {
     // <name> <type> [NULL|NOT NULL] [DEFAULT <expr>]
-    let mut tokens: Vec<&str> = s.split_whitespace().collect();
+    let tokens: Vec<&str> = s.split_whitespace().collect();
     if tokens.len() < 2 { return Err(anyhow!("ADD COLUMN requires name and type")); }
     let name = tokens[0].trim_matches('"').to_string();
     let mut ty_parts: Vec<&str> = Vec::new();
@@ -120,7 +120,7 @@ pub fn parse_alter(s: &str) -> Result<Command> {
     let rest = s["ALTER ".len()..].trim();
     let up = rest.to_ascii_uppercase();
     if !up.starts_with("TABLE ") { return Err(anyhow!("Only ALTER TABLE is supported")); }
-    let mut tail = &rest["TABLE ".len()..];
+    let tail = &rest["TABLE ".len()..];
     // split first space to get table ident
     let mut parts = tail.splitn(2, ' ');
     let table_ident = parts.next().unwrap_or("").trim();

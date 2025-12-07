@@ -8,7 +8,7 @@ use crate::{
             server::exec::exec_common::{build_where_expr, collect_where_columns},
              storage::{ SharedStore}};
 
-use crate::server::query::{query_common::{ArithExpr, ArithOp, ArithTerm, CompOp, WhereExpr, SqlType, DateFunc, DatePart, StrSliceBound, SliceSource, SlicePlan, SliceOp}};             
+use crate::server::query::query_common::{SliceSource, SlicePlan, SliceOp};             
 
 // Helper: compute simple stats for interval lists for logging
 fn interval_stats(v: &Vec<(i64,i64)>) -> (usize, i64, i64) {

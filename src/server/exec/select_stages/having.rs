@@ -1,16 +1,13 @@
 use anyhow::Result;
 use polars::prelude::*;
 use crate::tprintln;
-use crate::server::query::query_common::Query;
 use crate::server::query::query_common::WhereExpr;
-use crate::server::query::query_common::CompOp;
 use crate::server::query::query_common::ArithExpr as AE;
 use crate::server::query::query_common::ArithTerm as AT;
 use crate::server::query::query_common::WhereExpr as WE;
 use crate::server::query::query_common::ArithExpr;
 use crate::server::query::query_common::DateFunc;
 use crate::server::query::query_common::StrSliceBound;
-use crate::server::query::query_common::JoinType;
 use crate::server::exec::exec_common::{build_where_expr, collect_where_columns};
 use crate::scripts::get_script_registry;
 

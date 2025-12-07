@@ -6,7 +6,7 @@
 //! delta log files on disk; instead, it provides the recovery path needed to
 //! materialize recent writes for read merging.
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::Result;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 

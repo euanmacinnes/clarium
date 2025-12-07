@@ -231,7 +231,7 @@ pub async fn check_acl(
     crate::tprintln!("ACL POST ok: data={}{}", resp.data, corr);
 
     // Map response to a decision
-    let mut decision = if resp.data == "ok" {
+    let decision = if resp.data == "ok" {
         // allow if any result allows
         if resp.results.iter().any(|r| r.allow) {
             let mut d = AclDecision::allow("acl_ok");
@@ -284,6 +284,3 @@ pub async fn check_acl(
     }
     decision
 }
-
-#[cfg(test)]
-mod security_tests;

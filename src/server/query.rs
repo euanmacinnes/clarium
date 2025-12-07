@@ -42,8 +42,6 @@ pub use query_parse_select_list::*;
 pub use query_parse_select::*;
 pub use query_parse_show::*;
 pub use query_parse_slice::*;
-pub use query_parse_match::*;
-pub use query_parse_gc::*;
 pub use query_parse_update::*;
 pub use query_parse_user::*;
 pub use query_parse_where_tokens::*;

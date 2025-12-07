@@ -1,4 +1,4 @@
-use anyhow::{bail, Result};
+use anyhow::Result;
 use path_absolutize::Absolutize;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -91,6 +91,3 @@ fn normalize_for_compare(s: &str) -> String {
     out
 }
 
-#[cfg(test)]
-#[path = "host_path/host_path_tests.rs"]
-mod host_path_tests;

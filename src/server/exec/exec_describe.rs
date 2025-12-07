@@ -28,7 +28,7 @@ fn table_dir_path(store: &SharedStore, qualified: &str) -> std::path::PathBuf {
 }
 
 fn time_table_dir_path(store: &SharedStore, qualified: &str) -> std::path::PathBuf {
-    let mut p = table_dir_path(store, qualified);
+    let p = table_dir_path(store, qualified);
     // append .time as a directory
     let ext = format!("{}time", std::path::MAIN_SEPARATOR);
     let s = p.to_string_lossy().to_string() + &ext;
@@ -69,7 +69,7 @@ pub fn execute_describe(store: &SharedStore, name: &str) -> Result<serde_json::V
 
     // 1) Try view first
     if let Some(vf) = crate::server::exec::exec_views::read_view_file(store, &qualified)? {
-        let mut pk_set: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+        let pk_set: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
         // Views do not currently carry PK metadata
         let mut out_rows: Vec<[String; 11]> = Vec::new();
         for (col, ty_key) in vf.columns.into_iter() {

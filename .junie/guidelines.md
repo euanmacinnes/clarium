@@ -21,7 +21,7 @@ Do not use workarounds for bugs or incomplete features, instead, complete the fe
 
 Do not use shortcuts. Plan for the proper full implementation of the feature.
 
-Keep tests and benchmarks in separate dedicated files.
+Keep tests and benchmarks in separate dedicated files. No inline tests in the code.
 
 Keep large match commands thin, and avoid nested match statements. Instead, use a separate function for each case, and keep like functions grouped together in a module.
 

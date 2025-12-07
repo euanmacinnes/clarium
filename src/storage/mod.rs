@@ -18,12 +18,11 @@
 //! thread-safe `SharedStore` (`Arc<Mutex<Store>>`) elsewhere in the codebase.
 
 use std::{fs, path::{Path, PathBuf}};
-use anyhow::{Result, Context};
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use parking_lot::Mutex;
 use std::sync::Arc;
 use polars::prelude::*;
-use polars::prelude::StatisticsOptions;
 use tracing::debug;
 
 mod paths;

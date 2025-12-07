@@ -85,7 +85,7 @@ pub fn ensure_default_admin(db_root: &str) -> Result<()> {
 }
 
 pub fn add_user(db_root: &str, scope: Scope, username: &str, password: &str, perms: Perms) -> Result<()> {
-    use polars::prelude::{AnyValue, BooleanType, ChunkedArray};
+    use polars::prelude::AnyValue;
     let p = match scope { Scope::Global => global_user_path(db_root), Scope::Database(db) => db_user_path(db_root, db) };
     let mut df = read_users(&p)?;
     // Filter out any existing row(s) for this username (Polars 0.51+ safe access)

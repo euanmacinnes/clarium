@@ -27,7 +27,7 @@ pub fn handle_alter_table(store: &SharedStore, table: &str, ops: &[AlterOp]) -> 
     } else { Map::new() };
 
     // Helper to get constraints array
-    let mut get_constraints = |obj: &mut Map<String, Value>| -> Vec<Map<String, Value>> {
+    let get_constraints = |obj: &mut Map<String, Value>| -> Vec<Map<String, Value>> {
         match obj.get("constraints").and_then(|v| v.as_array()) {
             Some(arr) => arr.iter().filter_map(|e| e.as_object().cloned()).collect(),
             None => Vec::new(),
