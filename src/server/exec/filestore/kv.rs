@@ -17,29 +17,49 @@ impl Keys {
     pub fn blob(db: &str, fs: &str, file_guid: &Uuid) -> String {
         format!("{}{}{}", ns(db, fs), ".blob::", file_guid)
     }
+    #[inline]
+    pub fn blob_prefix(db: &str, fs: &str) -> String { format!("{}{}", ns(db, fs), ".blob::") }
     pub fn text(db: &str, fs: &str, file_guid: &Uuid) -> String {
         format!("{}{}{}", ns(db, fs), ".text::", file_guid)
     }
+    #[inline]
+    pub fn text_prefix(db: &str, fs: &str) -> String { format!("{}{}", ns(db, fs), ".text::") }
     pub fn manifest(db: &str, fs: &str, manifest_guid: &Uuid) -> String {
         format!("{}{}{}", ns(db, fs), ".manifest::", manifest_guid)
     }
+    #[inline]
+    pub fn manifest_prefix(db: &str, fs: &str) -> String { format!("{}{}", ns(db, fs), ".manifest::") }
     pub fn chunk(db: &str, fs: &str, chunk_guid: &Uuid) -> String {
         format!("{}{}{}", ns(db, fs), ".chunk::", chunk_guid)
     }
+    #[inline]
+    pub fn chunk_prefix(db: &str, fs: &str) -> String { format!("{}{}", ns(db, fs), ".chunk::") }
     pub fn path(db: &str, fs: &str, logical_path_nfc: &str) -> String {
         format!("{}{}{}", ns(db, fs), ".path::", logical_path_nfc)
     }
+    #[inline]
+    pub fn path_prefix(db: &str, fs: &str) -> String { format!("{}{}", ns(db, fs), ".path::") }
     pub fn tree(db: &str, fs: &str, tree_guid: &Uuid) -> String {
         format!("{}{}{}", ns(db, fs), ".tree::", tree_guid)
     }
+    #[inline]
+    pub fn tree_prefix(db: &str, fs: &str) -> String { format!("{}{}", ns(db, fs), ".tree::") }
     pub fn commit(db: &str, fs: &str, commit_guid: &Uuid) -> String {
         format!("{}{}{}", ns(db, fs), ".commit::", commit_guid)
     }
+    #[inline]
+    pub fn commit_prefix(db: &str, fs: &str) -> String { format!("{}{}", ns(db, fs), ".commit::") }
     pub fn alias(db: &str, fs: &str, dest_prefix_nfc: &str) -> String {
         format!("{}{}{}", ns(db, fs), ".alias::", dest_prefix_nfc)
     }
+    #[inline]
+    pub fn alias_prefix(db: &str, fs: &str) -> String { format!("{}{}", ns(db, fs), ".alias::") }
     pub fn git_ref(db: &str, fs: &str, remote: &str, r#ref: &str) -> String {
         format!("{}{}{}::{}", ns(db, fs), ".git::", remote, r#ref)
+    }
+    #[inline]
+    pub fn git_ref_prefix(db: &str, fs: &str, remote: &str) -> String {
+        format!("{}{}{}::", ns(db, fs), ".git::", remote)
     }
     pub fn git_map_commit_to_sha(db: &str, fs: &str, commit_guid: &Uuid) -> String {
         format!("{}{}{}", ns(db, fs), ".map.git_sha::", commit_guid)
@@ -81,19 +101,4 @@ pub fn etag_composite(child_etags: &[String], total_size: u64) -> String {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn keys_are_namespaced() {
-        let db = "clarium"; let fs = "docs"; let id = Uuid::nil();
-        let k = Keys::blob(db, fs, &id);
-        assert!(k.contains("clarium.store.filestore.docs.blob::"));
-    }
-
-    #[test]
-    fn etag_xxh3_hex_len() {
-        let e = etag_for_bytes(b"hello world");
-        assert_eq!(e.len(), 16);
-    }
-}
+mod kv_tests;

@@ -308,6 +308,22 @@ pub fn list_files_by_prefix(
     Ok(out)
 }
 
+/// Read the current HEAD commit id for a given branch if present.
+/// Returns Some(<commit_id>) or None when the ref is missing or malformed.
+pub fn current_branch_head(
+    store: &SharedStore,
+    database: &str,
+    filestore: &str,
+    branch: &str,
+) -> Option<String> {
+    let kv = store.kv_store(database, filestore);
+    let key = Keys::git_ref(database, filestore, "local", branch);
+    match kv.get(&key) {
+        Some(KvValue::Json(j)) => serde_json::from_value::<RefInfo>(j).ok().map(|r| r.head_commit_id),
+        _ => None,
+    }
+}
+
 /// Create a tree snapshot from a logical folder prefix. Includes non-deleted files only.
 pub fn create_tree_from_prefix(
     store: &SharedStore,
@@ -349,15 +365,25 @@ pub fn commit_tree(
     let kv = store.kv_store(database, filestore);
     if kv.get(&tree_key).is_none() { bail!("tree_not_found"); }
 
+    // If no parents provided, infer from current branch head
+    let parents_eff: Vec<String> = if parents.is_empty() {
+        if let Some(head) = current_branch_head(store, database, filestore, branch) { vec![head] } else { vec![] }
+    } else { parents.to_vec() };
+
+    // Normalize tags: trim, drop empty, dedupe, stable order
+    let mut tag_set: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    for t in tags.iter() { let tt = t.trim(); if !tt.is_empty() { tag_set.insert(tt.to_string()); } }
+    let tags_norm: Vec<String> = tag_set.into_iter().collect();
+
     let id = Uuid::new_v4().to_string();
     let now = Utc::now().timestamp();
     let commit = Commit {
         id: id.clone(),
-        parents: parents.to_vec(),
+        parents: parents_eff,
         tree_id: tree_id.to_string(),
         author: CommitAuthor { name: author.name.clone(), email: author.email.clone(), time_unix: author.time_unix },
         message: message.to_string(),
-        tags: tags.to_vec(),
+        tags: tags_norm,
         git_sha: None,
         created_at: now,
     };

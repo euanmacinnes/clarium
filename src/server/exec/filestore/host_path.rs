@@ -20,6 +20,10 @@ pub fn is_host_path_allowed(candidate: &str, allowlist: &str) -> Result<bool> {
     if is_symlink(candidate) {
         return Ok(false);
     }
+    // Quick reject if allowlist is empty
+    if allowlist.trim().is_empty() {
+        return Ok(false);
+    }
     let parts = allowlist
         .split(|c| c == ';' || c == ',')
         .map(|s| s.trim())
@@ -36,7 +40,21 @@ pub fn is_host_path_allowed(candidate: &str, allowlist: &str) -> Result<bool> {
 fn is_symlink(p: &str) -> bool {
     let meta = fs::symlink_metadata(p);
     match meta {
-        Ok(m) => m.file_type().is_symlink(),
+        Ok(m) => {
+            let ft = m.file_type();
+            if ft.is_symlink() { return true; }
+            // On Windows, directory junctions and mount points present as reparse points.
+            // Detect via MetadataExt attributes.
+            #[cfg(windows)]
+            {
+                use std::os::windows::fs::MetadataExt;
+                const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0400;
+                let attrs = m.file_attributes();
+                return (attrs & FILE_ATTRIBUTE_REPARSE_POINT) != 0;
+            }
+            #[cfg(not(windows))]
+            { false }
+        }
         Err(_) => false,
     }
 }
@@ -51,18 +69,28 @@ fn is_prefix_path(path: &str, prefix: &str) -> bool {
         let rr = pre.components().next();
         if pr != rr { return false; }
     }
-    // Now check if `path` starts with `prefix`
-    p.starts_with(pre)
+    // Primary: Path::starts_with is component-aware
+    if p.starts_with(pre) { return true; }
+    // Fallback: normalized, case-insensitive compare for Windows-only edge cases
+    #[cfg(windows)]
+    {
+        let pn = normalize_for_compare(path);
+        let pren = normalize_for_compare(prefix);
+        return pn.starts_with(&pren);
+    }
+    #[cfg(not(windows))]
+    { false }
+}
+
+#[cfg(windows)]
+fn normalize_for_compare(s: &str) -> String {
+    // Normalize slashes and lowercase for case-insensitive filesystem
+    let mut out = s.replace('/', "\\");
+    out.make_ascii_lowercase();
+    // Ensure trailing backslash on prefix matching semantics handled by caller
+    out
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn allowlist_basic() {
-        let tmp = if cfg!(windows) { "C:/" } else { "/" };
-        let ok = is_host_path_allowed(tmp, tmp).unwrap();
-        assert!(ok);
-    }
-}
+#[path = "host_path/host_path_tests.rs"]
+mod host_path_tests;

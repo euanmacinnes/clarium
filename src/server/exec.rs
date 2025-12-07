@@ -26,6 +26,7 @@ pub mod vector_utils;      // Shared vector parsing/extraction utilities
 pub mod exec_vector_tvf;   // Vector TVFs (nearest_neighbors, vector_search)
 pub mod filestore;         // FILESTORE implementation (config, paths, security, git backends)
 pub mod df_utils_json;   // JSON -> DataFrame conversion helpers for KV Json
+pub mod explain;         // EXPLAIN data model and renderers (skeleton)
 
 use anyhow::Result;
 use polars::prelude::*;

@@ -246,26 +246,5 @@ impl WalReader {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn wal_begin_data_commit_roundtrip() {
-        let tmp = tempfile::tempdir().unwrap();
-        let p = tmp.path().join("waltest.lg");
-        let mut w = WalWriter::create(&p).unwrap();
-        let begin = TxnBegin{ txn_id: 42, snapshot_epoch: 7 };
-        let data = TxnData{ txn_id: 42, nodes: vec![NodeOp{ op:0, label:"Tool".into(), key:"planner".into(), node_id: Some(0) }], edges: vec![EdgeOp{ op:0, part:0, src:0, dst:1, etype_id:1 }] };
-        let commit = TxnCommit{ txn_id: 42, commit_epoch: 8 };
-        w.append_begin(&begin).unwrap();
-        w.append_data(&data).unwrap();
-        w.append_commit(&commit).unwrap();
-
-        let mut r = WalReader::open(&p).unwrap();
-        let recs = r.read_all().unwrap();
-        assert_eq!(recs.len(), 3);
-        match &recs[0] { super::WalRecord::Begin(b) => { assert_eq!(b.txn_id, 42); }, _ => panic!("expected begin") }
-        match &recs[1] { super::WalRecord::Data(d) => { assert_eq!(d.edges.len(), 1); }, _ => panic!("expected data") }
-        match &recs[2] { super::WalRecord::Commit(c) => { assert_eq!(c.commit_epoch, 8); }, _ => panic!("expected commit") }
-    }
-}
+#[path = "wal_tests.rs"]
+mod wal_tests;

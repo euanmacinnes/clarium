@@ -21,6 +21,11 @@ Do not use workarounds for bugs or incomplete features, instead, complete the fe
 
 Do not use shortcuts. Plan for the proper full implementation of the feature.
 
+Keep tests and benchmarks in separate dedicated files.
+
+Keep large match commands thin, and avoid nested match statements. Instead, use a separate function for each case, and keep like functions grouped together in a module.
+
+use cargo build and/or cargo check to test initial compiles. Only bother with unit tests once any entire plan has been completed with all steps, stages, and milestones delivered.
 
 # Junie Polars Guidelines (Polars 0.51+)
 

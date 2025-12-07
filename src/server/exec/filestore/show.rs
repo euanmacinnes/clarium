@@ -13,6 +13,19 @@ use super::ops::{list_files_by_prefix, list_trees, list_commits, load_tree, diff
 use super::kv::Keys;
 use crate::storage::KvValue;
 
+#[inline]
+fn empty_files_df() -> Result<DataFrame> {
+    Ok(DataFrame::new(vec![
+        Series::new("logical_path".into(), Vec::<String>::new()).into(),
+        Series::new("size".into(), Vec::<i64>::new()).into(),
+        Series::new("etag".into(), Vec::<String>::new()).into(),
+        Series::new("version".into(), Vec::<i64>::new()).into(),
+        Series::new("updated_at".into(), Vec::<i64>::new()).into(),
+        Series::new("deleted".into(), Vec::<bool>::new()).into(),
+        Series::new("content_type".into(), Vec::<String>::new()).into(),
+    ])?)
+}
+
 /// Build a DataFrame listing registered filestores for a database.
 pub fn show_filestores_df(store: &SharedStore, database: &str) -> Result<DataFrame> {
     let entries = list_filestore_entries(store, database)?;
@@ -370,21 +383,15 @@ pub fn show_files_df_paged(
     let df_all = show_files_df(store, database, filestore, prefix)?;
     let h = df_all.height();
     if offset >= h {
-        let df = DataFrame::new(vec![
-            Series::new("logical_path".into(), Vec::<String>::new()).into(),
-            Series::new("size".into(), Vec::<i64>::new()).into(),
-            Series::new("etag".into(), Vec::<String>::new()).into(),
-            Series::new("version".into(), Vec::<i64>::new()).into(),
-            Series::new("updated_at".into(), Vec::<i64>::new()).into(),
-            Series::new("deleted".into(), Vec::<bool>::new()).into(),
-            Series::new("content_type".into(), Vec::<String>::new()).into(),
-        ])?;
-        return Ok(df);
+        return empty_files_df();
     }
     let start = offset as i64;
     let len = match limit { Some(n) => n.min(h - offset), None => h - offset } as usize;
     Ok(df_all.slice(start, len))
 }
+
+#[cfg(test)]
+mod show_tests;
 
 /// Health summary: orphaned chunks, stale refs, and config mismatches.
 /// Current implementation provides conservative counts; deeper checks will be added later.

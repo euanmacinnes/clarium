@@ -2,11 +2,13 @@
 //! These are conservative and operate only on the in-memory KV namespaces.
 
 use anyhow::Result;
+use chrono::Utc;
 
 use crate::storage::{SharedStore, KvValue};
 
 use super::kv::Keys;
 use super::types::FileMeta;
+use super::config::GlobalFilestoreConfig;
 
 #[derive(Debug, Clone, Default)]
 pub struct GcReport {
@@ -38,6 +40,9 @@ pub fn gc_dry_run(store: &SharedStore, database: &str, filestore: &str) -> Resul
 pub fn gc_apply(store: &SharedStore, database: &str, filestore: &str) -> Result<GcReport> {
     let kv = store.kv_store(database, filestore);
     let mut rep = GcReport::default();
+    let global = GlobalFilestoreConfig::default();
+    let grace = global.gc_grace_seconds as i64;
+    let now = Utc::now().timestamp();
     // Delete tombstoned file metas
     let path_prefix = Keys::path(database, filestore, "");
     let keys: Vec<String> = kv
@@ -49,6 +54,9 @@ pub fn gc_apply(store: &SharedStore, database: &str, filestore: &str) -> Result<
         if let Some(KvValue::Json(j)) = kv.get(&k) {
             if let Ok(m) = serde_json::from_value::<FileMeta>(j) {
                 if m.deleted {
+                    // Respect grace period before permanent deletion
+                    let age = now.saturating_sub(m.updated_at);
+                    if age < grace { continue; }
                     if kv.delete(&k) { rep.files_deleted += 1; }
                 }
             }
