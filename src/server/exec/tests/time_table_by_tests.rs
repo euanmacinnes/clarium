@@ -51,7 +51,7 @@ fn test_time_query_dotted_and_path_resolution() {
     let shared = SharedStore::new(tmp.path()).unwrap();
 
     // Dotted fully-qualified should work
-    let q1 = match query::parse("SELECT COUNT(value) AS c FROM demo.public.tt2.time").unwrap() { Command::Select(q) => q, _ => unreachable!() };
+    let q1 = match query::parse("SELECT COUNT(value) AS c FROM demo/public/tt2.time").unwrap() { Command::Select(q) => q, _ => unreachable!() };
     let df1 = run_select(&shared, &q1).unwrap();
     let c1 = df1.column("c").or_else(|_| df1.column("COUNT(value)"));
     assert!(c1.is_ok());

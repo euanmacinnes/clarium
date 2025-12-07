@@ -65,12 +65,12 @@ fn qualify_time_ident_appends_time_suffix_correctly() {
     );
     // schema.base.time
     assert_eq!(
-        qualify_time_ident("metrics.sensors.time", &d),
+        qualify_time_ident("metrics/sensors.time", &d),
         "clarium/metrics/sensors.time"
     );
     // db.schema.base (no .time) -> appended
     assert_eq!(
-        qualify_time_ident("acme.metrics.sensors", &d),
+        qualify_time_ident("acme/metrics/sensors", &d),
         "acme/metrics/sensors.time"
     );
     // slash separated with missing pieces
