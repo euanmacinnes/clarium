@@ -1,4 +1,6 @@
 use super::*;
+use crate::server::exec::filestore::*;
+use crate::server::exec::filestore::host_path::{is_prefix_path, is_symlink};
 
 #[test]
 fn allowlist_basic() {

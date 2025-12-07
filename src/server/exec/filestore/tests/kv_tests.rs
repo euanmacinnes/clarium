@@ -1,4 +1,6 @@
 use super::*;
+use crate::server::exec::filestore::*;
+use uuid::Uuid;
 
 #[test]
 fn keys_are_namespaced() {

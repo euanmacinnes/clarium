@@ -14,7 +14,7 @@ use super::kv::Keys;
 use crate::storage::KvValue;
 
 #[inline]
-fn empty_files_df() -> Result<DataFrame> {
+pub(crate) fn empty_files_df() -> Result<DataFrame> {
     Ok(DataFrame::new(vec![
         Series::new("logical_path".into(), Vec::<String>::new()).into(),
         Series::new("size".into(), Vec::<i64>::new()).into(),

@@ -37,7 +37,7 @@ pub fn is_host_path_allowed(candidate: &str, allowlist: &str) -> Result<bool> {
     Ok(false)
 }
 
-fn is_symlink(p: &str) -> bool {
+pub(crate) fn is_symlink(p: &str) -> bool {
     let meta = fs::symlink_metadata(p);
     match meta {
         Ok(m) => {
@@ -59,7 +59,7 @@ fn is_symlink(p: &str) -> bool {
     }
 }
 
-fn is_prefix_path(path: &str, prefix: &str) -> bool {
+pub(crate) fn is_prefix_path(path: &str, prefix: &str) -> bool {
     // Compare component-wise to avoid false positives like C:\data\x vs C:\data2
     let p = Path::new(path);
     let pre = Path::new(prefix);

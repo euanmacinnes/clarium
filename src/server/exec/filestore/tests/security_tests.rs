@@ -1,5 +1,5 @@
 use super::*;
-use crate::server::exec::filestore::config::{FilestoreConfig, GlobalFilestoreConfig};
+use crate::server::exec::filestore::*;
 
 #[tokio::test]
 async fn test_acl_bypass_allows() {

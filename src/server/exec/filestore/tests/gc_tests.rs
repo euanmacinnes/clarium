@@ -1,5 +1,6 @@
-
 use super::*;
+use crate::server::exec::filestore::*;
+use chrono::Utc;
 use tempfile::tempdir;
 use crate::storage::{SharedStore, KvValue};
 
@@ -13,7 +14,7 @@ fn dry_run_counts_tombstones_only() {
     let now = Utc::now().timestamp();
 
     // Live file
-    let live = super::super::types::FileMeta {
+    let live = FileMeta {
         id: uuid::Uuid::new_v4().to_string(),
         logical_path: "live.txt".to_string(),
         size: 1,
@@ -27,14 +28,14 @@ fn dry_run_counts_tombstones_only() {
         custom: None,
         chunking: None,
     };
-    let k1 = super::Keys::path(db, fs, &live.logical_path);
+    let k1 = Keys::path(db, fs, &live.logical_path);
     kv.set(k1, KvValue::Json(serde_json::to_value(&live).unwrap()), None, None);
 
     // Tombstoned file
     let mut tomb = live.clone();
     tomb.logical_path = "gone.txt".to_string();
     tomb.deleted = true;
-    let k2 = super::Keys::path(db, fs, &tomb.logical_path);
+    let k2 = Keys::path(db, fs, &tomb.logical_path);
     kv.set(k2, KvValue::Json(serde_json::to_value(&tomb).unwrap()), None, None);
 
     let rep = gc_dry_run(&store, db, fs).unwrap();
@@ -54,7 +55,7 @@ fn apply_respects_grace_period() {
     let grace = GlobalFilestoreConfig::default().gc_grace_seconds as i64;
 
     // Younger tombstone (should NOT delete)
-    let mut m1 = super::super::types::FileMeta {
+    let mut m1 = FileMeta {
         id: uuid::Uuid::new_v4().to_string(),
         logical_path: "young.txt".to_string(),
         size: 1,
@@ -68,14 +69,14 @@ fn apply_respects_grace_period() {
         custom: None,
         chunking: None,
     };
-    let k1 = super::Keys::path(db, fs, &m1.logical_path);
+    let k1 = Keys::path(db, fs, &m1.logical_path);
     kv.set(k1.clone(), KvValue::Json(serde_json::to_value(&m1).unwrap()), None, None);
 
     // Older tombstone (should delete)
     let mut m2 = m1.clone();
     m2.logical_path = "old.txt".to_string();
     m2.updated_at = now - (grace + 10);
-    let k2 = super::Keys::path(db, fs, &m2.logical_path);
+    let k2 = Keys::path(db, fs, &m2.logical_path);
     kv.set(k2.clone(), KvValue::Json(serde_json::to_value(&m2).unwrap()), None, None);
 
     let rep = gc_apply(&store, db, fs).unwrap();

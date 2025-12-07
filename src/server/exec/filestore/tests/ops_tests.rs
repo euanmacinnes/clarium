@@ -1,4 +1,5 @@
 use super::*;
+use crate::server::exec::filestore::*;
 use tempfile::tempdir;
 use crate::storage::{SharedStore, KvValue};
 
@@ -27,7 +28,7 @@ async fn commit_parent_inference_works() {
             custom: None,
             chunking: None,
         };
-        let key = super::Keys::path(db, fs, &meta.logical_path);
+        let key = Keys::path(db, fs, &meta.logical_path);
         kv.set(key, KvValue::Json(serde_json::to_value(&meta).unwrap()), None, None);
     }
 
@@ -54,7 +55,7 @@ async fn commit_parent_inference_works() {
         custom: None,
         chunking: None,
     };
-    let k3 = super::Keys::path(db, fs, &meta_new.logical_path);
+    let k3 = Keys::path(db, fs, &meta_new.logical_path);
     kv.set(k3, KvValue::Json(serde_json::to_value(&meta_new).unwrap()), None, None);
 
     let tree2 = create_tree_from_prefix(&store, db, fs, None).unwrap();

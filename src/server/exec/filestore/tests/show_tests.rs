@@ -1,4 +1,5 @@
 use super::*;
+use crate::server::exec::filestore::*;
 use crate::storage::SharedStore;
 use crate::storage::KvValue;
 use tempfile::tempdir;
@@ -54,7 +55,7 @@ fn paging_boundaries() {
             custom: None,
             chunking: None,
         };
-        let key = super::kv::Keys::path(db, fs_name, &meta.logical_path);
+        let key = Keys::path(db, fs_name, &meta.logical_path);
         kv.set(key, KvValue::Json(serde_json::to_value(&meta).unwrap()), None, None);
     }
 
