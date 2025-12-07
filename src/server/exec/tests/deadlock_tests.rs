@@ -7,6 +7,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use crate::scripts::{ScriptRegistry, ScriptMeta, ScriptKind};
+use super::udf_common::init_all_test_udfs;
 use crate::storage::{Store, SharedStore, Record};
 use crate::server::query::{self, Command};
 use crate::server::exec::run_select;
@@ -61,8 +62,11 @@ fn no_deadlocks_under_registry_and_query_load() {
     // Start deadlock monitor
     let monitor = start_deadlock_detector();
 
-    // Prepare a global-ish registry for this test
-    let reg = ScriptRegistry::new().unwrap();
+    // Ensure the global script registry is initialized once for all tests
+    init_all_test_udfs();
+    // Use the global registry so exec paths can find UDFs
+    let reg = crate::scripts::get_script_registry().expect("global ScriptRegistry should be initialized");
+    // Ensure the 'inc' UDF exists for this test
     reg.load_script_text("inc", "function inc(x) if x==nil then return 0 end return x+1 end").unwrap();
     reg.set_meta("inc", ScriptMeta { kind: ScriptKind::Scalar, returns: vec![DataType::Int64], nullable: true, version: 0 });
 
