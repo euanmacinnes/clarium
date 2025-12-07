@@ -175,6 +175,16 @@ pub async fn check_acl(
         }
     }
     ACL_MISSES.fetch_add(1, Ordering::Relaxed);
+    crate::tprintln!(
+        "ACL cache miss: action={:?} user={} path={} (hits={}, misses={}, evictions={}){}",
+        key.action,
+        key.user,
+        key.path,
+        ACL_HITS.load(Ordering::Relaxed),
+        ACL_MISSES.load(Ordering::Relaxed),
+        ACL_EVICTIONS.load(Ordering::Relaxed),
+        corr
+    );
 
     // No URL configured → deny unless fail-open
     let Some(url) = eff.acl_url.as_deref() else {

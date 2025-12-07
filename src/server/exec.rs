@@ -154,14 +154,14 @@ pub async fn execute_query(store: &SharedStore, text: &str) -> Result<serde_json
             let bytes = decode_payload(&payload)?;
             let eff = effective_for(store, &filestore)?;
             let user = AclUser { id: "anonymous".into(), roles: vec![], ip: None };
-            let ctx = AclContext { request_id: Some(CorrelationId::new().to_string()), ..Default::default() };
+            let ctx = make_acl_ctx(store, &filestore);
             let meta = fs::ingest_from_bytes(store, crate::lua_bc::DEFAULT_DB, &filestore, &logical_path, &bytes, content_type.as_deref(), None, &user, &eff, &ctx).await?;
             return Ok(serde_json::to_value(meta)?);
         }
         Command::IngestFileFromHostPathCmd { filestore, logical_path, host_path, content_type } => {
             let eff = effective_for(store, &filestore)?;
             let user = AclUser { id: "anonymous".into(), roles: vec![], ip: None };
-            let ctx = AclContext { request_id: Some(CorrelationId::new().to_string()), ..Default::default() };
+            let ctx = make_acl_ctx(store, &filestore);
             // Allowlist not yet modeled; pass empty to require explicit config in future
             let meta = fs::ingest_from_host_path(store, crate::lua_bc::DEFAULT_DB, &filestore, &logical_path, &host_path, "", content_type.as_deref(), &user, &eff, &ctx).await?;
             return Ok(serde_json::to_value(meta)?);
@@ -170,21 +170,21 @@ pub async fn execute_query(store: &SharedStore, text: &str) -> Result<serde_json
             let bytes = decode_payload(&payload)?;
             let eff = effective_for(store, &filestore)?;
             let user = AclUser { id: "anonymous".into(), roles: vec![], ip: None };
-            let ctx = AclContext { request_id: Some(CorrelationId::new().to_string()), ..Default::default() };
+            let ctx = make_acl_ctx(store, &filestore);
             let meta = fs::update_from_bytes(store, crate::lua_bc::DEFAULT_DB, &filestore, &logical_path, &if_match, &bytes, content_type.as_deref(), None, &user, &eff, &ctx).await?;
             return Ok(serde_json::to_value(meta)?);
         }
         Command::RenameFilePathCmd { filestore, from, to } => {
             let eff = effective_for(store, &filestore)?;
             let user = AclUser { id: "anonymous".into(), roles: vec![], ip: None };
-            let ctx = AclContext { request_id: Some(CorrelationId::new().to_string()), ..Default::default() };
+            let ctx = make_acl_ctx(store, &filestore);
             let meta = fs::rename_file(store, crate::lua_bc::DEFAULT_DB, &filestore, &from, &to, &user, &eff, &ctx).await?;
             return Ok(serde_json::to_value(meta)?);
         }
         Command::DeleteFilePathCmd { filestore, logical_path } => {
             let eff = effective_for(store, &filestore)?;
             let user = AclUser { id: "anonymous".into(), roles: vec![], ip: None };
-            let ctx = AclContext { request_id: Some(CorrelationId::new().to_string()), ..Default::default() };
+            let ctx = make_acl_ctx(store, &filestore);
             fs::delete_file(store, crate::lua_bc::DEFAULT_DB, &filestore, &logical_path, &user, &eff, &ctx).await?;
             return Ok(serde_json::json!({"status":"ok"}));
         }
@@ -871,6 +871,19 @@ fn effective_for(store: &SharedStore, filestore: &str) -> anyhow::Result<Effecti
         FilestoreConfig::default()
     };
     Ok(EffectiveConfig::from_layers(&global, &fs_cfg, None))
+}
+
+/// Build an AclContext with a fresh CorrelationId and the filestore's config_version if available.
+fn make_acl_ctx(store: &SharedStore, filestore: &str) -> AclContext {
+    let req_id = CorrelationId::new().to_string();
+    let version = fs::load_filestore_entry(store, crate::lua_bc::DEFAULT_DB, filestore)
+        .ok()
+        .and_then(|opt| opt.map(|e| e.config_version));
+    AclContext {
+        filestore_config_version: version,
+        request_id: Some(req_id),
+        ..Default::default()
+    }
 }
 
 /// Panic-safe wrapper around `execute_query`.
