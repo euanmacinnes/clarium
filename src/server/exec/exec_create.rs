@@ -184,10 +184,18 @@ pub fn do_create_table(store: &SharedStore, q: &str) -> Result<()> {
     tprintln!("[CREATE] do_create_table: final schema_entries count={}", schema_entries.len());
     // Create directory and schema.json
     let ident_norm = ident.trim().trim_matches('"');
-    // Qualify with current session defaults (like handle_create_table does)
-    let qd = crate::system::current_query_defaults();
-    let db_path = crate::ident::qualify_regular_ident(ident_norm, &qd);
-    tprintln!("[CREATE] do_create_table: qualified table name: '{}' -> '{}'", ident_norm, db_path);
+    // Qualify with current session defaults only if not already fully qualified (3+ parts)
+    let normalized = ident_norm.replace('\\', "/");
+    let parts_count = normalized.split('/').filter(|p| !p.is_empty()).count();
+    let db_path = if parts_count >= 3 {
+        // Already fully qualified like "clarium/demo/table" - use as-is
+        normalized
+    } else {
+        // Needs qualification - 1 or 2 parts like "table" or "schema/table"
+        let qd = crate::system::current_query_defaults();
+        crate::ident::qualify_regular_ident(ident_norm, &qd)
+    };
+    tprintln!("[CREATE] do_create_table: qualified table name: '{}' (parts={}) -> '{}'", ident_norm, parts_count, db_path);
     let root = store.root_path();
     let dir = std::path::Path::new(&root).join(db_path.replace('/', std::path::MAIN_SEPARATOR.to_string().as_str()));
     debug!(target: "clarium::exec", "do_create_table: dir='{}' (db_path='{}')", dir.display(), db_path);

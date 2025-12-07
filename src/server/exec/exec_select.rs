@@ -89,11 +89,19 @@ pub(crate) fn run_select_with_context(store: &SharedStore, q: &Query, parent_ctx
 // Helper: derive (db, schema) defaults from an identifier that may be fully-qualified
 fn derive_defaults_from_ident(ident: &str) -> (String, String) {
     // Try path-like db/schema/table(.time)
-    if ident.contains('/') || ident.contains('\\') {
-        let norm = ident.replace('\\', "/");
-        let parts: Vec<&str> = norm.split('/').collect();
-        if parts.len() >= 2 { return (parts[0].to_string(), parts[1].to_string()); }
+if ident.contains('/') || ident.contains('\\') {
+    let norm = ident.replace('\\', "/");
+    let parts: Vec<&str> = norm.split('/').filter(|p| !p.is_empty()).collect();
+    if parts.len() >= 3 {
+        return (parts[0].to_string(), parts[1].to_string()); // db, schema
     }
+    if parts.len() == 2 {
+        return (
+            crate::system::get_current_database(), // keep session DB
+            parts[0].to_string(),                  // schema from path
+        );
+    }
+}
     // Try dotted db.schema.table
     let parts: Vec<&str> = ident.split('.').collect();
     if parts.len() >= 3 { return (parts[0].to_string(), parts[1].to_string()); }

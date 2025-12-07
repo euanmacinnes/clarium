@@ -4,6 +4,7 @@
 //! and mapping them to local filesystem paths.
 
 use std::path::{Path, PathBuf};
+use crate::tprintln;
 
 pub const DEFAULT_DB: &str = "clarium";
 pub const DEFAULT_SCHEMA: &str = "public";
@@ -63,6 +64,7 @@ pub fn qualify_table_ident(ident: &str, d: &QueryDefaults, require_time: bool) -
     let (db, schema) = (&d.current_database, &d.current_schema);
     if s.contains('/') {
         let parts: Vec<&str> = s.split('/').filter(|p| !p.is_empty()).collect();
+        tprintln!("[qualify_table_ident] current db [{}] current schema [{}] table parts {:?} ", db, schema, parts);
         let (dpart, spart, mut t): (String, String, String) = match parts.len() {
             0 => (normalize_identifier(db), normalize_identifier(schema), String::new()),
             1 => (normalize_identifier(db), normalize_identifier(schema), normalize_identifier(parts[0])),

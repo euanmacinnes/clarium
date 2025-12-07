@@ -4,6 +4,7 @@ use tracing::debug;
 use std::cell::Cell;
 use std::path::{Path, PathBuf};
 use std::cell::RefCell;
+use crate::tprintln;
 
 // JSON helpers for stable OID persistence
 fn read_json(path: &Path) -> Option<serde_json::Value> {
@@ -239,10 +240,10 @@ pub fn get_current_schema_opt() -> Option<String> {
 }
 
 /// Set current database for this thread/session
-pub fn set_current_database(db: &str) { TLS_CURRENT_DB.with(|c| c.set(Some(db.to_string()))); }
+pub fn set_current_database(db: &str) { tprintln!("[system] setting current database to {}", db); TLS_CURRENT_DB.with(|c| c.set(Some(db.to_string()))); }
 
 /// Set current schema for this thread/session
-pub fn set_current_schema(schema: &str) { TLS_CURRENT_SCHEMA.with(|c| c.set(Some(schema.to_string()))); }
+pub fn set_current_schema(schema: &str) { tprintln!("[system] setting current schema database to {}", schema); TLS_CURRENT_SCHEMA.with(|c| c.set(Some(schema.to_string()))); }
 
 /// Unset current database (and by extension, schema) for this thread/session (so helpers can treat it as NONE)
 pub fn unset_current_database() {
