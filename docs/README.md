@@ -23,4 +23,10 @@ Contents
 - End-to-end examples: scenarios you can reproduce quickly — see examples.md
  - Benchmarks: Criterion micro- and SQL-driven suites, how to run and extend — see benchmarks.md
 
+FILESTORE documentation
+-----------------------
+- Getting started with FILESTORE — docs/filestore/getting-started.md
+- FILESTORE SQL reference — docs/filestore/sql.md
+- FILESTORE concepts and architecture — docs/filestore/concepts.md
+
 If you find an issue or a gap in the docs, please open an issue or PR.

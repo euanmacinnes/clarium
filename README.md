@@ -9,6 +9,7 @@ Full documentation
  - Unified error handling across HTTP/WS/pgwire: see docs/error-handling.md for the common error model, mappings, and frontend behaviors.
  - Developer note (Polars): see docs/dev/junie-polars-guidelines.md for guidance on avoiding deprecated Polars APIs and writing version‑resilient DataFrame code.
  - Benchmarks: see docs/benchmarks.md for the complete Criterion‑based benchmarking suite (direct micro‑benchmarks and SQL‑driven end‑to‑end benches) and how to run them.
+ - FILESTORE docs: getting started, SQL, and concepts — see docs/filestore/ (getting-started.md, sql.md, concepts.md).
 
 Quick start
 
