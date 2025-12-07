@@ -1,4 +1,5 @@
 use super::*;
+use crate::server::exec::filestore::*;
 
 #[test]
 fn precedence_global_fs_folder() {

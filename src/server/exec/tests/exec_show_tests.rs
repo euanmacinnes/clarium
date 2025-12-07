@@ -1,5 +1,6 @@
 use super::*;
 use std::fs;
+use crate::scripts::scripts_dir_for;
 use std::io::Write;
 use std::time::{SystemTime, UNIX_EPOCH};
 
