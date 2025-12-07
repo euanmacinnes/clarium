@@ -97,6 +97,7 @@ mod cast_followups_tests;
 mod clause_errors_tests; // File not found
 mod cte_tests;
 mod dbeaver_tests;
+mod deadlock_tests;
 mod delete_tests;
 mod end_to_end_planning_tests;
 mod exists_tests;

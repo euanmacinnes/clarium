@@ -401,16 +401,29 @@ pub fn project_select(df: DataFrame, q: &Query, ctx: &mut DataContext) -> Result
     // Second pass: extract all SELECT items (now df is in correct sorted order)
     for item in &q.select {
         if item.func.is_none() && item.str_func.is_none() && item.expr.is_none() && item.column == "*" {
-            // Expand '*' to all columns in incoming DF order, but present unqualified labels
+            // Expand '*' to all columns in incoming DF order.
+            // Strategy:
+            // - Always include the qualified column label as present in the DataFrame (source.effective_name prefix), to
+            //   ensure alias-qualified references like 'vs.row_id' remain valid for downstream consumers/tests.
+            // - Additionally include an unqualified alias (stripped suffix) when unique, to allow ergonomic access.
             for cname in df.get_column_names() {
                 let cname_s = cname.as_str();
                 let base = cname_s.rsplit('.').next().unwrap_or(cname_s);
                 // Normalize time label to '_time'
-                let target_name = if base == "_time" { "_time" } else { base };
-                if !out_cols.iter().any(|c| c.name().as_str() == target_name) {
+                let unq = if base == "_time" { "_time" } else { base };
+
+                // 1) Ensure qualified name is present in projection
+                if !out_cols.iter().any(|c| c.name().as_str() == cname_s) {
                     let mut s = df.column(cname_s)?.clone();
-                    s.rename(target_name.into());
+                    s.rename(cname_s.into());
                     out_cols.push(s);
+                }
+
+                // 2) Also add an unqualified alias if not conflicting with an existing column
+                if !out_cols.iter().any(|c| c.name().as_str() == unq) {
+                    let mut s2 = df.column(cname_s)?.clone();
+                    s2.rename(unq.into());
+                    out_cols.push(s2);
                 }
             }
             continue;

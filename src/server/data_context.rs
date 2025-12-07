@@ -11,6 +11,13 @@ use tracing::debug;
 use crate::server::query::query_common::*;
 use crate::server::query::*;
 
+#[derive(Debug, Clone)]
+struct TableNameReg {
+    alias: Option<String>,
+    fully_qualified: Option<String>,
+    unqualified: Option<String>,
+}
+
 /// Execution pipeline stages for SELECT processing
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SelectStage {
@@ -59,6 +66,8 @@ pub struct DataContext {
     pub cte_tables: HashMap<String, DataFrame>,
     /// Temporary ORDER BY columns added for sorting but not in original SELECT projection
     pub temp_order_by_columns: HashSet<String>,
+    /// Registry of table name metadata for this query (alias/fq/unqualified)
+    table_name_registry: Vec<TableNameReg>,
 }
 
 impl Default for DataContext {
@@ -190,6 +199,7 @@ impl DataContext {
             store: None,
             cte_tables: HashMap::new(),
             temp_order_by_columns: HashSet::new(),
+            table_name_registry: Vec::new(),
         }
     }
 
@@ -210,6 +220,35 @@ impl DataContext {
         // Also allow referencing by canonical name as its own alias for convenience (only for Table variant)
         if let Some(n) = t.table_name() {
             self.alias_to_name.entry(n.to_string()).or_insert_with(|| n.to_string());
+        }
+
+        // Register table naming forms for unified resolution
+        match t {
+            TableRef::Table { name, alias } => {
+                // If this table name is a CTE, register only alias-like entry and skip fq/unqual
+                if self.cte_tables.contains_key(name) {
+                    let al = alias.clone().or_else(|| Some(name.clone()));
+                    self.register_table_names(al, None, None);
+                } else {
+                    // Determine fully-qualified canonical path and unqualified short name
+                    let fq = Some(self.resolve_table_ident(name));
+                    let unqual = {
+                        let norm = name.replace('\\', "/");
+                        if norm.contains('/') || norm.contains('.') {
+                            let last_slash = norm.rsplit('/').next().unwrap_or(norm.as_str());
+                            let last = last_slash.rsplit('.').next().unwrap_or(last_slash);
+                            Some(last.to_string())
+                        } else {
+                            Some(norm)
+                        }
+                    };
+                    self.register_table_names(alias.clone(), fq, unqual);
+                }
+            }
+            TableRef::Subquery { alias, .. } => {
+                // Subquery (including CTE materializations) only has alias; fq/unqual are unknown
+                self.register_table_names(Some(alias.clone()), None, None);
+            }
         }
     }
 
@@ -475,6 +514,69 @@ impl DataContext {
         crate::ident::qualify_time_ident(ident, &d)
     }
 
+    /// Register a table with optional alias, fully-qualified name, and unqualified name.
+    /// Either fully-qualified or unqualified may be None (e.g., CTEs or subqueries).
+    pub fn register_table_names(&mut self, alias: Option<String>, fully_qualified: Option<String>, unqualified: Option<String>) {
+        self.table_name_registry.push(TableNameReg { alias, fully_qualified, unqualified });
+    }
+
+    /// Resolve a table reference using query-local registry with precedence:
+    /// 1) Alias match (case-insensitive) → return its fully-qualified if known, else the alias.
+    /// 2) Fully-qualified or schema-qualified textual match → canonicalize via defaults and return.
+    /// 3) Unqualified match → prefer matches scoped to current db/schema when ambiguous; return canonical path.
+    /// Fallback: canonicalize via defaults.
+    pub fn resolve_table_name(&self, name: &str) -> String {
+        let input = name.trim();
+        let input_lower = input.to_ascii_lowercase();
+
+        // 1) Alias match
+        if let Some(reg) = self.table_name_registry.iter().find(|r| r.alias.as_ref().map(|a| a.eq_ignore_ascii_case(&input_lower)).unwrap_or(false)) {
+            if let Some(fq) = &reg.fully_qualified { return fq.clone(); }
+            // For CTE/subquery where fq is None, keep the alias as the effective name
+            return reg.alias.clone().unwrap_or_else(|| input.to_string());
+        }
+
+        // 2) If looks qualified (path or dotted), canonicalize and check for exact fq matches
+        let looks_qualified = input.contains('/') || input.split('.').count() >= 2;
+        if looks_qualified {
+            let cand = self.resolve_table_ident(input);
+            if self.table_name_registry.iter().any(|r| r.fully_qualified.as_deref().map(|f| f.eq_ignore_ascii_case(&cand)).unwrap_or(false)) {
+                return cand;
+            }
+            return cand; // Even if not registered, return canonicalized
+        }
+
+        // 3) Unqualified: try match by short name
+        let mut matches: Vec<&TableNameReg> = self.table_name_registry.iter()
+            .filter(|r| r.unqualified.as_deref().map(|u| u.eq_ignore_ascii_case(&input_lower)).unwrap_or(false))
+            .collect();
+        if matches.len() == 1 {
+            let m = matches[0];
+            if let Some(fq) = &m.fully_qualified { return fq.clone(); }
+            // Fall back to defaults when fq unknown
+            return self.resolve_table_ident(input);
+        }
+        if matches.len() > 1 {
+            // Prefer those in current default scope
+            if let (Some(db), Some(schema)) = (self.current_database.as_ref(), self.current_schema.as_ref()) {
+                let scope_prefix = format!("{}/{}/", db, schema);
+                let scoped: Vec<&TableNameReg> = matches.into_iter()
+                    .filter(|r| r.fully_qualified.as_deref().map(|f| f.starts_with(&scope_prefix)).unwrap_or(false))
+                    .collect();
+                if scoped.len() == 1 {
+                    if let Some(fq) = &scoped[0].fully_qualified { return fq.clone(); }
+                } else if !scoped.is_empty() {
+                    matches = scoped;
+                }
+            }
+            // If multiple remain, return canonicalized defaults for the input
+            return self.resolve_table_ident(input);
+        }
+
+        // Fallback
+        self.resolve_table_ident(input)
+    }
+
     /// Load a source DataFrame given a TableRef, applying alias/name prefixing to columns.
     /// Supports CTEs, system tables, KV addresses, regular tables resolved via defaults, and subqueries.
     pub fn load_source_df(&self, store: &crate::storage::SharedStore, t: &TableRef) -> anyhow::Result<DataFrame> {
@@ -498,8 +600,8 @@ impl DataContext {
                     tracing::debug!(target: "clarium::exec", "load_source_df: system table hit name='{}' alias={:?}", name, alias);
                     return Self::prefix_columns(sys, t);
                 }
-                // Resolve to a canonical path for regular tables or KV
-                let effective = self.resolve_table_ident(name);
+                // Resolve to a canonical path for regular tables or KV using the unified resolver
+                let effective = self.resolve_table_name(name);
                 tracing::debug!(target: "clarium::exec", "load_source_df: resolving name='{}' -> effective='{}' alias={:?}", name, effective, alias);
                 // If this resolves to a VIEW file (<db>/<schema>/<name>.view), execute its definition as a subquery
                 if !effective.contains(".store.") {

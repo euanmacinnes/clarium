@@ -146,6 +146,40 @@ pub fn parse_select(s: &str) -> Result<Query> {
             while j < b.len() && !b[j].is_ascii_whitespace() { j += 1; }
             (s[start..j].to_string(), j)
         }
+        // Read a table name token; if it looks like a TVF call (identifier followed by '('),
+        // then capture balanced parentheses (quote-aware) up to the matching ')'.
+        fn read_word_or_tvf(s: &str, start: usize) -> (String, usize) {
+            let bytes = s.as_bytes();
+            let mut i = start;
+            let mut out = String::new();
+            let mut in_sq = false;
+            let mut in_dq = false;
+            let mut prev_bs = false;
+            let mut depth: i32 = 0;
+            let mut seen_paren = false;
+            while i < bytes.len() {
+                let ch = bytes[i] as char;
+                // If we haven't seen a '(' yet, whitespace ends the token
+                if !seen_paren && ch.is_ascii_whitespace() {
+                    break;
+                }
+                out.push(ch);
+                if prev_bs { prev_bs = false; i += 1; continue; }
+                match ch {
+                    '\\' => { prev_bs = true; }
+                    '\'' => { if !in_dq { in_sq = !in_sq; } }
+                    '"' => { if !in_sq { in_dq = !in_dq; } }
+                    '(' => { if !in_sq && !in_dq { depth += 1; seen_paren = true; } }
+                    ')' => { if !in_sq && !in_dq { depth -= 1; if seen_paren && depth == 0 { i += 1; break; } } }
+                    _ => {}
+                }
+                i += 1;
+            }
+            if out.is_empty() {
+                return (String::new(), start);
+            }
+            (out, i)
+        }
         fn skip_ws(s: &str, mut idx: usize) -> usize { let b = s.as_bytes(); while idx < b.len() && b[idx].is_ascii_whitespace() { idx += 1; } idx }
         i = skip_ws(input, i);
         if i >= input.len() { anyhow::bail!("Missing table after FROM"); }
@@ -193,7 +227,7 @@ pub fn parse_select(s: &str) -> Result<Query> {
             (TableRef::Subquery { query: Box::new(subquery), alias }, j)
         } else {
             // Regular table name
-            let (base_name, mut j) = read_word(input, i);
+            let (base_name, mut j) = read_word_or_tvf(input, i);
             
             // Strip quotes from table name
             let mut table_name = base_name.trim();
@@ -252,7 +286,7 @@ pub fn parse_select(s: &str) -> Result<Query> {
             j += join_kw;
             j = skip_ws(input, j);
             // right table name
-            let (right_name, mut k) = read_word(input, j);
+            let (right_name, mut k) = read_word_or_tvf(input, j);
             let mut right_alias: Option<String> = None;
             k = skip_ws(input, k);
             let rem_u = input[k..].to_uppercase();
