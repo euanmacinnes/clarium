@@ -269,8 +269,14 @@ impl Store {
                                     let idx_vec: Vec<u32> = idxs.into_iter().map(|i| i as u32).collect();
                                     let idx_ca = UInt32Chunked::from_vec("".into(), idx_vec);
                                     let df_part = df.take(&idx_ca)?;
-                                    let min_t = df_part.column("_time")?.i64()?.min().unwrap_or(0);
-                                    let max_t = df_part.column("_time")?.i64()?.max().unwrap_or(0);
+                                    // Regular tables may not have _time; handle gracefully
+                                    let (min_t, max_t) = match df_part.column("_time") {
+                                        Ok(c) => {
+                                            let ci = c.i64();
+                                            if let Ok(ci) = ci { (ci.min().unwrap_or(0), ci.max().unwrap_or(0)) } else { (0, 0) }
+                                        }
+                                        Err(_) => (0, 0),
+                                    };
                                     use std::time::{SystemTime, UNIX_EPOCH};
                                     let now_ms: u128 = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis();
                                     let fname = format!("data-{}-{}-{}.parquet", min_t, max_t, now_ms);

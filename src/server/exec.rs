@@ -93,7 +93,7 @@ pub async fn execute_query(store: &SharedStore, text: &str) -> Result<serde_json
         }
         Command::ClearScriptCache { scope, persistent } => {
             // Determine scope database/schema from defaults
-            let defaults = QueryDefaults::new("clarium".to_string(), "public".to_string());
+            let defaults = QueryDefaults::new(crate::ident::DEFAULT_DB.to_string(), crate::ident::DEFAULT_SCHEMA.to_string());
             let cache = LuaBytecodeCache::global();
             let mut l1_cleared = 0usize;
             let mut l2_deleted = 0usize;

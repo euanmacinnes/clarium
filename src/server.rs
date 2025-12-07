@@ -33,6 +33,7 @@ pub mod graphstore; // direct graph storage engine (scaffolding)
 use serde_json::json;
 use polars::prelude::*;
 use crate::scripts::{ScriptRegistry, scripts_dir_for, load_all_scripts_for_schema, load_global_default_scripts};
+use crate::ident::{DEFAULT_DB, DEFAULT_SCHEMA};
 
 const SESSION_COOKIE: &str = "clarium_session";
 
@@ -105,6 +106,16 @@ fn log_startup_folders(db_root: &str) {
         "Path existence: cwd_exists={}, /etc/clarama_exists={}, db_root_exists={}",
         cwd_exists, etc_exists, db_exists
     );
+}
+
+#[inline]
+fn env_default_db() -> String {
+    std::env::var("CLARIUM_DEFAULT_DB").unwrap_or_else(|_| DEFAULT_DB.to_string())
+}
+
+#[inline]
+fn env_default_schema() -> String {
+    std::env::var("CLARIUM_DEFAULT_SCHEMA").unwrap_or_else(|_| DEFAULT_SCHEMA.to_string())
 }
 
 pub async fn run_with_ports(http_port: u16, pg_port: Option<u16>, db_root: &str) -> anyhow::Result<()> {
@@ -526,7 +537,7 @@ async fn login(State(state): State<AppState>, Json(payload): Json<LoginPayload>)
             // initialize session defaults (database, schema)
             {
                 let mut dmap = state.session_defaults.write().await;
-                dmap.insert(sid.clone(), ("clarium".to_string(), "public".to_string()));
+                dmap.insert(sid.clone(), (env_default_db(), env_default_schema()));
             }
             let mut headers = HeaderMap::new();
             headers.insert("Set-Cookie", set_session_cookie(&sid));
@@ -762,8 +773,8 @@ async fn query_handler(
         let sid_opt = get_sid_from_headers(&headers);
         if let Some(sid) = sid_opt {
             let dmap = state.session_defaults.read().await;
-            if let Some((db, sc)) = dmap.get(&sid) { (db.clone(), sc.clone()) } else { ("clarium".to_string(), "public".to_string()) }
-        } else { ("clarium".to_string(), "public".to_string()) }
+            if let Some((db, sc)) = dmap.get(&sid) { (db.clone(), sc.clone()) } else { (env_default_db(), env_default_schema()) }
+        } else { (env_default_db(), env_default_schema()) }
     };
     let defaults = crate::ident::QueryDefaults { current_database: cur_db, current_schema: cur_schema };
     let exec_fut = async {
@@ -836,8 +847,8 @@ async fn ws_handler(State(state): State<AppState>, headers: HeaderMap, ws: WebSo
                             let sid_opt = get_sid_from_headers(&headers);
                             if let Some(sid) = sid_opt {
                                 let dmap = state.session_defaults.read().await;
-                                if let Some((db, sc)) = dmap.get(&sid) { (db.clone(), sc.clone()) } else { ("clarium".to_string(), "public".to_string()) }
-                            } else { ("clarium".to_string(), "public".to_string()) }
+                                if let Some((db, sc)) = dmap.get(&sid) { (db.clone(), sc.clone()) } else { (env_default_db(), env_default_schema()) }
+                            } else { (env_default_db(), env_default_schema()) }
                         };
                         let defaults = crate::ident::QueryDefaults { current_database: cur_db, current_schema: cur_schema };
                         let fut = async {

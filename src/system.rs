@@ -216,9 +216,10 @@ thread_local! {
     static TLS_CURRENT_GRAPH: Cell<Option<String>> = const { Cell::new(None) };
 }
 
-/// Get current database name for this thread/session, or default "clarium"
+/// Get current database name for this thread/session, or default configured database
 pub fn get_current_database() -> String {
-    TLS_CURRENT_DB.with(|c| c.take()).map(|s| { TLS_CURRENT_DB.with(|c2| c2.set(Some(s.clone()))); s }).unwrap_or_else(|| "clarium".to_string())
+    TLS_CURRENT_DB.with(|c| c.take()).map(|s| { TLS_CURRENT_DB.with(|c2| c2.set(Some(s.clone()))); s })
+        .unwrap_or_else(|| crate::ident::DEFAULT_DB.to_string())
 }
 
 /// Optional getter: returns None when current database is unset for this thread/session
@@ -226,9 +227,10 @@ pub fn get_current_database_opt() -> Option<String> {
     TLS_CURRENT_DB.with(|c| c.take()).map(|s| { TLS_CURRENT_DB.with(|c2| c2.set(Some(s.clone()))); s })
 }
 
-/// Get current schema name for this thread/session, or default "public"
+/// Get current schema name for this thread/session, or default configured schema
 pub fn get_current_schema() -> String {
-    TLS_CURRENT_SCHEMA.with(|c| c.take()).map(|s| { TLS_CURRENT_SCHEMA.with(|c2| c2.set(Some(s.clone()))); s }).unwrap_or_else(|| "public".to_string())
+    TLS_CURRENT_SCHEMA.with(|c| c.take()).map(|s| { TLS_CURRENT_SCHEMA.with(|c2| c2.set(Some(s.clone()))); s })
+        .unwrap_or_else(|| crate::ident::DEFAULT_SCHEMA.to_string())
 }
 
 /// Optional getter: returns None when current schema is unset for this thread/session

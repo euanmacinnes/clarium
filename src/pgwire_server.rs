@@ -11,6 +11,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tracing::{error, info, debug, warn};
 
 use crate::{storage::SharedStore, server::exec};
+use crate::ident::{DEFAULT_DB, DEFAULT_SCHEMA};
 use regex::Regex;
 
 const PG_TYPE_TEXT: i32 = 25; // use text for all columns for simplicity
@@ -76,6 +77,14 @@ struct ConnState {
 
 async fn handle_conn(socket: &mut tokio::net::TcpStream, store: SharedStore, conn_id: u64, peer: &str) -> Result<()> {
     debug!(target: "pgwire", "conn_id={} new connection established from {}", conn_id, peer);
+    #[inline]
+    fn env_default_db() -> String {
+        std::env::var("CLARIUM_DEFAULT_DB").unwrap_or_else(|_| DEFAULT_DB.to_string())
+    }
+    #[inline]
+    fn env_default_schema() -> String {
+        std::env::var("CLARIUM_DEFAULT_SCHEMA").unwrap_or_else(|_| DEFAULT_SCHEMA.to_string())
+    }
     // Trust mode for dev/test: when enabled via env, skip password auth entirely
     fn pgwire_trust_enabled() -> bool {
         std::env::var("CLARIUM_PGWIRE_TRUST").map(|v| {
@@ -126,8 +135,8 @@ async fn handle_conn(socket: &mut tokio::net::TcpStream, store: SharedStore, con
             // Initialize session state honoring dbname/database if provided
             let db = params.get("database").cloned()
                 .or_else(|| params.get("dbname").cloned())
-                .unwrap_or_else(|| "clarium".to_string());
-            let mut state = ConnState { current_database: db, current_schema: "public".to_string(), statements: HashMap::new(), portals: HashMap::new(), in_error: false };
+                .unwrap_or_else(|| env_default_db());
+            let mut state = ConnState { current_database: db, current_schema: env_default_schema(), statements: HashMap::new(), portals: HashMap::new(), in_error: false };
             run_query_loop(socket, &store, &user, &mut state, conn_id).await?;
             Ok(())
         } else {
@@ -159,8 +168,8 @@ async fn handle_conn(socket: &mut tokio::net::TcpStream, store: SharedStore, con
         // Initialize session state honoring dbname/database if provided
         let db = params.get("database").cloned()
             .or_else(|| params.get("dbname").cloned())
-            .unwrap_or_else(|| "clarium".to_string());
-        let mut state = ConnState { current_database: db, current_schema: "public".to_string(), statements: HashMap::new(), portals: HashMap::new(), in_error: false };
+            .unwrap_or_else(|| env_default_db());
+        let mut state = ConnState { current_database: db, current_schema: env_default_schema(), statements: HashMap::new(), portals: HashMap::new(), in_error: false };
         run_query_loop(socket, &store, &user, &mut state, conn_id).await?;
         Ok(())
     }
@@ -181,7 +190,8 @@ async fn send_auth_ok_and_params(socket: &mut tokio::net::TcpStream, startup_par
     write_parameter(socket, "TimeZone", "UTC").await?;
     write_parameter(socket, "default_transaction_read_only", "off").await?;
     write_parameter(socket, "is_superuser", "off").await?;
-    write_parameter(socket, "search_path", "\"$user\", public").await?;
+    let sp = format!("\"$user\", {}", DEFAULT_SCHEMA);
+    write_parameter(socket, "search_path", &sp).await?;
     // session_authorization and application_name from startup
     if let Some(user) = startup_params.get("user") {
         write_parameter(socket, "session_authorization", user).await?;
