@@ -47,6 +47,10 @@ pub use crate::server::exec::exec_create::do_create_table;
 
 use crate::server::query::query_common::*;
 use crate::server::query::*;
+use crate::server::exec::filestore as fs;
+use crate::server::exec::filestore::{FilestoreConfig, EffectiveConfig};
+use crate::server::exec::filestore::{AclUser, AclContext, CorrelationId};
+use base64::Engine;
 
 /// Returns true if the provided SQL text is a transaction control statement
 /// that we treat as a no-op for compatibility (BEGIN/START TRANSACTION/COMMIT/END/ROLLBACK).
@@ -123,6 +127,79 @@ pub async fn execute_query(store: &SharedStore, text: &str) -> Result<serde_json
             }
             return Ok(serde_json::json!({"status":"ok","l1_cleared": l1_cleared, "l2_deleted": l2_deleted, "persistent": persistent}));
         }
+        // -----------------------------
+        // FILESTORE SHOW (delegated in exec_show.rs)
+        // The SHOW variants are handled in exec_show::execute_show via higher layer routing.
+        // -----------------------------
+        // FILESTORE DDL / Mutations / Versioning (thin wrappers)
+        Command::CreateFilestoreCmd { filestore, cfg_json } => {
+            let cfg: FilestoreConfig = match cfg_json {
+                Some(s) if !s.trim().is_empty() => serde_json::from_str(&s).unwrap_or_default(),
+                _ => FilestoreConfig::default(),
+            };
+            let entry = fs::create_filestore(store, crate::lua_bc::DEFAULT_DB, &filestore, cfg, None)?;
+            return Ok(serde_json::to_value(entry)?);
+        }
+        Command::AlterFilestoreCmd { filestore, update_json } => {
+            // FilestoreConfigUpdate lives in registry module
+            let upd: fs::registry::FilestoreConfigUpdate = serde_json::from_str(&update_json)
+                .map_err(|e| anyhow::anyhow!(format!("Invalid ALTER FILESTORE payload: {}", e)))?;
+            let res = fs::alter_filestore_ddl(store, crate::lua_bc::DEFAULT_DB, &filestore, upd, None)?;
+            return Ok(serde_json::to_value(res)?);
+        }
+        Command::DropFilestoreCmd { filestore, force } => {
+            let ok = fs::drop_filestore(store, crate::lua_bc::DEFAULT_DB, &filestore, force, None)?;
+            return Ok(serde_json::json!({"status":"ok","dropped": ok}));
+        }
+        Command::IngestFileFromBytesCmd { filestore, logical_path, payload, content_type } => {
+            let bytes = decode_payload(&payload)?;
+            let eff = effective_for(store, &filestore)?;
+            let user = AclUser { id: "anonymous".into(), roles: vec![], ip: None };
+            let ctx = AclContext { request_id: Some(CorrelationId::new().to_string()), ..Default::default() };
+            let meta = fs::ingest_from_bytes(store, crate::lua_bc::DEFAULT_DB, &filestore, &logical_path, &bytes, content_type.as_deref(), None, &user, &eff, &ctx).await?;
+            return Ok(serde_json::to_value(meta)?);
+        }
+        Command::IngestFileFromHostPathCmd { filestore, logical_path, host_path, content_type } => {
+            let eff = effective_for(store, &filestore)?;
+            let user = AclUser { id: "anonymous".into(), roles: vec![], ip: None };
+            let ctx = AclContext { request_id: Some(CorrelationId::new().to_string()), ..Default::default() };
+            // Allowlist not yet modeled; pass empty to require explicit config in future
+            let meta = fs::ingest_from_host_path(store, crate::lua_bc::DEFAULT_DB, &filestore, &logical_path, &host_path, "", content_type.as_deref(), &user, &eff, &ctx).await?;
+            return Ok(serde_json::to_value(meta)?);
+        }
+        Command::UpdateFileFromBytesCmd { filestore, logical_path, if_match, payload, content_type } => {
+            let bytes = decode_payload(&payload)?;
+            let eff = effective_for(store, &filestore)?;
+            let user = AclUser { id: "anonymous".into(), roles: vec![], ip: None };
+            let ctx = AclContext { request_id: Some(CorrelationId::new().to_string()), ..Default::default() };
+            let meta = fs::update_from_bytes(store, crate::lua_bc::DEFAULT_DB, &filestore, &logical_path, &if_match, &bytes, content_type.as_deref(), None, &user, &eff, &ctx).await?;
+            return Ok(serde_json::to_value(meta)?);
+        }
+        Command::RenameFilePathCmd { filestore, from, to } => {
+            let eff = effective_for(store, &filestore)?;
+            let user = AclUser { id: "anonymous".into(), roles: vec![], ip: None };
+            let ctx = AclContext { request_id: Some(CorrelationId::new().to_string()), ..Default::default() };
+            let meta = fs::rename_file(store, crate::lua_bc::DEFAULT_DB, &filestore, &from, &to, &user, &eff, &ctx).await?;
+            return Ok(serde_json::to_value(meta)?);
+        }
+        Command::DeleteFilePathCmd { filestore, logical_path } => {
+            let eff = effective_for(store, &filestore)?;
+            let user = AclUser { id: "anonymous".into(), roles: vec![], ip: None };
+            let ctx = AclContext { request_id: Some(CorrelationId::new().to_string()), ..Default::default() };
+            fs::delete_file(store, crate::lua_bc::DEFAULT_DB, &filestore, &logical_path, &user, &eff, &ctx).await?;
+            return Ok(serde_json::json!({"status":"ok"}));
+        }
+        Command::CreateTreeCmd { filestore, prefix } => {
+            let tree = fs::create_tree_from_prefix(store, crate::lua_bc::DEFAULT_DB, &filestore, prefix.as_deref())?;
+            return Ok(serde_json::to_value(tree)?);
+        }
+        Command::CommitTreeCmd { filestore, tree_id, parents, branch, author_name, author_email, message, tags } => {
+            let author = fs::types::CommitAuthor { name: author_name.unwrap_or_else(|| "system".into()), email: author_email.unwrap_or_else(|| "system@local".into()), time_unix: chrono::Utc::now().timestamp() };
+            let default_branch = effective_for(store, &filestore)?.git_branch.unwrap_or_else(|| "main".into());
+            let br = branch.unwrap_or(default_branch);
+            let commit = fs::commit_tree(store, crate::lua_bc::DEFAULT_DB, &filestore, &tree_id, &parents, &author, message.as_deref().unwrap_or(""), &tags, &br)?;
+            return Ok(serde_json::to_value(commit)?);
+        }
         Command::Slice(plan) => {
             // Create DataContext with registry snapshot for SLICE query
             let registry_snapshot = crate::scripts::get_script_registry()
@@ -157,6 +234,17 @@ pub async fn execute_query(store: &SharedStore, text: &str) -> Result<serde_json
         | Command::ShowTables
         | Command::ShowObjects
         | Command::ShowScripts
+        // FILESTORE SHOW variants
+        | Command::ShowFilestores { .. }
+        | Command::ShowFilestoreConfig { .. }
+        | Command::ShowFilesInFilestore { .. }
+        | Command::ShowTreesInFilestore { .. }
+        | Command::ShowCommitsInFilestore { .. }
+        | Command::ShowDiffInFilestore { .. }
+        | Command::ShowChunksInFilestore { .. }
+        | Command::ShowAliasesInFilestore { .. }
+        | Command::ShowAdminInFilestore { .. }
+        | Command::ShowHealthInFilestore { .. }
         | Command::ShowGraphStatus { .. } => {
             self::exec_show::execute_show(store, cmd).await
         }
@@ -724,6 +812,66 @@ pub async fn execute_query(store: &SharedStore, text: &str) -> Result<serde_json
             Ok(serde_json::json!({"status":"ok"}))
         }
     }
+}
+
+// -----------------------------
+// Local helpers for FILESTORE routing
+// Keep these small and self-contained to avoid spreading logic.
+
+/// Decode a payload string that may be provided as hex or base64.
+/// Accepted forms:
+/// - 0x... (hex)
+/// - hex digits only (even length)
+/// - otherwise treated as base64 (standard)
+fn decode_payload(s: &str) -> anyhow::Result<Vec<u8>> {
+    let st = s.trim();
+    // Try 0x-prefixed hex
+    if st.len() > 2 && (st.starts_with("0x") || st.starts_with("0X")) {
+        let hex_part = &st[2..];
+        return decode_hex(hex_part);
+    }
+    // Try plain hex (only [0-9a-fA-F] and even length)
+    if !st.is_empty() && st.len() % 2 == 0 && st.chars().all(|c| c.is_ascii_hexdigit()) {
+        if let Ok(v) = decode_hex(st) { return Ok(v); }
+    }
+    // Fallback to base64
+    // Use simple base64 decode; the Engine API expects bytes in some versions
+    base64::engine::general_purpose::STANDARD
+        .decode(st.as_bytes())
+        .map_err(|e| anyhow::anyhow!(format!("Invalid payload: not valid hex or base64 ({})", e)))
+}
+
+fn decode_hex(h: &str) -> anyhow::Result<Vec<u8>> {
+    let mut out = Vec::with_capacity(h.len() / 2);
+    let bytes = h.as_bytes();
+    if bytes.len() % 2 != 0 { return Err(anyhow::anyhow!("hex length must be even")); }
+    for i in (0..bytes.len()).step_by(2) {
+        let hi = (hex_val(bytes[i])? as u8) << 4;
+        let lo = hex_val(bytes[i + 1])? as u8;
+        out.push(hi | lo);
+    }
+    Ok(out)
+}
+
+fn hex_val(b: u8) -> anyhow::Result<u8> {
+    match b {
+        b'0'..=b'9' => Ok(b - b'0'),
+        b'a'..=b'f' => Ok(10 + (b - b'a')),
+        b'A'..=b'F' => Ok(10 + (b - b'A')),
+        _ => Err(anyhow::anyhow!("invalid hex digit")),
+    }
+}
+
+/// Compute EffectiveConfig for a filestore by loading registry entry if present
+/// and overlaying on Global defaults. Folder overrides are not applied here.
+fn effective_for(store: &SharedStore, filestore: &str) -> anyhow::Result<EffectiveConfig> {
+    let global = fs::GlobalFilestoreConfig::default();
+    let fs_cfg = if let Some(ent) = fs::load_filestore_entry(store, crate::lua_bc::DEFAULT_DB, filestore)? {
+        ent.config
+    } else {
+        FilestoreConfig::default()
+    };
+    Ok(EffectiveConfig::from_layers(&global, &fs_cfg, None))
 }
 
 /// Panic-safe wrapper around `execute_query`.

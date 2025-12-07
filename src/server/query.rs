@@ -22,6 +22,7 @@ pub mod query_parse_where;
 pub mod query_parse_txn;
 pub mod query_parse_alter;
 pub mod query_parse_vector;
+pub mod query_parse_filestore;
 
 // Import MATCH parser entrypoint for top-level dispatch
 use crate::server::query::query_parse_match::parse_match;
@@ -49,6 +50,7 @@ pub use query_parse_where_tokens::*;
 pub use query_parse_where::*;
 pub use query_parse_alter::*;
 pub use query_parse_vector::*;
+pub use query_parse_filestore::*;
 
 
 
@@ -192,6 +194,28 @@ pub enum Command {
     Insert { table: String, columns: Vec<String>, values: Vec<Vec<ArithTerm>> },
     // EXPLAIN <stmt>
     Explain { sql: String },
+    // FILESTORE SHOW variants
+    ShowFilestores { database: Option<String> },
+    ShowFilestoreConfig { filestore: String, folder_prefix: Option<String> },
+    ShowFilesInFilestore { filestore: String, prefix: Option<String>, limit: Option<i64>, offset: Option<i64> },
+    ShowTreesInFilestore { filestore: String },
+    ShowCommitsInFilestore { filestore: String },
+    ShowDiffInFilestore { filestore: String, left_tree_id: String, right_tree_id: Option<String>, live_prefix: Option<String> },
+    ShowChunksInFilestore { filestore: String },
+    ShowAliasesInFilestore { filestore: String },
+    ShowAdminInFilestore { filestore: String },
+    ShowHealthInFilestore { filestore: String },
+    // FILESTORE DDL/mutations/versioning
+    CreateFilestoreCmd { filestore: String, cfg_json: Option<String> },
+    AlterFilestoreCmd { filestore: String, update_json: String },
+    DropFilestoreCmd { filestore: String, force: bool },
+    IngestFileFromBytesCmd { filestore: String, logical_path: String, payload: String, content_type: Option<String> },
+    IngestFileFromHostPathCmd { filestore: String, logical_path: String, host_path: String, content_type: Option<String> },
+    UpdateFileFromBytesCmd { filestore: String, logical_path: String, if_match: String, payload: String, content_type: Option<String> },
+    RenameFilePathCmd { filestore: String, from: String, to: String },
+    DeleteFilePathCmd { filestore: String, logical_path: String },
+    CreateTreeCmd { filestore: String, prefix: Option<String> },
+    CommitTreeCmd { filestore: String, tree_id: String, parents: Vec<String>, branch: Option<String>, author_name: Option<String>, author_email: Option<String>, message: Option<String>, tags: Vec<String> },
 }
 
 #[derive(Debug, Clone)]
@@ -253,6 +277,19 @@ pub fn parse(input: &str) -> Result<Command> {
     }
     if sup.starts_with("SHOW ") || sup == "SHOW" {
         return parse_show(s);
+    }
+    // FILESTORE commands
+    if sup.starts_with("CREATE FILESTORE")
+        || sup.starts_with("ALTER FILESTORE")
+        || sup.starts_with("DROP FILESTORE")
+        || sup.starts_with("INGEST FILESTORE")
+        || sup.starts_with("UPDATE FILESTORE")
+        || sup.starts_with("RENAME FILESTORE")
+        || sup.starts_with("DELETE FILESTORE")
+        || sup.starts_with("CREATE TREE IN FILESTORE")
+        || sup.starts_with("COMMIT TREE IN FILESTORE")
+    {
+        return query_parse_filestore::parse_filestore(s);
     }
     if sup.starts_with("USE ") {
         return parse_use(s);

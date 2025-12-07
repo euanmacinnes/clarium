@@ -369,18 +369,21 @@ pub fn show_files_df_paged(
 ) -> Result<DataFrame> {
     let df_all = show_files_df(store, database, filestore, prefix)?;
     let h = df_all.height();
-    if offset >= h { return DataFrame::new(vec![
-        Series::new("logical_path".into(), Vec::<String>::new()).into(),
-        Series::new("size".into(), Vec::<i64>::new()).into(),
-        Series::new("etag".into(), Vec::<String>::new()).into(),
-        Series::new("version".into(), Vec::<i64>::new()).into(),
-        Series::new("updated_at".into(), Vec::<i64>::new()).into(),
-        Series::new("deleted".into(), Vec::<bool>::new()).into(),
-        Series::new("content_type".into(), Vec::<String>::new()).into(),
-    ]).map_err(Into::into); }
+    if offset >= h {
+        let df = DataFrame::new(vec![
+            Series::new("logical_path".into(), Vec::<String>::new()).into(),
+            Series::new("size".into(), Vec::<i64>::new()).into(),
+            Series::new("etag".into(), Vec::<String>::new()).into(),
+            Series::new("version".into(), Vec::<i64>::new()).into(),
+            Series::new("updated_at".into(), Vec::<i64>::new()).into(),
+            Series::new("deleted".into(), Vec::<bool>::new()).into(),
+            Series::new("content_type".into(), Vec::<String>::new()).into(),
+        ])?;
+        return Ok(df);
+    }
     let start = offset as i64;
     let len = match limit { Some(n) => n.min(h - offset), None => h - offset } as usize;
-    df_all.slice(start, len).map_err(Into::into)
+    Ok(df_all.slice(start, len))
 }
 
 /// Health summary: orphaned chunks, stale refs, and config mismatches.

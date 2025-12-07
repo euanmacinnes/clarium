@@ -692,6 +692,28 @@ fn to_ck_and_db(cmd: &query::Command) -> (security::CommandKind, Option<String>)
         | query::Command::ShowObjects
         | query::Command::ShowScripts => (security::CommandKind::Other, None),
         query::Command::ClearScriptCache { .. } => (security::CommandKind::Other, None),
+        // FILESTORE commands: treat as Other with no specific database context here
+        query::Command::ShowFilestores { .. }
+        | query::Command::ShowFilestoreConfig { .. }
+        | query::Command::ShowFilesInFilestore { .. }
+        | query::Command::ShowTreesInFilestore { .. }
+        | query::Command::ShowCommitsInFilestore { .. }
+        | query::Command::ShowDiffInFilestore { .. }
+        | query::Command::ShowChunksInFilestore { .. }
+        | query::Command::ShowAliasesInFilestore { .. }
+        | query::Command::ShowAdminInFilestore { .. }
+        | query::Command::ShowHealthInFilestore { .. }
+        | query::Command::CreateFilestoreCmd { .. }
+        | query::Command::AlterFilestoreCmd { .. }
+        | query::Command::DropFilestoreCmd { .. }
+        | query::Command::IngestFileFromBytesCmd { .. }
+        | query::Command::IngestFileFromHostPathCmd { .. }
+        | query::Command::UpdateFileFromBytesCmd { .. }
+        | query::Command::RenameFilePathCmd { .. }
+        | query::Command::DeleteFilePathCmd { .. }
+        | query::Command::CreateTreeCmd { .. }
+        | query::Command::CommitTreeCmd { .. }
+        => (security::CommandKind::Other, None),
         query::Command::Explain { .. } => (security::CommandKind::Other, None),
         query::Command::SelectUnion { .. } => (security::CommandKind::Select, None),
         query::Command::Slice(_) => (security::CommandKind::Select, None),

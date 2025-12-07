@@ -58,6 +58,7 @@ xxhash-rust = { version = "0.8", features = ["xxh3"] }
 bincode = "1"
 uuid = { version = "1", features = ["v4", "serde"] }
 unicode-normalization = "0.1"
+base64 = "0.22"
 
 # Git backends (optional, used by FILESTORE; no default features changed)
 gix = { version = "0.63", optional = true }

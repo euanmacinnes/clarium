@@ -7,6 +7,7 @@ use crate::server::query::Command;
 use crate::scripts::scripts_dir_for;
 use crate::storage::SharedStore;
 use crate::server::graphstore::graphstore_status_df;
+use crate::lua_bc::DEFAULT_DB;
 
 pub async fn execute_show(store: &SharedStore, cmd: Command) -> Result<Value> {
     match cmd {
@@ -37,6 +38,52 @@ pub async fn execute_show(store: &SharedStore, cmd: Command) -> Result<Value> {
         Command::ShowTables => show_tables(store),
         Command::ShowObjects => show_objects(store),
         Command::ShowScripts => show_scripts(store),
+        // -------------------------------------------------
+        // FILESTORE SHOW commands → delegate to filestore::show
+        Command::ShowFilestores { database } => {
+            let db = database.unwrap_or_else(|| DEFAULT_DB.to_string());
+            let df = crate::server::exec::filestore::show_filestores_df(store, &db)?;
+            return Ok(crate::server::exec::dataframe_to_json(&df));
+        }
+        Command::ShowFilestoreConfig { filestore, folder_prefix } => {
+            let df = crate::server::exec::filestore::show_filestore_config_df(store, DEFAULT_DB, &filestore, folder_prefix.as_deref())?;
+            return Ok(crate::server::exec::dataframe_to_json(&df));
+        }
+        Command::ShowFilesInFilestore { filestore, prefix, limit, offset } => {
+            let off = offset.unwrap_or(0).max(0) as usize;
+            let lim = limit.and_then(|n| if n > 0 { Some(n as usize) } else { None });
+            let df = crate::server::exec::filestore::show_files_df_paged(store, DEFAULT_DB, &filestore, prefix.as_deref(), off, lim)?;
+            return Ok(crate::server::exec::dataframe_to_json(&df));
+        }
+        Command::ShowTreesInFilestore { filestore } => {
+            let df = crate::server::exec::filestore::show_trees_df(store, DEFAULT_DB, &filestore)?;
+            return Ok(crate::server::exec::dataframe_to_json(&df));
+        }
+        Command::ShowCommitsInFilestore { filestore } => {
+            let df = crate::server::exec::filestore::show_commits_df(store, DEFAULT_DB, &filestore)?;
+            return Ok(crate::server::exec::dataframe_to_json(&df));
+        }
+        Command::ShowDiffInFilestore { filestore, left_tree_id, right_tree_id, live_prefix } => {
+            let df = crate::server::exec::filestore::show_diff_df(store, DEFAULT_DB, &filestore, &left_tree_id, right_tree_id.as_deref(), live_prefix.as_deref())?;
+            return Ok(crate::server::exec::dataframe_to_json(&df));
+        }
+        Command::ShowChunksInFilestore { filestore } => {
+            let df = crate::server::exec::filestore::show_chunks_df(store, DEFAULT_DB, &filestore)?;
+            return Ok(crate::server::exec::dataframe_to_json(&df));
+        }
+        Command::ShowAliasesInFilestore { filestore } => {
+            let df = crate::server::exec::filestore::show_aliases_df(store, DEFAULT_DB, &filestore)?;
+            return Ok(crate::server::exec::dataframe_to_json(&df));
+        }
+        Command::ShowAdminInFilestore { filestore } => {
+            let df = crate::server::exec::filestore::show_admin_counts_df(store, DEFAULT_DB, &filestore)?;
+            return Ok(crate::server::exec::dataframe_to_json(&df));
+        }
+        Command::ShowHealthInFilestore { filestore } => {
+            let df = crate::server::exec::filestore::show_health_df(store, DEFAULT_DB, &filestore)?;
+            return Ok(crate::server::exec::dataframe_to_json(&df));
+        }
+        // -------------------------------------------------
         other => anyhow::bail!(format!("unsupported SHOW variant in exec_show: {:?}", other)),
     }
 }
