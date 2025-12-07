@@ -39,7 +39,7 @@ impl ScriptRegistry {
     pub fn new() -> Result<Self> { Ok(Self::default()) }
 
     #[inline]
-    fn norm(name: &str) -> String { name.to_ascii_lowercase() }
+    pub(crate) fn norm(name: &str) -> String { name.to_ascii_lowercase() }
 
     /// Load or reload a script by logical name with the provided source text.
     pub fn load_script_text(&self, name: &str, code: &str) -> Result<()> {

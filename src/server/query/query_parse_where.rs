@@ -213,6 +213,10 @@ pub fn parse_where_expr(s: &str) -> Result<WhereExpr> {
                     // Otherwise, collect identifier text (possibly dotted) as a column reference
                     let mut name = String::new();
                     while let Some(tt) = cur.peek() { match &tt.kind { TKind::Ident(s) => { if !name.is_empty() { name.push(' '); } name.push_str(s); cur.next(); }, _ => break } }
+                    // Support alias.'identifier.with.dots' by combining an identifier ending with '.' followed by a string token
+                    if name.ends_with('.') {
+                        if let Some(TKind::Str(st)) = cur.peek_kind() { let _ = cur.next(); name.push_str(&st); }
+                    }
                     if name.is_empty() { let start = start_pos; anyhow::bail!("Syntax error at position {}: expected identifier.\n{}", start, caret_snippet(src, start)); }
                     // Use existing Col variant, mark as not 'previous'
                     return Ok(ArithExpr::Term(ArithTerm::Col { name, previous: false }));

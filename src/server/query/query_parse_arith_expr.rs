@@ -480,6 +480,52 @@ pub fn parse_arith_expr(tokens: &[String]) -> Result<ArithExpr> {
                     }
                     // Handle identifiers and f-strings
                     let mut name = &src[i..j];
+                    // Support alias."identifier.with.dots" and alias.'identifier.with.dots'
+                    // If the parsed name ends with a dot, and the next char is a quote, consume the quoted part and combine
+                    if name.ends_with('.') {
+                        let mut end = j;
+                        // Skip whitespace
+                        while end < bytes.len() && bytes[end].is_ascii_whitespace() { end += 1; }
+                        if end < bytes.len() {
+                            let qch = bytes[end] as char;
+                            if qch == '"' || qch == '\'' {
+                                let quote = qch;
+                                let mut k = end + 1;
+                                let mut inner = String::new();
+                                while k < bytes.len() {
+                                    let ch2 = bytes[k] as char; k += 1;
+                                    if ch2 == quote {
+                                        // handle escaped '' for single quotes inside literals
+                                        if quote == '\'' && k < bytes.len() && (bytes[k] as char) == '\'' { inner.push('\''); k += 1; continue; }
+                                        break;
+                                    }
+                                    inner.push(ch2);
+                                }
+                                // Combine alias. + inner
+                                let mut combined = String::from(name);
+                                combined.push_str(&inner);
+                                // Update name slice by storing combined separately and advancing j
+                                // To keep logic simple, push directly as a column token here and advance i/j beyond consumed
+                                let mut base = ArithExpr::Term(ArithTerm::Col { name: combined, previous: false });
+                                // Optional PostgreSQL ::type cast after identifier
+                                let mut j_after = k; // position after closing quote
+                                loop {
+                                    let mut k2 = j_after; while k2 < bytes.len() && bytes[k2].is_ascii_whitespace() { k2 += 1; }
+                                    if k2 + 1 < bytes.len() && bytes[k2] as char == ':' && bytes[k2+1] as char == ':' {
+                                        k2 += 2; while k2 < bytes.len() && bytes[k2].is_ascii_whitespace() { k2 += 1; }
+                                        if let Some((ty, consumed)) = parse_type_name(&src[k2..]) {
+                                            base = ArithExpr::Cast { expr: Box::new(base), ty };
+                                            j_after = k2 + consumed; continue;
+                                        }
+                                    }
+                                    break;
+                                }
+                                toks.push(ATok::Val(base));
+                                i = j_after;
+                                continue;
+                            }
+                        }
+                    }
                     // NULL literal (case-insensitive)
                     if name.eq_ignore_ascii_case("NULL") {
                         toks.push(ATok::Val(ArithExpr::Term(ArithTerm::Null)));

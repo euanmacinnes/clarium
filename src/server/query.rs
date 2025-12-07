@@ -107,6 +107,8 @@ pub enum Command {
     ReadKey { database: String, store: String, key: String },
     DropKey { database: String, store: String, key: String },
     RenameKey { database: String, store: String, from: String, to: String },
+    // Scripts/bytecode cache maintenance
+    ClearScriptCache { scope: ScriptCacheScope, persistent: bool },
     UserAdd { username: String, password: String, is_admin: bool, perms: Vec<String>, scope_db: Option<String> },
     UserDelete { username: String, scope_db: Option<String> },
     UserAlter { username: String, new_password: Option<String>, is_admin: Option<bool>, perms: Option<Vec<String>>, scope_db: Option<String> },
@@ -192,6 +194,13 @@ pub enum Command {
     Insert { table: String, columns: Vec<String>, values: Vec<Vec<ArithTerm>> },
     // EXPLAIN <stmt>
     Explain { sql: String },
+}
+
+#[derive(Debug, Clone)]
+pub enum ScriptCacheScope {
+    All,
+    CurrentSchema, // default scope if not specified; execution layer will map to defaults
+    Name(String),
 }
 
 
@@ -295,6 +304,9 @@ pub fn parse(input: &str) -> Result<Command> {
     if sup.starts_with("SET ") {
         return parse_set(s);
     }
+    if sup.starts_with("CLEAR ") {
+        return parse_clear(s);
+    }
     // GraphStore transactional inserts take precedence over regular SQL INSERT
     if sup.starts_with("INSERT NODE") || sup.starts_with("INSERT EDGE") || sup == "BEGIN" || sup.starts_with("BEGIN ") || sup == "COMMIT" || sup == "ABORT" {
         return crate::server::query::query_parse_txn::parse_txn(s);
@@ -317,6 +329,37 @@ fn parse_load(s: &str) -> Result<Command> {
         return Ok(Command::LoadScript { path: Some(arg.to_string()) });
     }
     anyhow::bail!("Invalid LOAD syntax")
+}
+
+fn parse_clear(s: &str) -> Result<Command> {
+    // CLEAR SCRIPT CACHE [ALL | NAME <ident>] [WITH PERSISTENT]
+    let rest = s[5..].trim();
+    let up = rest.to_uppercase();
+    if !up.starts_with("SCRIPT ") { anyhow::bail!("Unsupported CLEAR command"); }
+    let rest2 = rest[6..].trim();
+    let up2 = rest2.to_uppercase();
+    if !up2.starts_with("CACHE") { anyhow::bail!("Unsupported CLEAR SCRIPT command; expected CACHE"); }
+    let mut tail = rest2[5..].trim();
+    let mut scope = ScriptCacheScope::CurrentSchema;
+    let mut persistent = false;
+    if !tail.is_empty() {
+        let up3 = tail.to_uppercase();
+        if up3.starts_with("ALL") {
+            scope = ScriptCacheScope::All;
+            tail = tail[3..].trim();
+        } else if up3.starts_with("NAME ") {
+            let ident = tail[5..].trim();
+            if ident.is_empty() { anyhow::bail!("CLEAR SCRIPT CACHE NAME: missing identifier"); }
+            // Allow quoted identifiers
+            let ident = ident.trim_matches(['"', '\'']);
+            scope = ScriptCacheScope::Name(ident.to_string());
+            tail = "";
+        }
+        // Optional WITH PERSISTENT
+        let up4 = tail.to_uppercase();
+        if up4.contains("WITH") && up4.contains("PERSISTENT") { persistent = true; }
+    }
+    Ok(Command::ClearScriptCache { scope, persistent })
 }
 
 

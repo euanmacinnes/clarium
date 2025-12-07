@@ -57,6 +57,7 @@ pub fn handle_read_key(store: &SharedStore, database: &str, st: &str, key: &str)
             KvValue::Str(s) => Ok(serde_json::json!({"type":"string","value": s})),
             KvValue::Int(n) => Ok(serde_json::json!({"type":"int","value": n})),
             KvValue::Json(j) => Ok(serde_json::json!({"type":"json","value": j})),
+            KvValue::Bytes(b) => Ok(serde_json::json!({"type":"bytes","len": b.len()})),
             KvValue::ParquetDf(df) => {
                 let cols_meta: Vec<serde_json::Value> = df.get_column_names().iter().map(|name| {
                     let dt = df.column(name.as_str()).ok().map(|c| format!("{:?}", c.dtype())).unwrap_or_else(|| "Unknown".into());
@@ -69,6 +70,7 @@ pub fn handle_read_key(store: &SharedStore, database: &str, st: &str, key: &str)
                     "columns": cols_meta
                 }))
             }
+            KvValue::Bytes(b) => Ok(serde_json::json!({"type":"bytes","len": b.len()})),
         }
     } else {
         anyhow::bail!(format!("Key not found: {}.store.{}.{}", database, st, key));

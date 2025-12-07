@@ -31,6 +31,7 @@ use crate::storage::{SharedStore, KvValue};
 use crate::ident::QueryDefaults;
 use crate::scripts::get_script_registry;
 use tracing::debug;
+use crate::lua_bc::{LuaBytecodeCache, DEFAULT_DB, DEFAULT_KV_STORE};
 // Bring frequently used helpers from submodules into scope
 use crate::server::exec::exec_select::run_select;
 use crate::server::exec::exec_slice::run_slice;
@@ -85,6 +86,41 @@ pub async fn execute_query(store: &SharedStore, text: &str) -> Result<serde_json
             }
             // Fallback generic message
             return Ok(serde_json::json!({"explain": "EXPLAIN: not implemented for this statement"}));
+        }
+        Command::ClearScriptCache { scope, persistent } => {
+            // Determine scope database/schema from defaults
+            let defaults = QueryDefaults::new("clarium".to_string(), "public".to_string());
+            let cache = LuaBytecodeCache::global();
+            let mut l1_cleared = 0usize;
+            let mut l2_deleted = 0usize;
+            match scope {
+                crate::server::query::ScriptCacheScope::All => {
+                    l1_cleared = cache.invalidate_all();
+                    if persistent {
+                        // Danger: global wipe by prefix of lua.bc/ under default KV store
+                        let kv = store.kv_store(DEFAULT_DB, DEFAULT_KV_STORE);
+                        l2_deleted = kv.delete_prefix("lua.bc/");
+                    }
+                }
+                crate::server::query::ScriptCacheScope::CurrentSchema => {
+                    // Without a catalog of script names, we can only clear L1 globally for now
+                    l1_cleared = cache.invalidate_all();
+                    if persistent {
+                        let kv = store.kv_store(DEFAULT_DB, DEFAULT_KV_STORE);
+                        // Schema scoping not tracked; delete all for current ABI
+                        let abi = LuaBytecodeCache::abi_salt();
+                        let prefix = format!("lua.bc/{}/", abi);
+                        l2_deleted = kv.delete_prefix(&prefix);
+                    }
+                }
+                crate::server::query::ScriptCacheScope::Name(ref n) => {
+                    l1_cleared = cache.invalidate_name(n);
+                    if persistent {
+                        l2_deleted = cache.purge_kv_for_name(store, DEFAULT_DB, DEFAULT_KV_STORE, n);
+                    }
+                }
+            }
+            return Ok(serde_json::json!({"status":"ok","l1_cleared": l1_cleared, "l2_deleted": l2_deleted, "persistent": persistent}));
         }
         Command::Slice(plan) => {
             // Create DataContext with registry snapshot for SLICE query
@@ -423,6 +459,13 @@ pub async fn execute_query(store: &SharedStore, text: &str) -> Result<serde_json
                             "rows": df.height(),
                             "cols": df.width(),
                             "columns": cols_meta
+                        }))
+                    }
+                    KvValue::Bytes(b) => {
+                        Ok(serde_json::json!({
+                            "key": key,
+                            "type": "bytes",
+                            "len": b.len()
                         }))
                     }
                 }

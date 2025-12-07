@@ -2168,3 +2168,4 @@ target/
 /dbs/user.parquet
 /dbs/clarium/public/metrics/data.parquet
 /dbs/clarium/public/IF/schema.json
+/.output.txt

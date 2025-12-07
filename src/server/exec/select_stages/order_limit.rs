@@ -449,7 +449,10 @@ fn ann_order_dataframe(
     let mut rid_col_name: Option<String> = None;
     for n in df.get_column_names() {
         let ns = n.as_str();
-        if ns == "__row_id" || ns.starts_with("__row_id.") { rid_col_name = Some(ns.to_string()); break; }
+        if ns == "__row_id" || ns.starts_with("__row_id.") || ns.contains(".__row_id.") {
+            rid_col_name = Some(ns.to_string());
+            break;
+        }
     }
     // Helper: build final sort expressions combining primary score + secondary keys + stable row-id tie-break
     let build_sort_keys = |df_cols: &DataFrame, rid_name: Option<&str>, final_desc: bool| -> (Vec<Expr>, Vec<bool>) {

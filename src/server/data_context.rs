@@ -262,6 +262,22 @@ impl DataContext {
     /// Supports: fully-qualified alias ("a.col"), unqualified ("col"), and exact matches.
     pub fn resolve_column(&self, df: &DataFrame, name: &str) -> Result<String> {
         debug!(target: "clarium::exec", "DataContext::resolve_column: '{}' cols={:?}", name, df.get_column_names());
+        // Normalize alias."x.y" or alias.'x.y' by stripping quotes from the rightmost segment
+        let name = {
+            let s = name.trim();
+            if let Some((lhs, rhs)) = s.rsplit_once('.') {
+                let r = rhs.trim();
+                if (r.starts_with('"') && r.ends_with('"') && r.len() >= 2)
+                    || (r.starts_with('\'') && r.ends_with('\'') && r.len() >= 2)
+                {
+                    let inner = &r[1..r.len()-1];
+                    format!("{}.{}", lhs, inner)
+                } else { s.to_string() }
+            } else if (s.starts_with('"') && s.ends_with('"') && s.len() >= 2)
+                || (s.starts_with('\'') && s.ends_with('\'') && s.len() >= 2) {
+                s[1..s.len()-1].to_string()
+            } else { s.to_string() }
+        };
         let cols = df.get_column_names();
         let def_db = self.current_database.as_deref();
         let def_schema = self.current_schema.as_deref();
@@ -287,7 +303,7 @@ impl DataContext {
         // 1) If name contains a dot, it may be fully or partially qualified (e.g., alias.col or schema/table.col)
         if name.contains('.') {
             // If it's already an exact column in df, return it
-            if let Some(actual_name) = exact_in_df(name) { return Ok(actual_name); }
+            if let Some(actual_name) = exact_in_df(&name) { return Ok(actual_name); }
             // If formatted as alias.col, only allow suffix fallback when alias is known in this context.
             if let Some((maybe_alias, col_part)) = name.rsplit_once('.') {
                 // If alias is not known to this context, do NOT resolve by suffix here — it may belong to an outer query.
@@ -361,9 +377,9 @@ impl DataContext {
             anyhow::bail!(format!("Column not found: {}", name));
         }
         // 2) Unqualified name: try exact match first
-        if let Some(actual_name) = exact_in_df(name) { return Ok(actual_name); }
+        if let Some(actual_name) = exact_in_df(&name) { return Ok(actual_name); }
         // 3) Suffix matches
-        let mut matches = suffix_matches_in_df(name);
+        let mut matches = suffix_matches_in_df(&name);
         if matches.is_empty() { anyhow::bail!(format!("Column not found: {}", name)); }
         if matches.len() > 1 {
             // Prefer default db/schema scope if available
@@ -651,13 +667,13 @@ impl DataContext {
                 };
                 let pref = alias.as_deref().unwrap_or(name.as_str());
                 let mut prefixed = Self::prefix_columns(df, t)?;
-                // Inject a stable ordinal __row_id.<alias> to aid ANN row-id mapping and avoid name collisions in joins
-                let rid_name = format!("__row_id.{}", pref);
-                if !prefixed.get_column_names().iter().any(|c| c.as_str() == rid_name.as_str()) {
+                // Inject a stable ordinal <alias>.__row_id.<alias> to aid ANN row-id mapping and avoid name collisions in joins
+                let rid_name_fq = format!("{}.{}", pref, format!("__row_id.{}", pref));
+                if !prefixed.get_column_names().iter().any(|c| c.as_str() == rid_name_fq.as_str()) {
                     let h = prefixed.height();
                     let mut ids: Vec<u64> = Vec::with_capacity(h);
                     for i in 0..h { ids.push(i as u64); }
-                    let s = Series::new(rid_name.into(), ids);
+                    let s = Series::new(rid_name_fq.into(), ids);
                     let _ = prefixed.with_column(s);
                 }
                 tracing::debug!(target: "clarium::exec", "load_source_df: prefixed with '{}' -> cols={:?}", pref, prefixed.get_column_names());
@@ -773,6 +789,7 @@ impl DataContext {
                     crate::storage::KvValue::ParquetDf(df) => Ok(df),
                     crate::storage::KvValue::Json(_) => anyhow::bail!("JSON key cannot be used in FROM yet; JSON querying is not implemented"),
                     crate::storage::KvValue::Str(_) | crate::storage::KvValue::Int(_) => anyhow::bail!("Scalar key cannot be used in FROM; expected a table"),
+                    crate::storage::KvValue::Bytes(_) => anyhow::bail!("Binary key cannot be used in FROM; expected a table"),
                 }
             } else {
                 anyhow::bail!(format!("KV key not found: {}.store.{}.{}", db, store_name, key));

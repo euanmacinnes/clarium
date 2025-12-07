@@ -28,6 +28,7 @@ pub(crate) fn read_df_or_kv(store: &SharedStore, name: &str) -> anyhow::Result<D
                 KvValue::ParquetDf(df) => Ok(df),
                 KvValue::Json(_) => anyhow::bail!("JSON key cannot be used in FROM yet; JSON querying is not implemented"),
                 KvValue::Str(_) | KvValue::Int(_) => anyhow::bail!("Scalar key cannot be used in FROM; expected a table"),
+                KvValue::Bytes(_) => anyhow::bail!("Binary key cannot be used in FROM; expected a table"),
             }
         } else {
             anyhow::bail!(format!("KV key not found: {}.store.{}.{}", db, store_name, key));

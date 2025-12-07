@@ -998,6 +998,8 @@ pub enum KvValue {
     Int(i64),
     Json(JsonValue),
     ParquetDf(DataFrame),
+    /// Raw binary value intended for high-performance blobs (e.g., Lua bytecode)
+    Bytes(Vec<u8>),
 }
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
@@ -1009,11 +1011,38 @@ pub struct StoreSettings {
     /// Placeholder for future replication options
     #[serde(default)]
     pub replication: Option<serde_json::Value>,
+    /// Optional persistence settings loaded from `<store dir>/store.json`.
+    #[serde(default)]
+    pub persistence: Option<PersistenceSettings>,
 }
 
 impl Default for StoreSettings {
     fn default() -> Self {
-        Self { name: String::new(), reset_on_access_default: true, replication: None }
+        Self { name: String::new(), reset_on_access_default: true, replication: None, persistence: Some(PersistenceSettings::default()) }
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug)]
+pub struct PersistenceSettings {
+    /// Enable periodic snapshotting of this KV store to disk
+    #[serde(default)]
+    pub enabled: bool,
+    /// Interval in milliseconds between snapshots
+    #[serde(default = "PersistenceSettings::default_interval_ms")]
+    pub interval_ms: u64,
+    /// Snapshot format: currently supports "bincode" (fast, compact)
+    #[serde(default = "PersistenceSettings::default_format")]
+    pub format: String,
+}
+
+impl PersistenceSettings {
+    fn default_interval_ms() -> u64 { 5_000 }
+    fn default_format() -> String { "bincode".to_string() }
+}
+
+impl Default for PersistenceSettings {
+    fn default() -> Self {
+        Self { enabled: false, interval_ms: Self::default_interval_ms(), format: Self::default_format() }
     }
 }
 
@@ -1034,32 +1063,173 @@ pub struct KvStore {
     settings: StoreSettings,
     dir: PathBuf,
     map: Arc<parking_lot::RwLock<StdHashMap<String, Entry>>>,
+    /// Guard to ensure we only spawn one persistence thread
+    persist_started: Arc<parking_lot::Mutex<bool>>,
 }
 
 impl KvStore {
     fn new(dir: PathBuf, settings: StoreSettings) -> Self {
         fs::create_dir_all(&dir).ok();
-        Self { settings, dir, map: Arc::new(parking_lot::RwLock::new(StdHashMap::new())) }
+        let s = Self { settings, dir, map: Arc::new(parking_lot::RwLock::new(StdHashMap::new())), persist_started: Arc::new(parking_lot::Mutex::new(false)) };
+        // Start persistence loop if enabled
+        s.ensure_persistence_loop();
+        s
     }
 
-    fn config_path(&self) -> PathBuf { self.dir.join("config.json") }
+    fn config_path(&self) -> PathBuf { self.dir.join("store.json") }
+    fn legacy_config_path(&self) -> PathBuf { self.dir.join("config.json") }
+    fn snapshot_path(&self) -> PathBuf { self.dir.join("snapshot.bin") }
+    fn parquet_dir(&self) -> PathBuf { self.dir.join("parquet") }
 
     pub fn load_or_default(dir: PathBuf, name: &str) -> Self {
-        let cfg = dir.join("config.json");
+        let cfg_new = dir.join("store.json");
+        let cfg_legacy = dir.join("config.json");
         let mut settings = StoreSettings::default();
         settings.name = name.to_string();
-        if let Ok(bytes) = fs::read(&cfg) {
+        if let Ok(bytes) = fs::read(&cfg_new) {
             if let Ok(s) = serde_json::from_slice::<StoreSettings>(&bytes) { settings = s; }
+        } else if let Ok(bytes) = fs::read(&cfg_legacy) {
+            if let Ok(s) = serde_json::from_slice::<StoreSettings>(&bytes) { settings = s; }
+            // migrate on next save
         } else {
-            // write default
-            let _ = fs::write(&cfg, serde_json::to_vec_pretty(&settings).unwrap_or_default());
+            // write default to new path
+            let _ = fs::write(&cfg_new, serde_json::to_vec_pretty(&settings).unwrap_or_default());
         }
-        Self::new(dir, settings)
+        let kv = Self::new(dir, settings);
+        // Attempt to restore snapshot on startup
+        let _ = kv.load_snapshot();
+        kv
     }
 
     pub fn save_settings(&self) -> Result<()> {
         let bytes = serde_json::to_vec_pretty(&self.settings)?;
         fs::write(self.config_path(), bytes)?;
+        Ok(())
+    }
+
+    fn ensure_persistence_loop(&self) {
+        let enabled = self.settings.persistence.as_ref().map(|p| p.enabled).unwrap_or(false);
+        if !enabled { return; }
+        let mut started = self.persist_started.lock();
+        if *started { return; }
+        *started = true;
+        let interval_ms = self.settings.persistence.as_ref().map(|p| p.interval_ms).unwrap_or(5_000);
+        let this = self.clone();
+        std::thread::spawn(move || {
+            loop {
+                std::thread::sleep(std::time::Duration::from_millis(interval_ms));
+                if let Err(e) = this.save_snapshot() {
+                    // Best-effort: log and continue
+                    crate::tprintln!("KV persistence save_snapshot error for store '{}': {}", this.settings.name, e);
+                }
+            }
+        });
+    }
+
+    fn sanitize_key_for_file(key: &str) -> String {
+        let mut out = String::with_capacity(key.len());
+        for ch in key.chars() {
+            if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' { out.push(ch); } else { out.push('_'); }
+        }
+        out
+    }
+
+    /// Persist current in-memory map to disk using a fast binary snapshot.
+    pub fn save_snapshot(&self) -> anyhow::Result<()> {
+        use std::io::Write;
+        fs::create_dir_all(&self.dir).ok();
+        fs::create_dir_all(self.parquet_dir()).ok();
+        let now = Instant::now();
+        #[derive(Serialize, Deserialize)]
+        enum SnapVal {
+            Str(String),
+            Int(i64),
+            Json(Vec<u8>),
+            Bytes(Vec<u8>),
+            Parquet { rel_path: String },
+        }
+        #[derive(Serialize, Deserialize)]
+        struct SnapEntry { key: String, val: SnapVal, ttl_ms: Option<u64>, remaining_ms: Option<u64>, reset_on_access: bool }
+        #[derive(Serialize, Deserialize)]
+        struct Snapshot { version: u32, created_ms: i64, entries: Vec<SnapEntry> }
+
+        let mut entries: Vec<SnapEntry> = Vec::new();
+        {
+            let r = self.map.read();
+            for (k, ent) in r.iter() {
+                let val = match &ent.value {
+                    KvValue::Str(s) => SnapVal::Str(s.clone()),
+                    KvValue::Int(i) => SnapVal::Int(*i),
+                    KvValue::Json(j) => {
+                        let bytes = serde_json::to_vec(j).unwrap_or_default();
+                        SnapVal::Json(bytes)
+                    }
+                    KvValue::Bytes(b) => SnapVal::Bytes(b.clone()),
+                    KvValue::ParquetDf(df) => {
+                        // Write external parquet file
+                        let fname = format!("{}.parquet", Self::sanitize_key_for_file(k));
+                        let path = self.parquet_dir().join(&fname);
+                        let mut f = std::fs::File::create(&path)?;
+                        let mut dfc = df.clone();
+                        polars::prelude::ParquetWriter::new(&mut f).finish(&mut dfc).map_err(|e| anyhow::anyhow!(e.to_string()))?;
+                        let rel = PathBuf::from("parquet").join(fname).to_string_lossy().to_string();
+                        SnapVal::Parquet { rel_path: rel }
+                    }
+                };
+                let ttl_ms = ent.ttl.map(|d| d.as_millis() as u64);
+                let remaining_ms = ent.expires_at.and_then(|x| if x > now { Some((x - now).as_millis() as u64) } else { Some(0) });
+                entries.push(SnapEntry { key: k.clone(), val, ttl_ms, remaining_ms, reset_on_access: ent.reset_on_access });
+            }
+        }
+        let snapshot = Snapshot { version: 1, created_ms: chrono::Utc::now().timestamp_millis(), entries };
+        let bytes = bincode::serialize(&snapshot)?;
+        let tmp = self.snapshot_path().with_extension("tmp");
+        let mut f = std::fs::File::create(&tmp)?;
+        f.write_all(&bytes)?;
+        f.sync_all().ok();
+        std::fs::rename(tmp, self.snapshot_path())?;
+        Ok(())
+    }
+
+    /// Load snapshot from disk into memory; ignores errors to allow startup.
+    pub fn load_snapshot(&self) -> anyhow::Result<()> {
+        if !self.snapshot_path().exists() { return Ok(()); }
+        #[derive(Serialize, Deserialize)]
+        enum SnapVal { Str(String), Int(i64), Json(Vec<u8>), Bytes(Vec<u8>), Parquet { rel_path: String } }
+        #[derive(Serialize, Deserialize)]
+        struct SnapEntry { key: String, val: SnapVal, ttl_ms: Option<u64>, remaining_ms: Option<u64>, reset_on_access: bool }
+        #[derive(Serialize, Deserialize)]
+        struct Snapshot { version: u32, created_ms: i64, entries: Vec<SnapEntry> }
+        let bytes = std::fs::read(self.snapshot_path())?;
+        let snap: Snapshot = bincode::deserialize(&bytes)?;
+        let now = Instant::now();
+        let mut w = self.map.write();
+        w.clear();
+        for e in snap.entries.into_iter() {
+            let kv = match e.val {
+                SnapVal::Str(s) => KvValue::Str(s),
+                SnapVal::Int(i) => KvValue::Int(i),
+                SnapVal::Json(b) => {
+                    let j: JsonValue = serde_json::from_slice(&b).unwrap_or(JsonValue::Null);
+                    KvValue::Json(j)
+                }
+                SnapVal::Bytes(b) => KvValue::Bytes(b),
+                SnapVal::Parquet { rel_path } => {
+                    let p = self.dir.join(rel_path);
+                    match polars::prelude::ParquetReader::new(std::fs::File::open(&p)?).finish() {
+                        Ok(df) => KvValue::ParquetDf(df),
+                        Err(_) => KvValue::Bytes(Vec::new()),
+                    }
+                }
+            };
+            let ttl = e.ttl_ms.map(|ms| Duration::from_millis(ms));
+            let expires_at = match (ttl, e.remaining_ms) {
+                (Some(_), Some(rem)) if rem > 0 => Some(now + Duration::from_millis(rem)),
+                (Some(d), _) => Some(now + d), // fallback if missing remaining
+                _ => None,
+            };
+            w.insert(e.key, Entry { value: kv, ttl, expires_at, reset_on_access: e.reset_on_access });
+        }
         Ok(())
     }
 
@@ -1072,6 +1242,11 @@ impl KvStore {
         let ent = Entry { value, ttl, expires_at, reset_on_access: reset };
         let mut w = self.map.write();
         w.insert(key, ent);
+    }
+
+    /// Convenience: store raw bytes without extra allocations by cloning once into the map.
+    pub fn set_bytes(&self, key: impl Into<String>, bytes: &[u8], ttl: Option<Duration>, reset_on_access: Option<bool>) {
+        self.set(key, KvValue::Bytes(bytes.to_vec()), ttl, reset_on_access);
     }
 
     /// Get a key. If expired, removes it and returns None. If reset_on_access, bumps expiry.
@@ -1103,11 +1278,28 @@ impl KvStore {
         w.get(key).map(|e| e.value.clone())
     }
 
+    /// Convenience: get raw bytes if the stored value is binary.
+    pub fn get_bytes(&self, key: &str) -> Option<Vec<u8>> {
+        match self.get(key) {
+            Some(KvValue::Bytes(b)) => Some(b),
+            _ => None,
+        }
+    }
+
     pub fn delete(&self, key: &str) -> bool { self.map.write().remove(key).is_some() }
     pub fn clear(&self) { self.map.write().clear(); }
     pub fn len(&self) -> usize { self.map.read().len() }
     /// Return a snapshot of all keys in this store
     pub fn keys(&self) -> Vec<String> { self.map.read().keys().cloned().collect() }
+
+    /// Delete keys that start with the provided prefix. Returns number of removed keys.
+    pub fn delete_prefix(&self, prefix: &str) -> usize {
+        let mut w = self.map.write();
+        let to_remove: Vec<String> = w.keys().filter(|k| k.starts_with(prefix)).cloned().collect();
+        let n = to_remove.len();
+        for k in to_remove { w.remove(&k); }
+        n
+    }
 
     /// Remove expired keys. Returns number removed.
     pub fn sweep(&self) -> usize {
@@ -1331,8 +1523,52 @@ mod tests {
         let shared = SharedStore::new(tmp.path()).unwrap();
         let _kv = shared.kv_store("db1", "s1");
         // settings file should exist at /<db>/stores/<store>/config.json
-        let cfg = shared.root_path().join("db1").join("stores").join("s1").join("config.json");
-        assert!(cfg.exists());
+        let cfg_new = shared.root_path().join("db1").join("stores").join("s1").join("store.json");
+        let cfg_legacy = shared.root_path().join("db1").join("stores").join("s1").join("config.json");
+        assert!(cfg_new.exists() || cfg_legacy.exists());
+    }
+
+    #[test]
+    fn test_kv_store_persistence_snapshot_roundtrip() {
+        let tmp = tempfile::tempdir().unwrap();
+        let shared = SharedStore::new(tmp.path()).unwrap();
+        let kv = shared.kv_store("dbp", "cache");
+        // enable persistence in settings and save
+        {
+            let mut s = kv.settings.clone();
+            s.persistence = Some(super::PersistenceSettings { enabled: true, interval_ms: 5_000, format: "bincode".into() });
+            let kv2 = super::KvStore::new(kv.dir.clone(), s);
+            let _ = kv2.save_settings();
+            // populate values
+            kv2.set("a", KvValue::Str("hello".into()), None, None);
+            kv2.set("b", KvValue::Int(42), None, None);
+            kv2.set("c", KvValue::Json(json!({"x":1})), None, None);
+            // snapshot now
+            kv2.save_snapshot().unwrap();
+        }
+        // Reload store; should restore entries
+        let kv_new = shared.kv_store("dbp", "cache");
+        assert!(matches!(kv_new.get("a").unwrap(), KvValue::Str(ref s) if s=="hello"));
+        assert!(matches!(kv_new.get("b").unwrap(), KvValue::Int(42)));
+        match kv_new.get("c").unwrap() { KvValue::Json(v) => assert_eq!(v["x"], 1), _ => panic!("json missing") }
+    }
+
+    #[test]
+    fn test_kv_store_persistence_ttl_restore() {
+        let tmp = tempfile::tempdir().unwrap();
+        let shared = SharedStore::new(tmp.path()).unwrap();
+        let kv = shared.kv_store("dbq", "cache");
+        let mut s = kv.settings.clone();
+        s.persistence = Some(super::PersistenceSettings { enabled: true, interval_ms: 5_000, format: "bincode".into() });
+        let kv2 = super::KvStore::new(kv.dir.clone(), s);
+        kv2.set("ttl", KvValue::Int(1), Some(Duration::from_millis(200)), Some(false));
+        // snapshot immediately to capture remaining time (~200ms)
+        kv2.save_snapshot().unwrap();
+        // reload and ensure key exists, then after >200ms, it expires
+        let kv3 = shared.kv_store("dbq", "cache");
+        assert!(kv3.get("ttl").is_some());
+        std::thread::sleep(Duration::from_millis(250));
+        assert!(kv3.get("ttl").is_none());
     }
 
     #[test]

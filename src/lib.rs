@@ -5,6 +5,7 @@ pub mod scripts;
 pub mod system;
 pub mod ident;
 pub mod error;
+pub mod lua_bc;
 #[cfg(feature = "pgwire")]
 pub mod pgwire_server;
 
