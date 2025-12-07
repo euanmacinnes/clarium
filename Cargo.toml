@@ -56,6 +56,12 @@ mlua = { version = "0.9", features = ["lua54", "vendored", "serialize"] }
 once_cell = "1"
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
 bincode = "1"
+uuid = { version = "1", features = ["v4", "serde"] }
+unicode-normalization = "0.1"
+
+# Git backends (optional, used by FILESTORE; no default features changed)
+gix = { version = "0.63", optional = true }
+git2 = { version = "0.19", optional = true }
 
 [profile.release]
 lto = true
@@ -75,6 +81,12 @@ ann_hnsw_mmap = []
 
 # Dev-only SeaORM runner in clarium_test_suite
 seaorm_dev = ["dep:sea-orm", "dep:sea-query"]
+
+# FILESTORE Git backend features
+# Pure Rust gitoxide support (off by default for now; enable per-binary/crate as needed)
+gitoxide = ["dep:gix"]
+# Optional fallback to libgit2 for push operations only
+libgit2-push = ["dep:git2"]
 
 [dev-dependencies]
 futures = "0.3.31"

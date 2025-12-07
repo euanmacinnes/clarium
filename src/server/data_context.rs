@@ -637,8 +637,8 @@ impl DataContext {
                     }
                 }
                 let df = if effective.contains(".store.") {
-                    // KV addressing
-                    let out = Self::read_df_or_kv(store, &effective)?;
+                    // KV addressing via shared exec helper (handles JSON/Parquet)
+                    let out = crate::server::exec::df_utils::read_df_or_kv(store, &effective)?;
                     tracing::debug!(target: "clarium::exec", "load_source_df: KV df cols={:?} rows={}", out.get_column_names(), out.height());
                     out
                 } else {
@@ -769,34 +769,5 @@ impl DataContext {
         Ok(DataFrame::new(cols)?)
     }
 
-    fn read_df_or_kv(store: &crate::storage::SharedStore, name: &str) -> anyhow::Result<DataFrame> {
-        // Duplicate of exec.rs helper to avoid module coupling
-        // Detect pattern: <database>.store.<store>.<key>
-        if name.contains(".store.") {
-            let parts: Vec<&str> = name.split('.').collect();
-            if parts.len() < 4 {
-                anyhow::bail!(format!("Invalid store address '{}'. Expected <database>.store.<store>.<key>", name));
-            }
-            if parts[1].to_lowercase() != "store" {
-                anyhow::bail!(format!("Invalid store address '{}'. Expected literal 'store' segment", name));
-            }
-            let db = parts[0];
-            let store_name = parts[2];
-            let key = parts[3..].join(".");
-            let kv = store.kv_store(db, store_name);
-            if let Some(val) = kv.get(&key) {
-                match val {
-                    crate::storage::KvValue::ParquetDf(df) => Ok(df),
-                    crate::storage::KvValue::Json(_) => anyhow::bail!("JSON key cannot be used in FROM yet; JSON querying is not implemented"),
-                    crate::storage::KvValue::Str(_) | crate::storage::KvValue::Int(_) => anyhow::bail!("Scalar key cannot be used in FROM; expected a table"),
-                    crate::storage::KvValue::Bytes(_) => anyhow::bail!("Binary key cannot be used in FROM; expected a table"),
-                }
-            } else {
-                anyhow::bail!(format!("KV key not found: {}.store.{}.{}", db, store_name, key));
-            }
-        } else {
-            let guard = store.0.lock();
-            guard.read_df(name)
-        }
-    }
+    // read_df_or_kv: removed duplicate; use crate::server::exec::df_utils::read_df_or_kv instead
 }

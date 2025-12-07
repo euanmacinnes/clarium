@@ -1,6 +1,4 @@
 use anyhow::{Result, bail};
-use regex::Regex;
-use tracing::{debug};
 
 pub mod query_common;
 pub mod query_parse_arith_expr;
