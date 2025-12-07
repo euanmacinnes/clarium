@@ -89,21 +89,25 @@ pub fn order_limit(mut df: DataFrame, q: &Query, ctx: &mut DataContext) -> Resul
                                     } else {
                                         tprintln!("[ORDER_LIMIT] ANN path: no index found for {}.{}; computing exact distances for ordering", p.table, p.column);
                                     }
-                                    if df.get_column_names().iter().any(|c| c.eq_ignore_ascii_case(&p.column)) {
+                                    // Resolve column in the current DF/context in case it's prefixed
+                                    let resolved_col = ctx
+                                        .resolve_column_at_stage(&df, &p.column, SelectStage::OrderLimit)
+                                        .unwrap_or_else(|_| p.column.clone());
+                                    if df.get_column_names().iter().any(|c| c.eq_ignore_ascii_case(&resolved_col)) {
                                         // Pass LIMIT as top-k optimization to sorter
                                         let topk = q.limit.and_then(|n| if n > 0 { Some(n as usize) } else { None });
                                         let ef_search = crate::system::get_vector_ef_search();
                                         tprintln!("[ORDER_LIMIT] ANN executing (exact compute) with ef_search={} topk={:?}", ef_search, topk);
                                         // Secondary keys are the remaining ORDER BY keys after the primary
                                         let sec: Option<Vec<(String,bool)>> = q.order_by.as_ref().map(|v| v.iter().skip(1).cloned().collect());
-                                        if let Ok(sorted) = ann_order_dataframe(ctx, &df, &p.column, &p.func, metric, dim, &rhs_val, *asc_flag, topk, sec.as_ref()) {
+                                        if let Ok(sorted) = ann_order_dataframe(ctx, &df, &resolved_col, &p.func, metric, dim, &rhs_val, *asc_flag, topk, sec.as_ref()) {
                                             df = sorted;
                                             ann_applied = true;
                                         } else {
                                             tprintln!("[ORDER_LIMIT] ANN execution failed; falling back to exact sort");
                                         }
                                     } else {
-                                        tprintln!("[ORDER_LIMIT] ANN requested but column '{}' not present in projection; fallback to exact", p.column);
+                                        tprintln!("[ORDER_LIMIT] ANN requested but column '{}' not present in projection; fallback to exact", resolved_col);
                                     }
                                 } else {
                                     tprintln!("[ORDER_LIMIT] ANN requested but RHS scalar could not be evaluated; falling back to exact");
@@ -122,10 +126,13 @@ pub fn order_limit(mut df: DataFrame, q: &Query, ctx: &mut DataContext) -> Resul
                                 let diag = ann_find_index_for(ctx, &p.table, &p.column);
                                 let metric = diag.as_ref().and_then(|d| d.metric.as_deref());
                                 let dim = diag.as_ref().and_then(|d| d.dim);
-                                if df.get_column_names().iter().any(|c| c.eq_ignore_ascii_case(&p.column)) {
+                                let resolved_col = ctx
+                                    .resolve_column_at_stage(&df, &p.column, SelectStage::OrderLimit)
+                                    .unwrap_or_else(|_| p.column.clone());
+                                if df.get_column_names().iter().any(|c| c.eq_ignore_ascii_case(&resolved_col)) {
                                     let topk = q.limit.and_then(|n| if n > 0 { Some(n as usize) } else { None });
                                     let sec: Option<Vec<(String,bool)>> = q.order_by.as_ref().map(|v| v.iter().skip(1).cloned().collect());
-                                    if let Ok(sorted) = ann_order_dataframe(ctx, &df, &p.column, &p.func, metric, dim, &rhs_val, *asc_flag, topk, sec.as_ref()) {
+                                    if let Ok(sorted) = ann_order_dataframe(ctx, &df, &resolved_col, &p.func, metric, dim, &rhs_val, *asc_flag, topk, sec.as_ref()) {
                                         df = sorted;
                                         ann_applied = true;
                                     }

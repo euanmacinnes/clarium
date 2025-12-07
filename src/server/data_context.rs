@@ -497,6 +497,25 @@ impl DataContext {
             } else { t.to_string() }
         };
         let name_norm = normalize(name);
+        let is_qualified = name_norm.contains('.');
+        // Fast-path: if there is a single unique table prefix in df and the request is unqualified,
+        // resolve as <prefix>.<name> when it exists (case-insensitive).
+        if !is_qualified {
+            let mut prefixes: std::collections::HashSet<String> = std::collections::HashSet::new();
+            for cname in df.get_column_names() {
+                if let Some((pref, _col)) = cname.rsplit_once('.') {
+                    prefixes.insert(pref.to_string());
+                }
+            }
+            if prefixes.len() == 1 {
+                if let Some(pref) = prefixes.into_iter().next() {
+                    let candidate = format!("{}.{}", pref, name_norm);
+                    if let Some(actual) = df.get_column_names().iter().find(|c| c.as_str().eq_ignore_ascii_case(&candidate)) {
+                        return Ok(actual.to_string());
+                    }
+                }
+            }
+        }
         // Step 1: normal resolution first
         match self.resolve_column(df, &name_norm) {
             Ok(n) => {
@@ -755,32 +774,35 @@ impl DataContext {
                         }
                     }
                 };
-                let pref = alias.as_deref().unwrap_or(name.as_str());
-                let mut prefixed = Self::prefix_columns(df, t)?;
-                // Inject a stable ordinal <prefix>.__row_id to aid ANN row-id mapping and avoid name collisions in joins
-                // Where <prefix> is the alias if present, else the fully/partially qualified table name used for prefixing.
-                let rid_alias_name = format!("{}.{}", pref, "__row_id");
-                if !prefixed.get_column_names().iter().any(|c| c.as_str().eq_ignore_ascii_case(&rid_alias_name)) {
+                // Choose a canonical prefix: alias if provided, otherwise the fully-qualified effective name
+                let prefix = alias.as_deref().unwrap_or(&effective);
+                // Guard: if columns already start with the chosen prefix + '.', skip re-prefixing
+                let already_prefixed = {
+                    let pref_dot = format!("{}.", prefix);
+                    df.get_column_names().iter().all(|c| c.starts_with(&pref_dot))
+                };
+                let mut prefixed = if already_prefixed {
+                    df
+                } else {
+                    let mut cols: Vec<polars::prelude::Column> = Vec::with_capacity(df.get_column_names().len());
+                    for cname in df.get_column_names() {
+                        let new_name = format!("{}.{}", prefix, cname);
+                        let mut s = df.column(cname.as_str())?.clone();
+                        s.rename(new_name.into());
+                        cols.push(s);
+                    }
+                    DataFrame::new(cols)?
+                };
+                // Inject a single stable ordinal <prefix>.__row_id to aid ANN row-id mapping
+                let rid_name = format!("{}.{}", prefix, "__row_id");
+                if !prefixed.get_column_names().iter().any(|c| c.as_str().eq_ignore_ascii_case(&rid_name)) {
                     let h = prefixed.height();
                     let mut ids: Vec<u64> = Vec::with_capacity(h);
                     for i in 0..h { ids.push(i as u64); }
-                    let s = Series::new(rid_alias_name.clone().into(), ids);
+                    let s = Series::new(rid_name.clone().into(), ids);
                     let _ = prefixed.with_column(s);
                 }
-                // Also inject fully-qualified <fq>.__row_id if this is a regular table and fq can be resolved
-                if !name.contains(".store.") {
-                    let fq = self.resolve_table_name(name);
-                    let rid_fq_name = format!("{}.{}", fq, "__row_id");
-                    if !prefixed.get_column_names().iter().any(|c| c.as_str().eq_ignore_ascii_case(&rid_fq_name)) {
-                        // Reuse same IDs
-                        let h = prefixed.height();
-                        let mut ids: Vec<u64> = Vec::with_capacity(h);
-                        for i in 0..h { ids.push(i as u64); }
-                        let s = Series::new(rid_fq_name.into(), ids);
-                        let _ = prefixed.with_column(s);
-                    }
-                }
-                tracing::debug!(target: "clarium::exec", "load_source_df: prefixed with '{}' -> cols={:?}", pref, prefixed.get_column_names());
+                tracing::debug!(target: "clarium::exec", "load_source_df: prefixed with '{}' -> cols={:?}", prefix, prefixed.get_column_names());
                 Ok(prefixed)
             }
             TableRef::Subquery { query, alias } => {

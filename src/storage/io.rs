@@ -305,12 +305,18 @@ impl Store {
         }
         let locks = locks;
 
+        // Build the set of columns to write as the union of schema keys and observed record keys
+        // This ensures schema-declared columns (e.g., VECTOR) are present even if missing in incoming rows
+        let mut write_names: Vec<String> = schema.keys().cloned().collect();
+        for k in &col_names { if !write_names.iter().any(|w| w == k) { write_names.push(k.clone()); } }
+        write_names.sort();
+
         // Prepare column buffers according to merged schema
         let mut times: Vec<i64> = Vec::with_capacity(records.len());
         let mut f64_cols: HashMap<String, Vec<Option<f64>>> = HashMap::new();
         let mut i64_cols: HashMap<String, Vec<Option<i64>>> = HashMap::new();
         let mut str_cols: HashMap<String, Vec<Option<String>>> = HashMap::new();
-        for name in &col_names {
+        for name in &write_names {
             match schema.get(name) {
                 Some(DataType::String) => { str_cols.insert(name.clone(), Vec::with_capacity(records.len())); },
                 Some(DataType::Int64) => { i64_cols.insert(name.clone(), Vec::with_capacity(records.len())); },
@@ -320,7 +326,7 @@ impl Store {
 
         for r in records {
             times.push(r._time);
-            for name in &col_names {
+            for name in &write_names {
                 match schema.get(name) {
                     Some(DataType::String) => {
                         let entry = str_cols.get_mut(name).unwrap();
@@ -354,19 +360,30 @@ impl Store {
         }
 
         // Create series and assemble into DataFrame
-        let mut cols: Vec<Column> = Vec::with_capacity(col_names.len() + 1);
-        cols.push(Series::new("_time".into(), times).into());
-        for (name, vals) in f64_cols.into_iter() { cols.push(Series::new(name.into(), vals).into()); }
-        for (name, vals) in i64_cols.into_iter() { cols.push(Series::new(name.into(), vals).into()); }
-        for (name, vals) in str_cols.into_iter() { cols.push(Series::new(name.into(), vals).into()); }
+        let is_time_table = table.ends_with(".time");
+        let mut cols: Vec<Column> = Vec::with_capacity(write_names.len() + 1);
+        if is_time_table {
+            // Time tables: synthetic authoritative _time from Record
+            cols.push(Series::new("_time".into(), times).into());
+            for (name, vals) in f64_cols.into_iter() { if name != "_time" { cols.push(Series::new(name.into(), vals).into()); } }
+            for (name, vals) in i64_cols.into_iter() { if name != "_time" { cols.push(Series::new(name.into(), vals).into()); } }
+            for (name, vals) in str_cols.into_iter() { if name != "_time" { cols.push(Series::new(name.into(), vals).into()); } }
+        } else {
+            // Regular tables: do not synthesize _time; preserve payload `_time` if present
+            for (name, vals) in f64_cols.into_iter() { cols.push(Series::new(name.into(), vals).into()); }
+            for (name, vals) in i64_cols.into_iter() { cols.push(Series::new(name.into(), vals).into()); }
+            for (name, vals) in str_cols.into_iter() { cols.push(Series::new(name.into(), vals).into()); }
+        }
         let mut df = DataFrame::new(cols)?;
 
-        // Sort by _time ascending
-        let opts = SortMultipleOptions { descending: vec![false], ..Default::default() };
-        df = df.sort(["_time"], opts)?;
+        // Sort by _time ascending for time tables only
+        if is_time_table {
+            let opts = SortMultipleOptions { descending: vec![false], ..Default::default() };
+            df = df.sort(["_time"], opts)?;
+        }
 
         // Persist chunk for time tables or single file for regular tables without partitions
-        if !table.ends_with(".time") {
+        if !is_time_table {
             // If regular table and no partitions set, write/replace single data.parquet file
             let sp = self.schema_path(table);
             let parts = if sp.exists() {
@@ -384,12 +401,17 @@ impl Store {
                     .finish(&mut df)?;
                 return Ok(());
             }
-            // else fall-through to chunked write handled by rewrite_table_df path
+            // Partitions are defined for a regular table: delegate to partition-aware rewrite_table_df
+            // This will remove previous parquet files and write one file per partition group.
+            self.rewrite_table_df(table, df.clone())?;
+            return Ok(());
         }
 
         // Write chunked file with min/max/time suffix
-        let min_t = df.column("_time")?.i64()?.min().unwrap_or(0);
-        let max_t = df.column("_time")?.i64()?.max().unwrap_or(0);
+        let (min_t, max_t) = if let Ok(c) = df.column("_time") {
+            let ca = c.i64();
+            if let Ok(ci) = ca { (ci.min().unwrap_or(0), ci.max().unwrap_or(0)) } else { (0, 0) }
+        } else { (0, 0) };
         let now_ms: u128 = UNIX_EPOCH.elapsed().unwrap().as_millis();
         let fname = format!("data-{}-{}-{}.parquet", min_t, max_t, now_ms);
         let path = self.db_dir(table).join(fname);
