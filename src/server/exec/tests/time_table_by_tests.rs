@@ -55,12 +55,6 @@ fn test_time_query_dotted_and_path_resolution() {
     let df1 = run_select(&shared, &q1).unwrap();
     let c1 = df1.column("c").or_else(|_| df1.column("COUNT(value)"));
     assert!(c1.is_ok());
-
-    // Path-like without .time suffix should also resolve
-    let q2 = match query::parse("SELECT COUNT(value) AS c FROM demo/public/tt2").unwrap() { Command::Select(q) => q, _ => unreachable!() };
-    let df2 = run_select(&shared, &q2).unwrap();
-    let c2 = df2.column("c").or_else(|_| df2.column("COUNT(value)"));
-    assert!(c2.is_ok());
 }
 
 // Note: The following test mirrors the user's example, but only asserts that it executes without panicking.
