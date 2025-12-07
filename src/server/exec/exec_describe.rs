@@ -114,12 +114,25 @@ pub fn execute_describe(store: &SharedStore, name: &str) -> Result<serde_json::V
     let json = json.ok_or_else(|| anyhow::anyhow!("schema.json missing for table"))?;
     let mut type_map: std::collections::BTreeMap<String, String> = std::collections::BTreeMap::new();
     if let Some(obj) = json.as_object() {
-        for (k, v) in obj.iter() {
-            if k == "PRIMARY" || k == "primaryKey" || k == "partitions" || k == "tableType" { continue; }
-            let ty_key = if let Some(s) = v.as_str() { s.to_string() }
-                else if let Some(m) = v.as_object() { m.get("type").and_then(|x| x.as_str()).unwrap_or("").to_string() }
-                else { String::new() };
-            type_map.insert(k.clone(), ty_key);
+        // Preferred modern format: { columns: { name: dtype, ... }, locks: [...] }
+        if let Some(cols) = obj.get("columns").and_then(|x| x.as_object()) {
+            for (name, v) in cols.iter() {
+                if let Some(s) = v.as_str() {
+                    type_map.insert(name.clone(), s.to_string());
+                }
+            }
+        } else {
+            // Legacy flat map format: { name: dtype, PRIMARY: ..., primaryKey: ..., partitions: ... }
+            for (k, v) in obj.iter() {
+                if k == "PRIMARY" || k == "primaryKey" || k == "partitions" || k == "tableType" || k == "locks" { continue; }
+                if let Some(s) = v.as_str() {
+                    type_map.insert(k.clone(), s.to_string());
+                } else if let Some(m) = v.as_object() {
+                    // Optional legacy nested: { name: { type: "..." } }
+                    let ty = m.get("type").and_then(|x| x.as_str()).unwrap_or("").to_string();
+                    type_map.insert(k.clone(), ty);
+                }
+            }
         }
     }
 
