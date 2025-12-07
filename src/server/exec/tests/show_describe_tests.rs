@@ -25,6 +25,10 @@ async fn test_show_tables_lists_created_table() {
         .filter_map(|v| v.get("table_name").and_then(|s| s.as_str()).map(|s| s.to_string()))
         .collect();
     assert!(names.contains("rust_meta_test"), "SHOW TABLES did not list the created table. Got: {:?}", names);
+
+    // Parquet exists and is empty immediately after CREATE
+    let df = { let g = shared.0.lock(); g.read_df("clarium/public/rust_meta_test").unwrap() };
+    assert_eq!(df.height(), 0, "newly created table should have 0 rows");
 }
 
 #[tokio::test]
@@ -41,6 +45,12 @@ async fn test_describe_table_returns_schema_rows() {
     let _ = execute_query(&shared, r#"INSERT INTO clarium/public/rust_meta_desc (id, name, value) VALUES (1, 'A', 10), (2, 'B', 20)"#)
         .await
         .unwrap();
+
+    // Verify parquet contents before DESCRIBE
+    let dfp = { let g = shared.0.lock(); g.read_df(table_fqn).unwrap() };
+    assert_eq!(dfp.height(), 2);
+    let cols = dfp.get_column_names();
+    for need in ["id","name","value"].iter() { assert!(cols.iter().any(|c| c.as_str()==*need), "missing col {}", need); }
 
     // DESCRIBE should return a tabular schema with a 'Column' header and rows for id,name,value
     let val = execute_query(&shared, "DESCRIBE rust_meta_desc").await.unwrap();

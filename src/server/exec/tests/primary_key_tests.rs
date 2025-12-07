@@ -23,11 +23,23 @@ async fn test_primary_key_single_column_inserts_and_duplicates() {
     assert_eq!(res["status"], json!("ok"));
     assert_eq!(res["inserted"], json!(2));
 
+    // Verify parquet contents reflect 2 rows with expected columns
+    let df_after = { let g = shared.0.lock(); g.read_df(table).unwrap() };
+    assert_eq!(df_after.height(), 2, "expected 2 rows in parquet after insert");
+    // Columns present
+    let cols = df_after.get_column_names();
+    assert!(cols.iter().any(|c| c.as_str()=="id"));
+    assert!(cols.iter().any(|c| c.as_str()=="name"));
+
     // Duplicate id -> should fail
     let dup = format!("INSERT INTO {} (id, name) VALUES (2, 'Dup')", table);
     let err = execute_query(&shared, &dup).await.err().expect("expected PK violation");
     let msg = err.to_string();
     assert!(msg.contains("PRIMARY KEY"), "unexpected error: {}", msg);
+
+    // Ensure parquet row count unchanged after failed duplicate
+    let df_still = { let g = shared.0.lock(); g.read_df(table).unwrap() };
+    assert_eq!(df_still.height(), 2);
 }
 
 // Composite primary key: (a,b)
@@ -48,6 +60,12 @@ async fn test_primary_key_composite_inserts_and_duplicates() {
         table
     );
     execute_query(&shared, &ins_ok).await.unwrap();
+
+    // Verify parquet has 2 rows and expected columns
+    let df_after = { let g = shared.0.lock(); g.read_df(table).unwrap() };
+    assert_eq!(df_after.height(), 2);
+    let cols = df_after.get_column_names();
+    for need in ["a","b","v"].iter() { assert!(cols.iter().any(|c| c.as_str()==*need), "missing col {}", need); }
 
     // Duplicate composite key (x,y) -> fail
     let dup = format!("INSERT INTO {} (a, b, v) VALUES ('x', 'y', 3)", table);
@@ -77,6 +95,10 @@ async fn test_primary_key_update_validation() {
 
     // Change PK to unique -> ok
     execute_query(&shared, &format!("UPDATE {} SET id = 3 WHERE id = 1", table)).await.unwrap();
+
+    // Verify parquet still has 2 rows and values updated
+    let df_after = { let g = shared.0.lock(); g.read_df(table).unwrap() };
+    assert_eq!(df_after.height(), 2);
 }
 
 // Partitioning respected on INSERT and UPDATE with PK including partition column

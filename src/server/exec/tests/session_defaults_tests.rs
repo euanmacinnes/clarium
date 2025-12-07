@@ -62,6 +62,10 @@ fn test_use_affects_table_ddl() {
     let dir = store.root_path().join(format!("db2{}sch2{}t1", std::path::MAIN_SEPARATOR, std::path::MAIN_SEPARATOR));
     assert!(dir.exists(), "expected table directory at {}", dir.display());
 
+    // Verify parquet can be loaded and is empty initially
+    let df = { let g = shared.0.lock(); g.read_df("db2/sch2/t1").unwrap() };
+    assert_eq!(df.height(), 0, "newly created table should have 0 rows");
+
     // Drop unqualified
     rt.block_on(exec::execute_query(&shared, "DROP TABLE t1")).unwrap();
     assert!(!dir.exists(), "expected table directory removed at {}", dir.display());

@@ -99,6 +99,9 @@ fn test_view_union_and_alias_and_collisions() {
     // Name collisions: table vs view
     // Create a regular table and then attempt to create a view with the same name
     rt.block_on(exec::execute_query(&shared, "CREATE TABLE clarium/public/ntbl")).unwrap();
+    // Verify parquet directory created and is empty initially
+    let df_ntbl = { let g = shared.0.lock(); g.read_df("clarium/public/ntbl").unwrap() };
+    assert_eq!(df_ntbl.height(), 0);
     let err1 = rt.block_on(exec::execute_query(&shared, "CREATE VIEW ntbl AS SELECT 1 AS c")).err();
     assert!(err1.is_some(), "Expected CREATE VIEW to fail due to name collision with table");
 

@@ -77,6 +77,16 @@ fn ddl_accepts_vector_and_schema_reports_vector() {
         }
     }
     assert!(saw_vector, "schema did not report emb as vector");
+
+    // Also load the just-created parquet (no rows yet) and verify columns/dtypes
+    let df = { let g = store.0.lock(); g.filter_df("demo/vec", &vec!["id".into(), "emb".into()], None, None).unwrap() };
+    // Should have zero rows immediately after CREATE
+    assert_eq!(df.height(), 0, "newly created table should have 0 rows");
+    // Columns should be present with expected dtypes based on schema
+    let id = df.column("id").expect("id column missing after CREATE");
+    assert!(matches!(id.dtype(), DataType::Int64 | DataType::Float64), "id should be numeric, got {:?}", id.dtype());
+    let emb = df.column("emb").expect("emb column missing after CREATE");
+    assert!(matches!(emb.dtype(), DataType::List(_)), "emb should be a List dtype, got {:?}", emb.dtype());
 }
 
 #[test]
@@ -137,7 +147,17 @@ fn missing_vector_column_is_added_as_null_list() {
     }
     store.write_records("demo/missing_vec", &recs).unwrap();
 
-    // Read back and verify 'emb' exists and is a List type
+    // Verify table content directly from storage (actual parquet), before running SELECT
+    {
+        let df = store.filter_df("demo/missing_vec", &vec!["id".into(), "emb".into()], None, None).unwrap();
+        let id = df.column("id").expect("id column missing in parquet");
+        assert!(matches!(id.dtype(), DataType::Int64), "id should be Int64 in parquet, got {:?}", id.dtype());
+        let emb = df.column("emb").expect("emb column missing in parquet");
+        assert!(matches!(emb.dtype(), DataType::List(_)), "emb should be a List dtype in parquet, got {:?}", emb.dtype());
+        assert_eq!(emb.null_count(), df.height(), "emb should be all nulls in parquet");
+    }
+
+    // Read back via SELECT and verify 'emb' exists and is a List type
     let shared = SharedStore::new(tmp.path()).unwrap();
     let q = match query::parse("SELECT id, emb FROM demo/missing_vec").unwrap() { Command::Select(x) => x, _ => unreachable!() };
     let df = run_select(&shared, &q).unwrap();

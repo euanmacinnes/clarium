@@ -21,8 +21,9 @@ impl Store {
     pub fn filter_df(&self, table: &str, cols: &[String], t0: Option<i64>, t1: Option<i64>) -> Result<DataFrame> {
         let dir = self.db_dir(table);
         let mut wanted: Vec<String> = cols.iter().cloned().collect();
-        // Ensure _time present when filtering on timeseries
-        if !wanted.iter().any(|c| c == "_time") { wanted.insert(0, "_time".into()); }
+        // Ensure _time present only for time-series tables (*.time)
+        let is_time_table = table.ends_with(".time");
+        if is_time_table && !wanted.iter().any(|c| c == "_time") { wanted.insert(0, "_time".into()); }
         let mut dfs: Vec<DataFrame> = Vec::new();
         if dir.exists() {
             let mut files: Vec<PathBuf> = Vec::new();
@@ -43,10 +44,11 @@ impl Store {
             }
             files.sort();
             for p in files {
+                // Read available columns from parquet without pre-filtering. We will project
+                // and synthesize missing requested columns after stacking.
                 let mut reader = ParquetReader::new(std::fs::File::open(&p)?);
-                reader = reader.with_columns(Some(wanted.clone()));
                 let mut df = reader.finish()?;
-                if t0.is_some() || t1.is_some() {
+                if (t0.is_some() || t1.is_some()) && is_time_table {
                     if df.get_column_names().iter().any(|c| c.as_str() == "_time") {
                         let mut lf = df.lazy();
                         if let Some(lo) = t0 { lf = lf.filter(col("_time").gt_eq(lit(lo))); }
@@ -60,11 +62,57 @@ impl Store {
         if dfs.is_empty() {
             // Empty with requested columns
             let mut cols_out: Vec<Column> = Vec::new();
-            for c in wanted { if c == "_time" { cols_out.push(Series::new("_time".into(), Vec::<i64>::new()).into()); } else { cols_out.push(Series::new(c.into(), Vec::<Option<f64>>::new()).into()); } }
+            for c in wanted {
+                if c == "_time" {
+                    cols_out.push(Series::new("_time".into(), Vec::<i64>::new()).into());
+                } else {
+                    cols_out.push(Series::new(c.into(), Vec::<Option<f64>>::new()).into());
+                }
+            }
             return Ok(DataFrame::new(cols_out)?);
         }
         let mut out = dfs.remove(0);
         for df in dfs.into_iter() { out.vstack_mut(&df)?; }
+        // Ensure all requested columns exist; if missing in parquet, synthesize null columns based on schema
+        let present: std::collections::HashSet<String> = out
+            .get_column_names()
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let schema = self.load_schema(table).unwrap_or_default();
+        let mut to_add: Vec<Column> = Vec::new();
+        for w in &wanted {
+            if present.contains(w) { continue; }
+            if w == "_time" { continue; }
+            if let Some(dt) = schema.get(w) {
+                let s: Column = match dt {
+                    DataType::Int64 => Series::new(w.as_str().into(), vec![None::<i64>; out.height()]).into(),
+                    DataType::Float64 => Series::new(w.as_str().into(), vec![None::<f64>; out.height()]).into(),
+                    DataType::String => Series::new(w.as_str().into(), vec![None::<String>; out.height()]).into(),
+                    DataType::List(inner) if matches!(**inner, DataType::Float64) => {
+                        Series::full_null(w.as_str().into(), out.height(), &DataType::List(Box::new(DataType::Float64))).into()
+                    }
+                    DataType::List(inner) if matches!(**inner, DataType::Int64) => {
+                        Series::full_null(w.as_str().into(), out.height(), &DataType::List(Box::new(DataType::Int64))).into()
+                    }
+                    _ => Series::new(w.as_str().into(), vec![None::<f64>; out.height()]).into(),
+                };
+                to_add.push(s);
+            }
+        }
+        if !to_add.is_empty() { out.hstack_mut(&to_add)?; }
+        // Finally, project and order columns to the requested list when possible.
+        // Keep existing columns if some requested are missing (they may not be in schema),
+        // but tests pass requested columns that we either read or synthesized.
+        let mut project: Vec<&str> = Vec::new();
+        for w in &wanted {
+            if out.get_column_names().iter().any(|c| c.as_str() == w.as_str()) {
+                project.push(w.as_str());
+            }
+        }
+        if !project.is_empty() {
+            out = out.select(&project)?;
+        }
         Ok(out)
     }
 
@@ -102,11 +150,15 @@ impl Store {
                     DataType::Int64 => Series::new((&name).into(), Vec::<Option<i64>>::new()).into(),
                     DataType::Float64 => Series::new((&name).into(), Vec::<Option<f64>>::new()).into(),
                     DataType::String => Series::new((&name).into(), Vec::<Option<String>>::new()).into(),
-                    DataType::List(inner) => match *inner {
-                        DataType::Float64 => Series::new((&name).into(), Vec::<Option<f64>>::new()).into(),
-                        DataType::Int64 => Series::new((&name).into(), Vec::<Option<i64>>::new()).into(),
-                        _ => Series::new((&name).into(), Vec::<Option<String>>::new()).into(),
-                    },
+                    // For vectors (List(Float64)), create an empty List series (0 height)
+                    DataType::List(inner) if matches!(*inner, DataType::Float64) => {
+                        let empty: Vec<Option<Series>> = Vec::new();
+                        Series::new((&name).into(), empty).into()
+                    }
+                    DataType::List(inner) if matches!(*inner, DataType::Int64) => {
+                        let empty: Vec<Option<Series>> = Vec::new();
+                        Series::new((&name).into(), empty).into()
+                    }
                     _ => Series::new((&name).into(), Vec::<Option<f64>>::new()).into(),
                 };
                 cols.push(s.into());
@@ -316,10 +368,14 @@ impl Store {
         let mut f64_cols: HashMap<String, Vec<Option<f64>>> = HashMap::new();
         let mut i64_cols: HashMap<String, Vec<Option<i64>>> = HashMap::new();
         let mut str_cols: HashMap<String, Vec<Option<String>>> = HashMap::new();
+        let mut vec_cols: HashMap<String, Vec<Option<Vec<f64>>>> = HashMap::new();
         for name in &write_names {
             match schema.get(name) {
                 Some(DataType::String) => { str_cols.insert(name.clone(), Vec::with_capacity(records.len())); },
                 Some(DataType::Int64) => { i64_cols.insert(name.clone(), Vec::with_capacity(records.len())); },
+                Some(DataType::List(inner)) if matches!(**inner, DataType::Float64) => {
+                    vec_cols.insert(name.clone(), Vec::with_capacity(records.len()));
+                }
                 _ => { f64_cols.insert(name.clone(), Vec::with_capacity(records.len())); },
             }
         }
@@ -346,6 +402,36 @@ impl Store {
                         });
                         entry.push(v);
                     }
+                    Some(DataType::List(inner)) if matches!(**inner, DataType::Float64) => {
+                        // VECTOR column: accept arrays or string-encoded arrays; push None if missing
+                        let entry = vec_cols.get_mut(name).unwrap();
+                        let v: Option<Vec<f64>> = r.sensors.get(name).and_then(|val| match val {
+                            serde_json::Value::Array(a) => {
+                                let mut out: Vec<f64> = Vec::with_capacity(a.len());
+                                for e in a {
+                                    if let Some(n) = e.as_f64() {
+                                        out.push(n);
+                                    } else if let Some(s) = e.as_str() {
+                                        if let Ok(n) = s.trim().parse::<f64>() { out.push(n); } else { return None; }
+                                    } else { return None; }
+                                }
+                                Some(out)
+                            }
+                            serde_json::Value::String(s) => {
+                                // tolerate formats: "[1,2,3]" or "1,2,3"
+                                let t = s.trim().trim_start_matches('[').trim_end_matches(']');
+                                let mut out: Vec<f64> = Vec::new();
+                                for part in t.split(',') {
+                                    let p = part.trim();
+                                    if p.is_empty() { continue; }
+                                    if let Ok(n) = p.parse::<f64>() { out.push(n); } else { return None; }
+                                }
+                                if out.is_empty() { None } else { Some(out) }
+                            }
+                            _ => None,
+                        });
+                        entry.push(v);
+                    }
                     _ => {
                         let entry = f64_cols.get_mut(name).unwrap();
                         let v = r.sensors.get(name).and_then(|val| match val {
@@ -361,6 +447,16 @@ impl Store {
 
         // Create series and assemble into DataFrame
         let is_time_table = table.ends_with(".time");
+        // Determine frame height for constructing null/list columns
+        let height: usize = if is_time_table {
+            times.len()
+        } else {
+            if let Some((_, v)) = f64_cols.iter().next() { v.len() }
+            else if let Some((_, v)) = i64_cols.iter().next() { v.len() }
+            else if let Some((_, v)) = str_cols.iter().next() { v.len() }
+            else if let Some((_, v)) = vec_cols.iter().next() { v.len() }
+            else { 0 }
+        };
         let mut cols: Vec<Column> = Vec::with_capacity(write_names.len() + 1);
         if is_time_table {
             // Time tables: synthetic authoritative _time from Record
@@ -368,11 +464,38 @@ impl Store {
             for (name, vals) in f64_cols.into_iter() { if name != "_time" { cols.push(Series::new(name.into(), vals).into()); } }
             for (name, vals) in i64_cols.into_iter() { if name != "_time" { cols.push(Series::new(name.into(), vals).into()); } }
             for (name, vals) in str_cols.into_iter() { if name != "_time" { cols.push(Series::new(name.into(), vals).into()); } }
+            // vector cols
+            for (name, vals) in vec_cols.into_iter() {
+                if name == "_time" { continue; }
+                if vals.iter().all(|v| v.is_none()) {
+                    // Write an explicit full-null List(Float64) column so parquet has the field
+                    let s = Series::full_null((&name).into(), height, &DataType::List(Box::new(DataType::Float64)));
+                    cols.push(s.into());
+                } else {
+                    let mut cells: Vec<Option<Series>> = Vec::with_capacity(vals.len());
+                    for opt in vals {
+                        if let Some(v) = opt { cells.push(Some(Series::new("".into(), v))); } else { cells.push(None); }
+                    }
+                    cols.push(Series::new(name.into(), cells).into());
+                }
+            }
         } else {
             // Regular tables: do not synthesize _time; preserve payload `_time` if present
             for (name, vals) in f64_cols.into_iter() { cols.push(Series::new(name.into(), vals).into()); }
             for (name, vals) in i64_cols.into_iter() { cols.push(Series::new(name.into(), vals).into()); }
             for (name, vals) in str_cols.into_iter() { cols.push(Series::new(name.into(), vals).into()); }
+            for (name, vals) in vec_cols.into_iter() {
+                if vals.iter().all(|v| v.is_none()) {
+                    let s = Series::full_null((&name).into(), height, &DataType::List(Box::new(DataType::Float64)));
+                    cols.push(s.into());
+                } else {
+                    let mut cells: Vec<Option<Series>> = Vec::with_capacity(vals.len());
+                    for opt in vals {
+                        if let Some(v) = opt { cells.push(Some(Series::new("".into(), v))); } else { cells.push(None); }
+                    }
+                    cols.push(Series::new(name.into(), cells).into());
+                }
+            }
         }
         let mut df = DataFrame::new(cols)?;
 
@@ -399,6 +522,18 @@ impl Store {
                 ParquetWriter::new(&mut file)
                     .with_statistics(StatisticsOptions::default())
                     .finish(&mut df)?;
+                // Update schema.json to reflect actual columns present (excluding _time) and preserve locks
+                use std::collections::{HashMap, HashSet};
+                let (_, existing_locks) = self.load_schema_with_locks(table).unwrap_or((HashMap::new(), HashSet::new()));
+                let mut new_schema: HashMap<String, DataType> = HashMap::new();
+                for name in df.get_column_names() {
+                    if name.as_str() == "_time" { continue; }
+                    let dt = df.column(name.as_str())?.dtype().clone();
+                    new_schema.insert(name.to_string(), dt);
+                }
+                let mut new_locks: HashSet<String> = HashSet::new();
+                for k in existing_locks { if new_schema.contains_key(&k) { new_locks.insert(k); } }
+                super::schema::save_schema_with_locks(self, table, &new_schema, &new_locks)?;
                 return Ok(());
             }
             // Partitions are defined for a regular table: delegate to partition-aware rewrite_table_df
