@@ -76,7 +76,10 @@ impl Default for DataContext {
 }
 
 impl DataContext {
-    pub fn new() -> Self { Self::with_defaults("clarium", "public") }
+    pub fn new() -> Self {
+        use crate::ident::{DEFAULT_DB, DEFAULT_SCHEMA};
+        Self::with_defaults(DEFAULT_DB, DEFAULT_SCHEMA)
+    }
 
     /// Register materialized columns for a stage from a DataFrame
     pub fn register_df_columns_for_stage(&mut self, stage: SelectStage, df: &DataFrame) {

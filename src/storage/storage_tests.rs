@@ -15,9 +15,9 @@ fn test_write_and_read_roundtrip() {
         Record { _time: 1_000, sensors: sensors1 },
         Record { _time: 2_000, sensors: sensors2 },
     ];
-    store.write_records("db1", &recs).unwrap();
+    store.write_records("db1.time", &recs).unwrap();
     // Read back
-    let df = store.read_df("db1").unwrap();
+    let df = store.read_df("db1.time").unwrap();
     assert_eq!(df.height(), 2);
     assert!(df.get_column_names().iter().any(|c| c.as_str() == "_time"));
     assert!(df.get_column_names().iter().any(|c| c.as_str() == "v"));
@@ -69,8 +69,8 @@ fn test_out_of_order_insert_is_sorted_on_disk_and_read_sorted() {
         Record { _time: 1000, sensors: s1 },
         Record { _time: 3000, sensors: s3 },
     ];
-    store.write_records("db", &recs).unwrap();
-    let df = store.read_df("db").unwrap();
+    store.write_records("db.time", &recs).unwrap();
+    let df = store.read_df("db.time").unwrap();
     let times: Vec<i64> = df.column("_time").unwrap().i64().unwrap().into_iter().map(|o| o.unwrap()).collect();
     assert_eq!(times, vec![1000, 2000, 3000]);
 }

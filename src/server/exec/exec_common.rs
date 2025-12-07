@@ -41,12 +41,14 @@ pub fn regclass_oid_with_defaults(name: &str, db: Option<&str>, schema: Option<&
         match parts.len() {
             0 => String::new(),
             1 => {
-                let d = db.unwrap_or("clarium");
-                let s = schema.unwrap_or("public");
+                use crate::ident::{DEFAULT_DB, DEFAULT_SCHEMA};
+                let d = db.unwrap_or(DEFAULT_DB);
+                let s = schema.unwrap_or(DEFAULT_SCHEMA);
                 format!("{}/{}/{}", d, s, parts[0])
             }
             2 => {
-                let d = db.unwrap_or("clarium");
+                use crate::ident::DEFAULT_DB;
+                let d = db.unwrap_or(DEFAULT_DB);
                 format!("{}/{}/{}", d, parts[0], parts[1])
             }
             _ => format!("{}/{}/{}", parts[0], parts[1], parts[2]),

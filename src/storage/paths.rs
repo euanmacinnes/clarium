@@ -4,11 +4,15 @@ use super::Store;
 
 impl Store {
     pub(crate) fn db_dir(&self, table: &str) -> PathBuf {
-        // Delegate to central identifier module for consistent resolution
-        // Detect if this is a time-series table and ensure `.time` suffix on the last segment
-        let d = crate::ident::QueryDefaults::from_options(Some("clarium"), Some("public"));
-        // Heuristic: if the identifier explicitly contains ".time" anywhere, treat as time table
-        let is_time = table.contains(".time");
+        // Use current session defaults to qualify partial identifiers.
+        // Rules:
+        //   table              -> <current_db>/<current_schema>/<table>
+        //   schema/table       -> <current_db>/<schema>/<table>
+        //   db/schema/table    -> used as-is after normalization
+        // Time tables (*.time) are routed via `qualify_time_ident`.
+        let d = crate::system::current_query_defaults();
+        let is_time = table.ends_with(".time")
+            || table.split('.').last().map(|t| t.eq_ignore_ascii_case("time")).unwrap_or(false);
         let qualified = if is_time {
             crate::ident::qualify_time_ident(table, &d)
         } else {

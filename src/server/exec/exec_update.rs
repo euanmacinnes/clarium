@@ -29,7 +29,10 @@ pub fn handle_update(store: &SharedStore, table: String, assignments: Vec<(Strin
     let __t_mask = std::time::Instant::now();
     let mask_bool = if let Some(w) = &where_clause {
         let registry_snapshot = crate::scripts::get_script_registry().and_then(|r| r.snapshot().ok());
-        let mut ctx = crate::server::data_context::DataContext::with_defaults("clarium", "public");
+        let mut ctx = crate::server::data_context::DataContext::with_defaults(
+            crate::ident::DEFAULT_DB,
+            crate::ident::DEFAULT_SCHEMA,
+        );
         if let Some(reg) = registry_snapshot { ctx.script_registry = Some(reg); }
         if where_contains_subquery(w) {
             eval_where_mask(&df_all, &ctx, store, w)?

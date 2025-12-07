@@ -21,7 +21,10 @@ pub fn handle_delete_columns(store: &SharedStore, database: String, mut columns:
     let new_df = if let Some(w) = &where_clause {
         // Build mask (with subquery support)
         let registry_snapshot = crate::scripts::get_script_registry().and_then(|r| r.snapshot().ok());
-        let mut ctx = crate::server::data_context::DataContext::with_defaults("clarium", "public");
+        let mut ctx = crate::server::data_context::DataContext::with_defaults(
+            crate::ident::DEFAULT_DB,
+            crate::ident::DEFAULT_SCHEMA,
+        );
         if let Some(reg) = registry_snapshot { ctx.script_registry = Some(reg); }
         let mask = if where_contains_subquery(w) {
             eval_where_mask(&df_all, &ctx, store, w)?

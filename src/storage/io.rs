@@ -104,10 +104,11 @@ impl Store {
         // Finally, project and order columns to the requested list when possible.
         // Keep existing columns if some requested are missing (they may not be in schema),
         // but tests pass requested columns that we either read or synthesized.
-        let mut project: Vec<&str> = Vec::new();
+        // Build projection list of names
+        let mut project: Vec<String> = Vec::new();
         for w in &wanted {
             if out.get_column_names().iter().any(|c| c.as_str() == w.as_str()) {
-                project.push(w.as_str());
+                project.push(w.to_string());
             }
         }
         if !project.is_empty() {
@@ -263,9 +264,7 @@ impl Store {
                                 // Write each group as a parquet file under subdir
                                 let mut parts_written = 0usize;
                                 let __t_write_parts = std::time::Instant::now();
-                                for (key, idxs) in groups.into_iter() {
-                                    let subdir = dir.join(key);
-                                    fs::create_dir_all(&subdir).ok();
+                                for (_key, idxs) in groups.into_iter() {
                                     // Take subset rows
                                     let idx_vec: Vec<u32> = idxs.into_iter().map(|i| i as u32).collect();
                                     let idx_ca = UInt32Chunked::from_vec("".into(), idx_vec);
@@ -275,7 +274,7 @@ impl Store {
                                     use std::time::{SystemTime, UNIX_EPOCH};
                                     let now_ms: u128 = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis();
                                     let fname = format!("data-{}-{}-{}.parquet", min_t, max_t, now_ms);
-                                    let path = subdir.join(fname);
+                                    let path = dir.join(fname);
                                     let mut file = std::fs::File::create(&path)?;
                                     ParquetWriter::new(&mut file)
                                         .with_statistics(StatisticsOptions::default())
@@ -458,9 +457,11 @@ impl Store {
             else { 0 }
         };
         let mut cols: Vec<Column> = Vec::with_capacity(write_names.len() + 1);
+
         if is_time_table {
-            // Time tables: synthetic authoritative _time from Record
+            // Only include `_time` column in stored parquet for time tables
             cols.push(Series::new("_time".into(), times).into());
+            // Time tables: other columns from sensors (excluding `_time` which is authoritative)
             for (name, vals) in f64_cols.into_iter() { if name != "_time" { cols.push(Series::new(name.into(), vals).into()); } }
             for (name, vals) in i64_cols.into_iter() { if name != "_time" { cols.push(Series::new(name.into(), vals).into()); } }
             for (name, vals) in str_cols.into_iter() { if name != "_time" { cols.push(Series::new(name.into(), vals).into()); } }
@@ -468,7 +469,7 @@ impl Store {
             for (name, vals) in vec_cols.into_iter() {
                 if name == "_time" { continue; }
                 if vals.iter().all(|v| v.is_none()) {
-                    // Write an explicit full-null List(Float64) column so parquet has the field
+                    // Explicit full-null List(Float64) to preserve dtype in parquet
                     let s = Series::full_null((&name).into(), height, &DataType::List(Box::new(DataType::Float64)));
                     cols.push(s.into());
                 } else {
@@ -480,12 +481,13 @@ impl Store {
                 }
             }
         } else {
-            // Regular tables: do not synthesize _time; preserve payload `_time` if present
+            // Regular tables: include payload columns; They DO NOT HAVE _time columns by default. Only time tables get a mandatory _time column
             for (name, vals) in f64_cols.into_iter() { cols.push(Series::new(name.into(), vals).into()); }
             for (name, vals) in i64_cols.into_iter() { cols.push(Series::new(name.into(), vals).into()); }
             for (name, vals) in str_cols.into_iter() { cols.push(Series::new(name.into(), vals).into()); }
             for (name, vals) in vec_cols.into_iter() {
                 if vals.iter().all(|v| v.is_none()) {
+                    // Explicit full-null List(Float64) to preserve dtype in parquet
                     let s = Series::full_null((&name).into(), height, &DataType::List(Box::new(DataType::Float64)));
                     cols.push(s.into());
                 } else {
@@ -522,15 +524,21 @@ impl Store {
                 ParquetWriter::new(&mut file)
                     .with_statistics(StatisticsOptions::default())
                     .finish(&mut df)?;
-                // Update schema.json to reflect actual columns present (excluding _time) and preserve locks
+                // Update schema.json: merge existing declared schema with columns present in this df
+                // Do NOT drop previously declared columns (e.g., VECTOR) that may be missing in this write.
                 use std::collections::{HashMap, HashSet};
-                let (_, existing_locks) = self.load_schema_with_locks(table).unwrap_or((HashMap::new(), HashSet::new()));
-                let mut new_schema: HashMap<String, DataType> = HashMap::new();
+                let (mut existing_schema, existing_locks) = self
+                    .load_schema_with_locks(table)
+                    .unwrap_or((HashMap::new(), HashSet::new()));
+                // Start from existing schema to preserve declared columns and dtypes
+                let mut new_schema: HashMap<String, DataType> = existing_schema.drain().collect();
+                // Overlay actual columns present in df (excluding _time)
                 for name in df.get_column_names() {
                     if name.as_str() == "_time" { continue; }
                     let dt = df.column(name.as_str())?.dtype().clone();
                     new_schema.insert(name.to_string(), dt);
                 }
+                // Preserve locks that still refer to columns in the merged schema
                 let mut new_locks: HashSet<String> = HashSet::new();
                 for k in existing_locks { if new_schema.contains_key(&k) { new_locks.insert(k); } }
                 super::schema::save_schema_with_locks(self, table, &new_schema, &new_locks)?;
