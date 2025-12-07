@@ -7,6 +7,7 @@
 use anyhow::{Context, Result};
 use crate::error::AppError;
 use tracing::{debug, info};
+use crate::tprintln;
 
 use crate::storage::SharedStore;
 
@@ -122,6 +123,7 @@ pub fn handle_rename_table(store: &SharedStore, from: &str, to: &str) -> Result<
 pub fn do_create_table(store: &SharedStore, q: &str) -> Result<()> {
     
     // Parse: CREATE TABLE [IF NOT EXISTS] <db>/<schema>/<table> (col type, ...)
+    tprintln!("[CREATE] do_create_table: CALLED with q='{}'", q);
     debug!(target: "clarium::exec", "do_create_table: begin q='{}'", q);
     let mut s = q.trim();
     let up = s.to_uppercase();
@@ -155,33 +157,51 @@ pub fn do_create_table(store: &SharedStore, q: &str) -> Result<()> {
 
     // Map SQL types to internal type keys
     let mut schema_entries: Vec<(String, String)> = Vec::new();
+    tprintln!("[CREATE] do_create_table: parsed {} columns from SQL", cols.len());
     for (name, ty) in cols.into_iter() {
+        tprintln!("[CREATE] do_create_table: processing col='{}' type='{}'", name, ty);
         let n = name.trim_matches('"').to_string();
         // Skip table-level constraint rows
         let n_up = n.to_uppercase();
-        if n_up == "PRIMARY" || n_up == "FOREIGN" || n_up == "UNIQUE" || n_up == "CHECK" || n_up == "CONSTRAINT" { continue; }
-        if n == "_time" { continue; }
+        if n_up == "PRIMARY" || n_up == "FOREIGN" || n_up == "UNIQUE" || n_up == "CHECK" || n_up == "CONSTRAINT" { 
+            tprintln!("[CREATE] do_create_table: skipping constraint keyword '{}'", n);
+            continue; 
+        }
+        if n == "_time" { 
+            tprintln!("[CREATE] do_create_table: skipping _time column");
+            continue; 
+        }
         let t_up = ty.to_ascii_lowercase();
         let key = if t_up.contains("char") || t_up.contains("text") || t_up.contains("json") || t_up.contains("bool") { "string".to_string() }
             else if t_up.contains("int") { "int64".to_string() }
             else if t_up.contains("double") || t_up.contains("real") || t_up.contains("float") || t_up.contains("numeric") || t_up.contains("decimal") { "float64".to_string() }
             else if t_up.contains("time") || t_up.contains("date") { "int64".to_string() }
+            else if t_up.contains("vector") { "vector".to_string() }
             else { "string".to_string() };
+        tprintln!("[CREATE] do_create_table: adding col='{}' mapped_type='{}'", n, key);
         schema_entries.push((n, key));
     }
+    tprintln!("[CREATE] do_create_table: final schema_entries count={}", schema_entries.len());
     // Create directory and schema.json
     let ident_norm = ident.trim().trim_matches('"');
-    // If normalized earlier, we expect slashes; otherwise convert dots to slashes
-    let db_path = if ident_norm.contains('/') { ident_norm.to_string() } else { ident_norm.replace('.', "/") };
+    // Qualify with current session defaults (like handle_create_table does)
+    let qd = crate::system::current_query_defaults();
+    let db_path = crate::ident::qualify_regular_ident(ident_norm, &qd);
+    tprintln!("[CREATE] do_create_table: qualified table name: '{}' -> '{}'", ident_norm, db_path);
     let root = store.root_path();
     let dir = std::path::Path::new(&root).join(db_path.replace('/', std::path::MAIN_SEPARATOR.to_string().as_str()));
     debug!(target: "clarium::exec", "do_create_table: dir='{}' (db_path='{}')", dir.display(), db_path);
     std::fs::create_dir_all(&dir).with_context(|| format!("create table dir {}", dir.display()))?;
     let mut map = serde_json::Map::new();
-    for (k, t) in schema_entries.into_iter() { map.insert(k, serde_json::Value::String(t)); }
+    for (k, t) in schema_entries.into_iter() { 
+        tprintln!("[CREATE] do_create_table: inserting into map key='{}' value='{}'", k, t);
+        map.insert(k, serde_json::Value::String(t)); 
+    }
     if has_primary_key { map.insert("PRIMARY".to_string(), serde_json::Value::String("marker".to_string())); }
     let sj = dir.join("schema.json");
-    std::fs::write(&sj, serde_json::to_string_pretty(&serde_json::Value::Object(map))?)?;
+    let json_str = serde_json::to_string_pretty(&serde_json::Value::Object(map.clone()))?;
+    tprintln!("[CREATE] do_create_table: writing schema.json to '{}' content='{}'", sj.display(), json_str);
+    std::fs::write(&sj, &json_str)?;
     debug!(target: "clarium::exec", "do_create_table: wrote schema.json at '{}'", sj.display());
     Ok(())
 }

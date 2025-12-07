@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use polars::prelude::*;
-
+use crate::tprintln;
 use super::Store;
 
 pub(crate) fn get_primary_key(store: &Store, table: &str) -> Option<Vec<String>> {
@@ -34,16 +34,20 @@ pub(crate) fn load_schema_with_locks(store: &Store, table: &str) -> anyhow::Resu
     let mut map: HashMap<String, DataType> = HashMap::new();
     let mut locks: HashSet<String> = HashSet::new();
     let p = store.schema_path(table);
+    tprintln!("[SCHEMA] load_schema_with_locks: table='{}' path='{}' exists={}", table, p.display(), p.exists());
     if p.exists() {
         let text = std::fs::read_to_string(&p)?;
+        tprintln!("[SCHEMA] load_schema_with_locks: raw_json='{}'", text);
         if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
             if let Some(obj) = v.as_object() {
                 if let Some(cols) = obj.get("columns").and_then(|x| x.as_object()) {
+                    tprintln!("[SCHEMA] load_schema_with_locks: using nested format, cols={:?}", cols.keys().collect::<Vec<_>>());
                     for (k, v) in cols.iter() {
                         if let Some(s) = v.as_str() { map.insert(k.clone(), str_to_dtype(s)); }
                     }
                 } else {
                     // Legacy: flat schema map
+                    tprintln!("[SCHEMA] load_schema_with_locks: using flat format, keys={:?}", obj.keys().collect::<Vec<_>>());
                     for (k, v) in obj.iter() {
                         if let Some(s) = v.as_str() { map.insert(k.clone(), str_to_dtype(s)); }
                     }
@@ -54,6 +58,7 @@ pub(crate) fn load_schema_with_locks(store: &Store, table: &str) -> anyhow::Resu
             }
         }
     }
+    tprintln!("[SCHEMA] load_schema_with_locks: result map_keys={:?}", map.keys().collect::<Vec<_>>());
     Ok((map, locks))
 }
 
