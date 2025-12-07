@@ -201,9 +201,12 @@ pub async fn rename_file(
     let new_nfc = normalize_nfc(new_path);
 
     // ACL Move for old and new
-    let d1 = check_acl(eff, user, ACLAction::Move, &old_nfc, None, ctx, filestore).await;
+    // Provide minimal ContentMeta for context; actual size/type not required for Move
+    let mut ctx_move = ctx.clone();
+    ctx_move.content_meta = Some(super::security::ContentMeta { size_bytes: None, media_type: None });
+    let d1 = check_acl(eff, user, ACLAction::Move, &old_nfc, None, &ctx_move, filestore).await;
     if !d1.allow { bail!(d1.reason.unwrap_or_else(|| "acl_denied_old".to_string())); }
-    let d2 = check_acl(eff, user, ACLAction::Move, &new_nfc, Some(&old_nfc), ctx, filestore).await;
+    let d2 = check_acl(eff, user, ACLAction::Move, &new_nfc, Some(&old_nfc), &ctx_move, filestore).await;
     if !d2.allow { bail!(d2.reason.unwrap_or_else(|| "acl_denied_new".to_string())); }
 
     let kv = store.kv_store(database, filestore);
@@ -242,12 +245,15 @@ pub async fn delete_file(
     ctx: &AclContext,
 ) -> Result<()> {
     let path_nfc = normalize_nfc(logical_path);
-    let decision = check_acl(eff, user, ACLAction::Delete, &path_nfc, None, ctx, filestore).await;
-    if !decision.allow { bail!(decision.reason.unwrap_or_else(|| "acl_denied".to_string())); }
+    // Load meta first to enrich ACL ContentMeta (size/type) context
     let kv = store.kv_store(database, filestore);
     let key = Keys::path(database, filestore, &path_nfc);
     let val = kv.get(&key).ok_or_else(|| anyhow::anyhow!("not_found"))?;
     let mut meta: FileMeta = match val { KvValue::Json(j) => serde_json::from_value(j)?, _ => bail!("corrupt_meta") };
+    let mut ctx_del = ctx.clone();
+    ctx_del.content_meta = Some(super::security::ContentMeta { size_bytes: Some(meta.size), media_type: meta.content_type.clone() });
+    let decision = check_acl(eff, user, ACLAction::Delete, &path_nfc, None, &ctx_del, filestore).await;
+    if !decision.allow { bail!(decision.reason.unwrap_or_else(|| "acl_denied".to_string())); }
     if meta.deleted { return Ok(()); }
     meta.deleted = true;
     meta.updated_at = Utc::now().timestamp();
