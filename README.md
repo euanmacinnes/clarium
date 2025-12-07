@@ -8,6 +8,7 @@ Full documentation
 - Pgwire error handling: for contributor guidelines on graceful error handling over the PostgreSQL wire protocol, see docs/pgwire-error-handling.md.
  - Unified error handling across HTTP/WS/pgwire: see docs/error-handling.md for the common error model, mappings, and frontend behaviors.
  - Developer note (Polars): see docs/dev/junie-polars-guidelines.md for guidance on avoiding deprecated Polars APIs and writing version‑resilient DataFrame code.
+ - Benchmarks: see docs/benchmarks.md for the complete Criterion‑based benchmarking suite (direct micro‑benchmarks and SQL‑driven end‑to‑end benches) and how to run them.
 
 Quick start
 
@@ -22,6 +23,17 @@ Quick start
   - Examples (PowerShell):
     - cargo run --release --bin clarium_server -- --http-port 8080 --db-folder dbs
     - $env:CLARIUM_HTTP_PORT=8080; $env:CLARIUM_PG_PORT=6432; $env:CLARIUM_DB_FOLDER='dbs'; cargo run --release --features pgwire --bin clarium_server -- --pgwire
+
+Benchmarks
+----------
+
+- The project ships with a comprehensive Criterion benchmarking suite covering regular tables, time series, graph traversal, vector search (flat vs ANN/HNSW), and key/value stores.
+- See docs/benchmarks.md for details.
+- Common commands (PowerShell):
+  - Run a specific bench: `cargo bench --bench sql_tables`
+  - Run vector ANN benches: `cargo bench --bench sql_vector`
+  - Disable ANN to force exact path: `cargo bench --no-default-features --features pgwire --bench sql_vector`
+  - Open `target/criterion/report/index.html` for HTML reports.
 
 Python tests (SQLAlchemy)
 

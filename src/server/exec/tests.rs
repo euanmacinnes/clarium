@@ -1,7 +1,7 @@
 // Unit tests for server::exec module moved out of exec.rs to keep source concise.
 
 // Centralized UDF initialization for all tests
-mod udf_common {
+pub(super) mod udf_common {
     use crate::scripts::{init_script_registry_once, ScriptRegistry, ScriptMeta, ScriptKind, load_global_default_scripts};
     use polars::prelude::DataType;
     use std::sync::Once;

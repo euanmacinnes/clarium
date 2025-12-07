@@ -21,5 +21,6 @@ Contents
 - Administration: USE DATABASE/SCHEMA; create/drop/rename DB/Schema/Table/Time Table/View — see administration.md
 - PostgreSQL compatibility: SQL surface, functions, pgwire hints, limitations — see compatibility.md
 - End-to-end examples: scenarios you can reproduce quickly — see examples.md
+ - Benchmarks: Criterion micro- and SQL-driven suites, how to run and extend — see benchmarks.md
 
 If you find an issue or a gap in the docs, please open an issue or PR.

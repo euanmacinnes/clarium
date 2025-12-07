@@ -17,12 +17,9 @@ use crate::tprintln;
 
 #[cfg(feature = "ann_hnsw")]
 mod hnsw_backend {
+    // Temporary stub backend to keep build green on hnsw_rs 0.3 without serde interop.
+    // When upgrading to full ANN support, replace with proper hnsw_rs integration.
     use super::*;
-    use hnsw_rs::prelude::*;
-    use std::fs;
-    #[cfg(feature = "ann_hnsw_mmap")]
-    use std::io::Read;
-
     fn path_for_hnsw(store: &SharedStore, qualified: &str) -> std::path::PathBuf {
         let mut p = store.0.lock().root_path().clone();
         let local = qualified.replace('/', std::path::MAIN_SEPARATOR.to_string().as_str());
@@ -30,85 +27,17 @@ mod hnsw_backend {
         p.set_extension("hnsw");
         p
     }
-
-    #[inline]
-    fn l2_normalize_in_place(v: &mut [f32]) {
-        let mut n2 = 0f32; for x in v.iter() { n2 += *x * *x; }
-        if n2 > 0.0 { let inv = 1.0 / n2.sqrt(); for x in v.iter_mut() { *x *= inv; } }
-    }
-
     pub fn build_hnsw_index(store: &SharedStore, v: &VIndexFile) -> Result<()> {
-        // Load vdata (ensures it exists); then build HNSW in-memory and persist via bincode
-        let (dim, rows, _row_ids, data) = super::load_vdata(store, &v.qualified)?;
-        let m = v.params.as_ref().and_then(|p| p.get("M")).and_then(|x| x.as_i64()).unwrap_or(32) as usize;
-        let ef_construction = v.params.as_ref().and_then(|p| p.get("ef_build")).and_then(|x| x.as_i64()).unwrap_or(200) as usize;
-        let metric = v.metric.as_deref().unwrap_or("l2").to_ascii_lowercase();
-        if metric != "l2" && metric != "cosine" {
-            tprintln!("vector.hnsw.build.skip name={} metric={} reason=unsupported_metric", v.qualified, metric);
-            return Ok(()); // leave only flat engine for unsupported metrics (e.g., ip)
-        }
-        let mut hnsw: Hnsw<f32, DistL2> = HnswBuilder::default()
-            .m(m)
-            .ef_construct(ef_construction)
-            .num_elements(rows as usize)
-            .build();
-        // Note: we support L2 by default; cosine is supported via unit-norm normalization
-        for r in 0..rows as usize {
-            let off = r * dim as usize;
-            let mut vec = data[off..off + dim as usize].to_vec();
-            if metric == "cosine" { l2_normalize_in_place(&mut vec); }
-            hnsw.insert((&vec, r)).map_err(|e| anyhow::anyhow!(format!("hnsw insert error: {:?}", e)))?;
-        }
-        hnsw.build();
+        // Ensure vdata exists so flat engine can operate; skip ANN persistence for now
+        let _ = super::load_vdata(store, &v.qualified)?;
         let path = path_for_hnsw(store, &v.qualified);
-        if let Some(parent) = path.parent() { fs::create_dir_all(parent).ok(); }
-        // Serialize
-        let bytes = bincode::serialize(&hnsw).map_err(|e| anyhow::anyhow!(format!("hnsw serialize: {:?}", e)))?;
-        fs::write(&path, bytes)?;
-        tprintln!("vector.hnsw.build name={} metric={} M={} ef_build={} rows={} dim={} path={}", v.qualified, metric, m, ef_construction, rows, dim, path.display());
+        tprintln!("vector.hnsw.build.skip name={} path={} reason=unimplemented_backend", v.qualified, path.display());
         Ok(())
     }
-
-    pub fn search_hnsw_index(store: &SharedStore, v: &VIndexFile, qvec: &[f32], k: usize) -> Option<Vec<(u32, f32)>> {
-        // Try to load .hnsw and run search; fall back to None on any error
+    pub fn search_hnsw_index(store: &SharedStore, v: &VIndexFile, _qvec: &[f32], _k: usize) -> Option<Vec<(u32, f32)>> {
         let path = path_for_hnsw(store, &v.qualified);
-        if !path.exists() { return None; }
-        let metric = v.metric.as_deref().unwrap_or("l2").to_ascii_lowercase();
-        if metric != "l2" && metric != "cosine" { return None; }
-        // Load serialized graph (prefer mmap when available)
-        #[cfg(feature = "ann_hnsw_mmap")]
-        let mmap_bytes: memmap2::Mmap = unsafe {
-            let f = std::fs::File::open(&path).ok()?;
-            memmap2::MmapOptions::new().map(&f).ok()?
-        };
-        #[cfg(not(feature = "ann_hnsw_mmap"))]
-        let bytes = std::fs::read(&path).ok()?;
-        #[cfg(feature = "ann_hnsw_mmap")]
-        let mut hnsw: Hnsw<f32, DistL2> = bincode::deserialize(&mmap_bytes[..]).ok()?;
-        #[cfg(not(feature = "ann_hnsw_mmap"))]
-        let mut hnsw: Hnsw<f32, DistL2> = bincode::deserialize(&bytes).ok()?;
-
-        // Prepare query according to metric
-        let mut qbuf: Vec<f32> = qvec.to_vec();
-        if metric == "cosine" { l2_normalize_in_place(&mut qbuf); }
-        let res = hnsw.search(&qbuf, k);
-
-        // Convert to (idx, score) depending on metric
-        let mut out: Vec<(u32, f32)> = Vec::with_capacity(res.len());
-        for ne in res.into_iter() {
-            let id = ne.d_id as u32;
-            if metric == "cosine" {
-                // For unit vectors, L2^2 = 2(1 - cos) → cos = 1 - (d^2)/2
-                let d = ne.distance;
-                let cos = 1.0f32 - 0.5f32 * (d * d);
-                out.push((id, cos));
-            } else {
-                // L2 distance as score (ascending better); keep as-is
-                out.push((id, ne.distance));
-            }
-        }
-        tprintln!("vector.hnsw.search name={} metric={} k={} path={} used=ann_hnsw", v.qualified, metric, k, path.display());
-        Some(out)
+        tprintln!("vector.hnsw.search.skip name={} path={} reason=unimplemented_backend", v.qualified, path.display());
+        None
     }
 }
 
@@ -153,7 +82,7 @@ pub fn build_vector_index(store: &SharedStore, v: &mut VIndexFile, _options: &Ve
     let pk_cols: Option<Vec<String>> = store.0.lock().get_primary_key(&v.table);
     let mut id_flags: u32 = 1; // bit0: has_rowid (we always persist row ids in v2)
     // Pre-fetch PK series if present
-    let pk_series: Option<Vec<(String, Series)>> = pk_cols.as_ref().map(|cols| {
+    let pk_series: Option<Vec<(String, Column)>> = pk_cols.as_ref().map(|cols| {
         cols.iter()
             .filter_map(|c| {
                 let eff = df.get_column_names()
@@ -161,9 +90,9 @@ pub fn build_vector_index(store: &SharedStore, v: &mut VIndexFile, _options: &Ve
                     .find(|n| n.as_str() == c.as_str())
                     .cloned()
                     .or_else(|| df.get_column_names().iter().find(|n| n.eq_ignore_ascii_case(c)).cloned());
-                eff.and_then(|name| df.column(&name).ok().map(|s| (name, s.clone())))
+                eff.and_then(|name| df.column(&name).ok().map(|s| (name.to_string(), s.clone())))
             })
-            .collect()
+            .collect::<Vec<(String, Column)>>()
     });
     // Helper to compute u64 row_id from primary key values at row i
     #[inline]

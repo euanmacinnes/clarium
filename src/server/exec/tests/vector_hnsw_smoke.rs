@@ -21,7 +21,7 @@ mod hnsw_smoke {
 
     #[test]
     fn hnsw_build_search_l2_and_cosine() {
-        super::udf_common::init_all_test_udfs();
+        super::super::udf_common::init_all_test_udfs();
         let tmp = tempfile::tempdir().unwrap();
         let table = "clarium/public/t";
         let shared = seed_table(&tmp, table);

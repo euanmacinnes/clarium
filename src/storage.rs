@@ -134,10 +134,12 @@ impl Store {
     /// The schema is regenerated from the DataFrame (excluding `_time`) and existing
     /// per-column locks are preserved for surviving columns.
     pub fn rewrite_table_df(&self, table: &str, mut df: DataFrame) -> Result<()> {
+        let __t0 = std::time::Instant::now();
         // Remove existing parquet files and legacy file, then write df as a single new chunk and update schema
         let dir = self.db_dir(table);
         fs::create_dir_all(&dir).ok();
         // delete existing chunk files
+        let __t_scan_rm0 = std::time::Instant::now();
         if dir.exists() {
             for entry in fs::read_dir(&dir)? {
                 let p = entry?.path();
@@ -146,10 +148,12 @@ impl Store {
                 }
             }
         }
+        crate::tprintln!("[STORAGE] rewrite_table_df: pre-scan dir='{}' took={:?}", dir.display(), __t_scan_rm0.elapsed());
 
         debug!(target: "clarium::storage", "rewrite_table: rewriting table='{}'", dir.display());
 
         // Remove all parquet files
+        let __t_rm = std::time::Instant::now();
         if dir.exists() {
             let mut to_remove: Vec<PathBuf> = Vec::new();
             for entry in fs::read_dir(&dir)? {
@@ -160,10 +164,12 @@ impl Store {
                     }
                 }
             }
-            for p in to_remove { let _ = fs::remove_file(p); }
+            for p in to_remove { let _ = fs::remove_file(&p); }
         }
+        crate::tprintln!("[STORAGE] rewrite_table_df: removed old parquet files took={:?}", __t_rm.elapsed());
         // Update schema.json from df (excluding _time), preserving existing locks for remaining columns
         use std::collections::{HashMap, HashSet};
+        let __t_schema = std::time::Instant::now();
         let (_, existing_locks) = self.load_schema_with_locks(table).unwrap_or((HashMap::new(), HashSet::new()));
         let mut schema: HashMap<String, DataType> = HashMap::new();
         for name in df.get_column_names() {
@@ -176,6 +182,7 @@ impl Store {
         let mut locks: HashSet<String> = HashSet::new();
         for k in existing_locks { if schema.contains_key(&k) { locks.insert(k); } }
         self.save_schema_with_locks(table, &schema, &locks)?;
+        crate::tprintln!("[STORAGE] rewrite_table_df: update schema took={:?}", __t_schema.elapsed());
         // For regular tables (no .time suffix): if partitions are defined, write partitioned files.
         // Otherwise write a single data.parquet and return.
         if !table.ends_with(".time") {
@@ -195,6 +202,7 @@ impl Store {
                                 use std::collections::HashMap as Map;
                                 let mut groups: Map<String, Vec<usize>> = Map::new();
                                 let n = df.height();
+                                let __t_group = std::time::Instant::now();
                                 let val_to_string = |av: AnyValue| -> String {
                                     match av {
                                         AnyValue::String(s) => s.to_string(),
@@ -218,17 +226,20 @@ impl Store {
                                     let key = key_parts.join(",");
                                     groups.entry(key).or_default().push(i);
                                 }
+                                crate::tprintln!("[STORAGE] rewrite_table_df: partition grouping rows={} parts={} took={:?}", n, partitions.len(), __t_group.elapsed());
                                 // Remove any existing parquet files before rewrite
                                 let dir = self.db_dir(table);
+                                let __t_rm2 = std::time::Instant::now();
                                 if dir.exists() {
                                     for entry in fs::read_dir(&dir)? {
                                         let p = entry?.path();
                                         if let Some(name) = p.file_name().and_then(|s| s.to_str()) {
-                                            if name.starts_with("data-") && name.ends_with(".parquet") { let _ = fs::remove_file(p); }
-                                            if name == "data.parquet" { let _ = fs::remove_file(p); }
+                                            if name.starts_with("data-") && name.ends_with(".parquet") { let _ = fs::remove_file(&p); }
+                                            if name == "data.parquet" { let _ = fs::remove_file(&p); }
                                         }
                                     }
                                 }
+                                crate::tprintln!("[STORAGE] rewrite_table_df: remove pre-existing parquet before partition write took={:?}", __t_rm2.elapsed());
                                 // Write one parquet per group
                                 use polars::prelude::ParquetWriter;
                                 use std::time::{SystemTime, UNIX_EPOCH};
@@ -242,6 +253,8 @@ impl Store {
                                     }
                                     out
                                 };
+                                let __t_write_parts = std::time::Instant::now();
+                                let mut parts_written = 0usize;
                                 for (k, idxs) in groups.into_iter() {
                                     let idx_vec: Vec<u32> = idxs.into_iter().map(|i| i as u32).collect();
                                     let idx_u = UInt32Chunked::from_vec("idx".into(), idx_vec);
@@ -253,7 +266,9 @@ impl Store {
                                     ParquetWriter::new(&mut file)
                                         .with_statistics(StatisticsOptions::default())
                                         .finish(&mut part_df)?;
+                                    parts_written += 1;
                                 }
+                                crate::tprintln!("[STORAGE] rewrite_table_df: wrote {} partition files took={:?}", parts_written, __t_write_parts.elapsed());
                                 wrote_partitioned = true;
                             }
                         }
@@ -261,13 +276,16 @@ impl Store {
                 }
             }
             if wrote_partitioned {
+                crate::tprintln!("[STORAGE] rewrite_table_df: partitioned total took={:?}", __t0.elapsed());
                 return Ok(());
             } else {
                 let path = self.db_file(table);
+                let __t_write = std::time::Instant::now();
                 let mut file = std::fs::File::create(&path)?;
                 ParquetWriter::new(&mut file)
                     .with_statistics(StatisticsOptions::default())
                     .finish(&mut df)?;
+                crate::tprintln!("[STORAGE] rewrite_table_df: wrote single parquet rows={} took={:?} total={:?}", df.height(), __t_write.elapsed(), __t0.elapsed());
                 return Ok(());
             }
         }
@@ -286,10 +304,12 @@ impl Store {
         let now_ms: u128 = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis();
         let fname = format!("data-{}-{}-{}.parquet", min_t, max_t, now_ms);
         let path = dir.join(fname);
+        let __t_write_ts = std::time::Instant::now();
         let mut file = std::fs::File::create(&path)?;
         ParquetWriter::new(&mut file)
             .with_statistics(StatisticsOptions::default())
             .finish(&mut df)?;
+        crate::tprintln!("[STORAGE] rewrite_table_df: wrote time-table parquet rows={} took={:?} total={:?}", df.height(), __t_write_ts.elapsed(), __t0.elapsed());
         Ok(())
     }
 

@@ -105,3 +105,19 @@ harness = false
 [[bench]]
 name = "kv"
 harness = false
+
+[[bench]]
+name = "sql_tables"
+harness = false
+
+[[bench]]
+name = "sql_time_series"
+harness = false
+
+[[bench]]
+name = "sql_vector"
+harness = false
+
+## Note: removed invalid bench target `sql_graph` (file not present)
+
+## Note: removed invalid bench target `sql_kv` (file not present)

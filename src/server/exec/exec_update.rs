@@ -11,8 +11,11 @@ use crate::{server::query, server::exec::{where_subquery::{eval_where_mask, wher
 use crate::storage::SharedStore;
 
 pub fn handle_update(store: &SharedStore, table: String, assignments: Vec<(String, query::ArithTerm)>, where_clause: Option<query::WhereExpr>) -> Result<serde_json::Value> {
+    let __t0 = std::time::Instant::now();
     // Load existing dataframe (works for regular and time tables)
+    let __t_read = std::time::Instant::now();
     let mut df_all = read_df_or_kv(store, &table)?;
+    crate::tprintln!("[EXEC_UPDATE] read_df rows={} cols={} took={:?}", df_all.height(), df_all.width(), __t_read.elapsed());
     let n = df_all.height();
     if n == 0 {
         return Ok(serde_json::json!({"status":"ok","updated":0}));
@@ -23,6 +26,7 @@ pub fn handle_update(store: &SharedStore, table: String, assignments: Vec<(Strin
         (g.get_primary_key(&table), g.get_partitions(&table))
     };
     // Build mask: rows to update
+    let __t_mask = std::time::Instant::now();
     let mask_bool = if let Some(w) = &where_clause {
         let registry_snapshot = crate::scripts::get_script_registry().and_then(|r| r.snapshot().ok());
         let mut ctx = crate::server::data_context::DataContext::with_defaults("clarium", "public");
@@ -38,6 +42,7 @@ pub fn handle_update(store: &SharedStore, table: String, assignments: Vec<(Strin
         let v: Vec<bool> = vec![true; n];
         BooleanChunked::from_slice("__m__".into(), &v)
     };
+    crate::tprintln!("[EXEC_UPDATE] build_mask rows={} took={:?}", n, __t_mask.elapsed());
 
     // Determine whether assignments touch primary key columns or partition columns
     let mut pk_touched = false;
@@ -48,6 +53,7 @@ pub fn handle_update(store: &SharedStore, table: String, assignments: Vec<(Strin
     }
 
     // Apply assignments one by one
+    let __t_assign = std::time::Instant::now();
     for (col, term) in assignments {
         // If column doesn't exist yet, add an all-null series with an inferred type
         let exists = df_all.get_column_names().iter().any(|c| c.as_str() == col);
@@ -149,7 +155,9 @@ pub fn handle_update(store: &SharedStore, table: String, assignments: Vec<(Strin
         // Replace/insert column
         df_all.replace(col.as_str(), new_series)?;
     }
+    crate::tprintln!("[EXEC_UPDATE] apply_assignments rows={} took={:?}", n, __t_assign.elapsed());
     // If PK columns were touched, validate non-null and uniqueness across all rows
+    let __t_pk = std::time::Instant::now();
     if let Some(pk_cols) = &pk_cols_opt {
         if pk_touched && !pk_cols.is_empty() {
             use std::collections::HashSet;
@@ -187,10 +195,13 @@ pub fn handle_update(store: &SharedStore, table: String, assignments: Vec<(Strin
                     anyhow::bail!("PRIMARY KEY violation: duplicate key after UPDATE");
                 }
             }
+            crate::tprintln!("[EXEC_UPDATE] pk_validate rows={} took={:?}", df_all.height(), __t_pk.elapsed());
         }
     }
     let guard = store.0.lock();
     // rewrite_table_df for regular tables is partition-aware now; time tables path is unchanged
+    let __t_rewrite = std::time::Instant::now();
     guard.rewrite_table_df(&table, df_all)?;
+    crate::tprintln!("[EXEC_UPDATE] rewrite_table took={:?} total={:?}", __t_rewrite.elapsed(), __t0.elapsed());
     Ok(serde_json::json!({"status":"ok"}))
 }

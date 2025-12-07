@@ -9,6 +9,7 @@ use polars::prelude::*;
 use crate::{server::query, storage::SharedStore};
 
 pub fn handle_insert(store: &SharedStore, table: String, columns: Vec<String>, values: Vec<Vec<query::ArithTerm>>) -> Result<serde_json::Value> {
+    let __t0 = std::time::Instant::now();
     // Convert dot notation (schema.table) to slash notation (schema/table) for storage
     // But preserve .time suffix for time tables
     let table_path = if table.ends_with(".time") {
@@ -18,9 +19,12 @@ pub fn handle_insert(store: &SharedStore, table: String, columns: Vec<String>, v
         table.replace('.', "/")
     };
 
-    let guard = store.0.lock();
-    // Ensure table exists
-    guard.create_table(&table_path).ok();
+    // Ensure table exists (lock only for this short scope)
+    {
+        let guard = store.0.lock();
+        guard.create_table(&table_path).ok();
+        // guard dropped here
+    }
 
     // Time-table insert path
     if table_path.ends_with(".time") {
@@ -54,11 +58,16 @@ pub fn handle_insert(store: &SharedStore, table: String, columns: Vec<String>, v
             }
             records.push(crate::storage::Record { _time: time_val, sensors });
         }
-        guard.write_records(&table_path, &records)?;
+        // Acquire lock only while writing records
+        {
+            let guard = store.0.lock();
+            guard.write_records(&table_path, &records)?;
+        }
         return Ok(serde_json::json!({"status":"ok", "inserted": records.len()}));
     }
 
     // Regular parquet table - build DataFrame and append
+    let __t_build_df = std::time::Instant::now();
     // Create series for each column
     let mut series_vec: Vec<Series> = Vec::new();
     for (col_idx, col_name) in columns.iter().enumerate() {
@@ -104,22 +113,37 @@ pub fn handle_insert(store: &SharedStore, table: String, columns: Vec<String>, v
     }
     let columns_vec: Vec<Column> = series_vec.into_iter().map(|s| s.into()).collect();
     let new_df = DataFrame::new(columns_vec)?;
+    crate::tprintln!("[EXEC_INSERT] build_df rows={} cols={} took={:?}", new_df.height(), new_df.width(), __t_build_df.elapsed());
 
     // Enforce primary key uniqueness if table defines a primary key
     {
-        let guard = store.0.lock();
-        if let Some(pk_cols) = guard.get_primary_key(&table_path) {
+        let __t_pk = std::time::Instant::now();
+        // Lock only to read PK metadata
+        let pk_cols_opt: Option<Vec<String>> = {
+            let guard = store.0.lock();
+            guard.get_primary_key(&table_path)
+        };
+        if let Some(pk_cols) = pk_cols_opt {
             if !pk_cols.is_empty() {
-                // Ensure PK columns exist in new_df and are non-null; build keys
-                let mut new_keys: Vec<String> = Vec::with_capacity(new_df.height());
+                // Validate PK columns exist once and cache column handles for faster row access
+                let mut pk_series: Vec<&Column> = Vec::with_capacity(pk_cols.len());
+                let schema_names = new_df.get_column_names();
+                for c in &pk_cols {
+                    if !schema_names.iter().any(|n| n.as_str() == c) {
+                        anyhow::bail!(format!("INSERT missing primary key column '{}'", c));
+                    }
+                    pk_series.push(new_df.column(c.as_str())?);
+                }
+
+                // Build keys for new batch with minimal allocations
                 let n = new_df.height();
+                let mut new_keys: Vec<String> = Vec::with_capacity(n);
+                let mut key_buf = String::new();
                 for i in 0..n {
-                    let mut parts: Vec<String> = Vec::with_capacity(pk_cols.len());
-                    for c in &pk_cols {
-                        if !new_df.get_column_names().iter().any(|n| n.as_str() == c) {
-                            anyhow::bail!(format!("INSERT missing primary key column '{}'", c));
-                        }
-                        let av = new_df.column(c.as_str())?.get(i).ok();
+                    key_buf.clear();
+                    let mut first = true;
+                    for (idx, c) in pk_cols.iter().enumerate() {
+                        let av = pk_series[idx].get(i).ok();
                         // Reject NULLs in PK
                         if matches!(av, Some(AnyValue::Null) | None) {
                             anyhow::bail!("PRIMARY KEY cannot be NULL");
@@ -135,11 +159,15 @@ pub fn handle_insert(store: &SharedStore, table: String, columns: Vec<String>, v
                             }
                             v => v.to_string(),
                         };
-                        parts.push(format!("{}={}", c, sval));
+                        if !first { key_buf.push(','); }
+                        first = false;
+                        key_buf.push_str(c);
+                        key_buf.push('=');
+                        key_buf.push_str(&sval);
                     }
-                    new_keys.push(parts.join(","));
+                    new_keys.push(key_buf.clone());
                 }
-                // Check duplicates within the new batch
+                // Check duplicates within the new batch using HashSet
                 {
                     use std::collections::HashSet;
                     let mut seen: HashSet<String> = HashSet::with_capacity(new_keys.len());
@@ -148,19 +176,40 @@ pub fn handle_insert(store: &SharedStore, table: String, columns: Vec<String>, v
                             anyhow::bail!("Duplicate PRIMARY KEY in INSERT batch");
                         }
                     }
-                    // Check against existing keys
-                    if let Ok(existing_df) = guard.read_df(&table_path) {
-                        if existing_df.height() > 0 {
-                            // Build key set from existing
-                            let mut existing_set: HashSet<String> = HashSet::new();
-                            let m = existing_df.height();
-                            for i in 0..m {
-                                let mut parts: Vec<String> = Vec::with_capacity(pk_cols.len());
-                                for c in &pk_cols {
-                                    if !existing_df.get_column_names().iter().any(|n| n.as_str() == c) { continue; }
-                                    let av = existing_df.column(c.as_str()).ok().and_then(|s| s.get(i).ok());
-                                    // If any part is null, treat as not a valid key to compare
-                                    if matches!(av, Some(AnyValue::Null) | None) { parts.clear(); break; }
+                    // Check against existing keys (if any rows exist)
+                    let __t_read_existing = std::time::Instant::now();
+                    // Lock only to read existing DF
+                    let existing_df_res = {
+                        let guard = store.0.lock();
+                        guard.read_df(&table_path)
+                    };
+                    if let Ok(existing_df) = existing_df_res {
+                        let m = existing_df.height();
+                        if m > 0 {
+                            crate::tprintln!("[EXEC_INSERT] existing_df rows={} read_time={:?}", m, __t_read_existing.elapsed());
+                            // Cache existing pk columns once
+                            let mut existing_pk_series: Vec<Option<Column>> = Vec::with_capacity(pk_cols.len());
+                            let existing_names = existing_df.get_column_names();
+                            for c in &pk_cols {
+                                if existing_names.iter().any(|n| n.as_str() == c) {
+                                    existing_pk_series.push(Some(existing_df.column(c.as_str())?.clone()))
+                                } else {
+                                    existing_pk_series.push(None);
+                                }
+                            }
+                            // Build a set of existing keys
+                            let __t_existing_set = std::time::Instant::now();
+                            let mut existing_set: std::collections::HashSet<String> = std::collections::HashSet::with_capacity(m.min(1024));
+                            let mut buf = String::new();
+                            'ROW: for i in 0..m {
+                                buf.clear();
+                                let mut first = true;
+                                for (idx, c) in pk_cols.iter().enumerate() {
+                                    let opt_s = &existing_pk_series[idx];
+                                    if opt_s.is_none() { continue 'ROW; }
+                                    let sref = opt_s.as_ref().unwrap();
+                                    let av = sref.get(i).ok();
+                                    if matches!(av, Some(AnyValue::Null) | None) { continue 'ROW; }
                                     let sval = match av.unwrap() {
                                         AnyValue::String(s) => s.to_string(),
                                         AnyValue::StringOwned(s) => s.to_string(),
@@ -172,23 +221,43 @@ pub fn handle_insert(store: &SharedStore, table: String, columns: Vec<String>, v
                                         }
                                         v => v.to_string(),
                                     };
-                                    parts.push(format!("{}={}", c, sval));
+                                    if !first { buf.push(','); }
+                                    first = false;
+                                    buf.push_str(c);
+                                    buf.push('=');
+                                    buf.push_str(&sval);
                                 }
-                                if !parts.is_empty() { existing_set.insert(parts.join(",")); }
+                                if !buf.is_empty() { existing_set.insert(buf.clone()); }
                             }
-                            for k in &new_keys { if existing_set.contains(k) { anyhow::bail!("PRIMARY KEY violation: duplicate key exists"); } }
+                            crate::tprintln!("[EXEC_INSERT] build_existing_keyset rows={} took={:?}", m, __t_existing_set.elapsed());
+                            for k in &new_keys {
+                                if existing_set.contains(k) {
+                                    anyhow::bail!("PRIMARY KEY violation: duplicate key exists");
+                                }
+                            }
                         }
                     }
                 }
+                crate::tprintln!("[EXEC_INSERT] pk_validate rows_new={} took={:?}", new_df.height(), __t_pk.elapsed());
             }
         }
     }
 
     // Append or create
-    let combined = match guard.read_df(&table_path) {
+    let __t_rewrite = std::time::Instant::now();
+    // Read existing (if any) under lock, then perform combine and rewrite with minimal lock scopes
+    let existing_res = {
+        let guard = store.0.lock();
+        guard.read_df(&table_path)
+    };
+    let combined = match existing_res {
         Ok(existing) => existing.vstack(&new_df)?,
         Err(_) => new_df.clone(),
     };
-    guard.rewrite_table_df(&table_path, combined)?;
+    {
+        let guard = store.0.lock();
+        guard.rewrite_table_df(&table_path, combined)?;
+    }
+    crate::tprintln!("[EXEC_INSERT] rewrite_table rows={} took={:?} total={:?}", new_df.height(), __t_rewrite.elapsed(), __t0.elapsed());
     Ok(serde_json::json!({"status":"ok", "inserted": new_df.height()}))
 }
