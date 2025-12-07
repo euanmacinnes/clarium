@@ -6,10 +6,10 @@ use crate::server::exec::exec_helpers::{
 
 #[test]
 fn qualify_wrappers_match_ident_logic() {
-    let q1 = qualify_identifier_with_defaults("metrics.sensors", "Clarium", "Public");
-    assert_eq!(q1, "clarium/public/metrics.sensors.time");
-    let q2 = qualify_identifier_regular_table_with_defaults("Metrics.Sensors", "CLARIUM", "PUBLIC");
-    assert_eq!(q2, "clarium/public/metrics.sensors");
+    let q1 = qualify_identifier_with_defaults("metrics/sensors", "Clarium", "Public");
+    assert_eq!(q1, "clarium/metrics/sensors.time");
+    let q2 = qualify_identifier_regular_table_with_defaults("Metrics/Sensors", "CLARIUM", "PUBLIC");
+    assert_eq!(q2, "clarium/metrics/sensors");
     // Already fully qualified should be preserved (normalized)
     let q3 = qualify_identifier_with_defaults("acme/metrics/sensors.time", "clarium", "public");
     assert_eq!(q3, "acme/metrics/sensors.time");
