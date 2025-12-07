@@ -403,24 +403,31 @@ pub fn project_select(df: DataFrame, q: &Query, ctx: &mut DataContext) -> Result
             // - Always include the qualified column label as present in the DataFrame (source.effective_name prefix), to
             //   ensure alias-qualified references like 'vs.row_id' remain valid for downstream consumers/tests.
             // - Additionally include an unqualified alias (stripped suffix) when unique, to allow ergonomic access.
+            // Build base-name frequency map across currently-visible qualified columns
+            use std::collections::HashMap;
+            let mut base_counts: HashMap<String, usize> = HashMap::new();
+            for cname in df.get_column_names() {
+                let base = cname.rsplit('.').next().unwrap_or(cname.as_str());
+                let base_norm = if base == "_time" { "_time" } else { base };
+                *base_counts.entry(base_norm.to_string()).or_insert(0) += 1;
+            }
             for cname in df.get_column_names() {
                 let cname_s = cname.as_str();
-                let base = cname_s.rsplit('.').next().unwrap_or(cname_s);
-                // Normalize time label to '_time'
-                let unq = if base == "_time" { "_time" } else { base };
-
-                // 1) Ensure qualified name is present in projection
+                // Always include the qualified column label present in the DataFrame
                 if !out_cols.iter().any(|c| c.name().as_str() == cname_s) {
                     let mut s = df.column(cname_s)?.clone();
                     s.rename(cname_s.into());
                     out_cols.push(s);
                 }
-
-                // 2) Also add an unqualified alias if not conflicting with an existing column
-                if !out_cols.iter().any(|c| c.name().as_str() == unq) {
-                    let mut s2 = df.column(cname_s)?.clone();
-                    s2.rename(unq.into());
-                    out_cols.push(s2);
+                // Conditionally include an unqualified alias only if its base name is unique across sources
+                let base = cname_s.rsplit('.').next().unwrap_or(cname_s);
+                let base_norm = if base == "_time" { "_time" } else { base };
+                if *base_counts.get(base_norm).unwrap_or(&0) == 1 {
+                    if !out_cols.iter().any(|c| c.name().as_str() == base_norm) {
+                        let mut s2 = df.column(cname_s)?.clone();
+                        s2.rename(base_norm.into());
+                        out_cols.push(s2);
+                    }
                 }
             }
             continue;
@@ -465,6 +472,14 @@ pub fn project_select(df: DataFrame, q: &Query, ctx: &mut DataContext) -> Result
                             break;
                         }
                     }
+                    TableRef::Tvf { alias, .. } => {
+                        if let Some(a) = alias {
+                            if a == qualifier {
+                                prefix_match = Some(eff);
+                                break;
+                            }
+                        }
+                    }
                 }
             }
 
@@ -478,7 +493,11 @@ pub fn project_select(df: DataFrame, q: &Query, ctx: &mut DataContext) -> Result
                 );
             } else {
                 // Build helpful error showing available qualifiers
-                let mut avail: Vec<String> = ctx.sources.iter().map(|s| s.effective_name().to_string()).collect();
+                let mut avail: Vec<String> = ctx.sources
+                    .iter()
+                    .map(|s| s.effective_name().to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect();
                 avail.sort();
                 anyhow::bail!(
                     "Unknown qualifier '{}' for wildcard. Available sources: {:?}",
@@ -489,17 +508,36 @@ pub fn project_select(df: DataFrame, q: &Query, ctx: &mut DataContext) -> Result
 
             let want_prefix = format!("{}.", prefix);
             tracing::debug!(target: "clarium::exec", "SELECT: expanding qualified wildcard '{}.*' using prefix '{}'", qualifier, prefix);
+            // Build uniqueness map for bases under this qualifier to decide whether to also add unqualified aliases
+            use std::collections::HashMap;
+            let mut base_counts: HashMap<String, usize> = HashMap::new();
             for cname in df.get_column_names() {
                 let cname_s = cname.as_str();
                 if cname_s.starts_with(&want_prefix) {
-                    // Strip the qualifier prefix for the output label
                     let base = cname_s.rsplit('.').next().unwrap_or(cname_s);
-                    let target_name = if base == "_time" { "_time" } else { base };
-                    // Respect current engine policy on duplicates: if a name already exists, replace it with the later one
-                    let mut s = df.column(cname_s)?.clone();
-                    s.rename(target_name.into());
-                    if let Some(pos) = out_cols.iter().position(|c| c.name().as_str() == target_name) { out_cols.remove(pos); }
-                    out_cols.push(s);
+                    let base_norm = if base == "_time" { "_time" } else { base };
+                    *base_counts.entry(base_norm.to_string()).or_insert(0) += 1;
+                }
+            }
+            for cname in df.get_column_names() {
+                let cname_s = cname.as_str();
+                if cname_s.starts_with(&want_prefix) {
+                    // 1) Always include the qualified form (keep the original DF name)
+                    if !out_cols.iter().any(|c| c.name().as_str() == cname_s) {
+                        let mut s = df.column(cname_s)?.clone();
+                        s.rename(cname_s.into());
+                        out_cols.push(s);
+                    }
+                    // 2) Also include an unqualified alias if the base is unique under this qualifier
+                    let base = cname_s.rsplit('.').next().unwrap_or(cname_s);
+                    let base_norm = if base == "_time" { "_time" } else { base };
+                    if *base_counts.get(base_norm).unwrap_or(&0) == 1 {
+                        if !out_cols.iter().any(|c| c.name().as_str() == base_norm) {
+                            let mut s2 = df.column(cname_s)?.clone();
+                            s2.rename(base_norm.into());
+                            out_cols.push(s2);
+                        }
+                    }
                 }
             }
             continue;

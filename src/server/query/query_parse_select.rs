@@ -226,17 +226,21 @@ pub fn parse_select(s: &str) -> Result<Query> {
             
             (TableRef::Subquery { query: Box::new(subquery), alias }, j)
         } else {
-            // Regular table name
+            // Regular table name or TVF call
             let (base_name, mut j) = read_word_or_tvf(input, i);
-            
-            // Strip quotes from table name
-            let mut table_name = base_name.trim();
-            if (table_name.starts_with('"') && table_name.ends_with('"')) || (table_name.starts_with('\'') && table_name.ends_with('\'')) {
-                if table_name.len() >= 2 {
-                    table_name = &table_name[1..table_name.len()-1];
+
+            let is_tvf = base_name.contains('(') && base_name.ends_with(')');
+
+            // Strip quotes from bare table name (not TVF)
+            let mut table_name = base_name.trim().to_string();
+            if !is_tvf {
+                if (table_name.starts_with('"') && table_name.ends_with('"')) || (table_name.starts_with('\'') && table_name.ends_with('\'')) {
+                    if table_name.len() >= 2 {
+                        table_name = table_name[1..table_name.len()-1].to_string();
+                    }
                 }
             }
-            
+
             let mut base_alias: Option<String> = None;
             j = skip_ws(input, j);
             let rem_up = up[j..].to_string();
@@ -252,7 +256,11 @@ pub fn parse_select(s: &str) -> Result<Query> {
                     if !al.is_empty() { base_alias = Some(al); j = k1; }
                 }
             }
-            (TableRef::Table { name: table_name.to_string(), alias: base_alias.filter(|a| !a.is_empty()) }, j)
+            if is_tvf {
+                (TableRef::Tvf { call: base_name.trim().to_string(), alias: base_alias.filter(|a| !a.is_empty()) }, j)
+            } else {
+                (TableRef::Table { name: table_name, alias: base_alias.filter(|a| !a.is_empty()) }, j)
+            }
         };
         
         let (base, mut j) = base;
@@ -285,7 +293,7 @@ pub fn parse_select(s: &str) -> Result<Query> {
             };
             j += join_kw;
             j = skip_ws(input, j);
-            // right table name
+            // right table name or TVF
             let (right_name, mut k) = read_word_or_tvf(input, j);
             let mut right_alias: Option<String> = None;
             k = skip_ws(input, k);
@@ -314,7 +322,17 @@ pub fn parse_select(s: &str) -> Result<Query> {
             }
             let on_str = input[k..end].trim();
             let on = parse_where_expr(on_str)?;
-            joins.push(JoinClause { join_type: jt.unwrap_or(JoinType::Inner), right: TableRef::Table { name: right_name.trim().to_string(), alias: right_alias.filter(|a| !a.is_empty()) }, on });
+            let right_ref = if right_name.contains('(') && right_name.trim_end().ends_with(')') {
+                TableRef::Tvf { call: right_name.trim().to_string(), alias: right_alias.filter(|a| !a.is_empty()) }
+            } else {
+                // strip quotes on bare name
+                let rn = right_name.trim();
+                let rn2 = if (rn.starts_with('"') && rn.ends_with('"')) || (rn.starts_with('\'') && rn.ends_with('\'')) {
+                    if rn.len() >= 2 { rn[1..rn.len()-1].to_string() } else { rn.to_string() }
+                } else { rn.to_string() };
+                TableRef::Table { name: rn2, alias: right_alias.filter(|a| !a.is_empty()) }
+            };
+            joins.push(JoinClause { join_type: jt.unwrap_or(JoinType::Inner), right: right_ref, on });
             j = end;
         }
         Ok((base, joins))

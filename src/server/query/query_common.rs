@@ -180,6 +180,9 @@ pub enum TableRef {
     Table { name: String, alias: Option<String> },
     /// A subquery in FROM clause with required alias
     Subquery { query: Box<Query>, alias: String },
+    /// A table-valued function call in FROM/JOIN with optional alias. The `call` is the full text
+    /// "func(arg1, arg2, ...)" preserved for evaluation, but naming rules will not use the call text.
+    Tvf { call: String, alias: Option<String> },
 }
 
 impl TableRef {
@@ -188,6 +191,7 @@ impl TableRef {
         match self {
             TableRef::Table { name, .. } => Some(name.as_str()),
             TableRef::Subquery { .. } => None,
+            TableRef::Tvf { .. } => None,
         }
     }
     
@@ -196,6 +200,7 @@ impl TableRef {
         match self {
             TableRef::Table { alias, .. } => alias.as_deref(),
             TableRef::Subquery { alias, .. } => Some(alias.as_str()),
+            TableRef::Tvf { alias, .. } => alias.as_deref(),
         }
     }
     
@@ -204,6 +209,8 @@ impl TableRef {
         match self {
             TableRef::Table { name, alias } => alias.as_deref().unwrap_or(name.as_str()),
             TableRef::Subquery { alias, .. } => alias.as_str(),
+            // For TVFs, only alias is an effective name; otherwise they have no qualifier
+            TableRef::Tvf { alias, .. } => alias.as_deref().unwrap_or(""),
         }
     }
 }

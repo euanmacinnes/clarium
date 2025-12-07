@@ -147,6 +147,51 @@ impl DataContext {
         out
     }
 
+    /// Compute a mapping of possible aliases for columns present in the current DataFrame.
+    /// For each DataFrame column name like `qual.a.b.col`, we register the following lookups:
+    /// - exact: `qual.a.b.col`
+    /// - base (last segment): `col` → maps to unique qualified name if unambiguous across DF
+    /// - 2-segment suffix: `b.col` (and `a.b.col` etc.), progressively, to improve resolution without duplication
+    fn build_df_alias_matrix<'a>(&self, df: &'a DataFrame) -> std::collections::HashMap<String, String> {
+        use std::collections::{HashMap, HashSet};
+        let mut exact: HashSet<String> = HashSet::new();
+        let mut by_suffix: HashMap<String, Vec<String>> = HashMap::new();
+        for cname in df.get_column_names() {
+            let s = cname.to_string();
+            exact.insert(s.clone());
+            // Build suffix keys: last, last2, last3, ...
+            let parts: Vec<&str> = s.split('.').collect();
+            for i in 0..parts.len() {
+                let key = parts[i..].join(".");
+                by_suffix.entry(key).or_default().push(s.clone());
+            }
+        }
+        // Choose unique mappings only, prefer those under current db/schema scope when ambiguous
+        let def_db = self.current_database.as_deref();
+        let def_schema = self.current_schema.as_deref();
+        let prefer_scope = |c: &str| -> bool {
+            if let (Some(db), Some(schema)) = (def_db, def_schema) {
+                c.starts_with(&format!("{}/{}/", db, schema))
+            } else { false }
+        };
+        let mut map: HashMap<String, String> = HashMap::new();
+        for (k, v) in by_suffix.into_iter() {
+            if v.len() == 1 {
+                map.insert(k, v[0].clone());
+            } else {
+                // If multiple candidates, try to prefer one in current scope
+                let scoped: Vec<String> = v.into_iter().filter(|m| prefer_scope(m)).collect();
+                if scoped.len() == 1 {
+                    map.insert(k, scoped[0].clone());
+                }
+                // else ambiguous: don't insert, require explicit qualification
+            }
+        }
+        // Ensure exact names map to themselves (case-insensitive match aid)
+        for e in exact.into_iter() { map.insert(e.clone(), e); }
+        map
+    }
+
     /// Returns only the final SELECT output columns (ProjectSelect stage)
     pub fn final_select_columns(&self) -> HashSet<String> {
         self.stage_columns.get(&SelectStage::ProjectSelect).cloned().unwrap_or_default()
@@ -247,6 +292,12 @@ impl DataContext {
             TableRef::Subquery { alias, .. } => {
                 // Subquery (including CTE materializations) only has alias; fq/unqual are unknown
                 self.register_table_names(Some(alias.clone()), None, None);
+            }
+            TableRef::Tvf { alias, .. } => {
+                // TVFs only contribute alias as a qualifier; no canonical path or unqualified name
+                if let Some(a) = alias.clone() {
+                    self.register_table_names(Some(a), None, None);
+                }
             }
         }
     }
@@ -429,8 +480,25 @@ impl DataContext {
         crate::tprintln!("[resolve_column_at_stage] Resolving '{}' at stage {:?}", name, stage);
         crate::tprintln!("[resolve_column_at_stage] DataFrame columns: {:?}", df.get_column_names());
         crate::tprintln!("[resolve_column_at_stage] alias_to_name: {:?}", self.alias_to_name);
+        // Normalization helper: strip quotes from whole identifier or rightmost segment (alias."x.y")
+        let normalize = |s: &str| -> String {
+            let t = s.trim();
+            if let Some((lhs, rhs)) = t.rsplit_once('.') {
+                let r = rhs.trim();
+                if (r.starts_with('"') && r.ends_with('"') && r.len() >= 2)
+                    || (r.starts_with('\'') && r.ends_with('\'') && r.len() >= 2)
+                {
+                    let inner = &r[1..r.len()-1];
+                    format!("{}.{}", lhs, inner)
+                } else { t.to_string() }
+            } else if (t.starts_with('"') && t.ends_with('"') && t.len() >= 2)
+                || (t.starts_with('\'') && t.ends_with('\'') && t.len() >= 2) {
+                t[1..t.len()-1].to_string()
+            } else { t.to_string() }
+        };
+        let name_norm = normalize(name);
         // Step 1: normal resolution first
-        match self.resolve_column(df, name) {
+        match self.resolve_column(df, &name_norm) {
             Ok(n) => {
                 crate::tprintln!("[resolve_column_at_stage] resolve_column succeeded: '{}'", n);
                 return Ok(n);
@@ -438,6 +506,11 @@ impl DataContext {
             Err(e) => {
                 crate::tprintln!("[resolve_column_at_stage] resolve_column failed: {}", e);
             }
+        }
+        // Step 1b: consult alias matrix built from current DataFrame to map unqualified/suffix names
+        let alias_map = self.build_df_alias_matrix(df);
+        if let Some(mapped) = alias_map.get(&name_norm) {
+            return Ok(mapped.clone());
         }
         // Step 2: consult stage-visible names
         let visible = self.visible_columns_until(stage);
@@ -623,14 +696,6 @@ impl DataContext {
     pub fn load_source_df(&self, store: &crate::storage::SharedStore, t: &TableRef) -> anyhow::Result<DataFrame> {
         match t {
             TableRef::Table { name, alias } => {
-                // Graph TVFs as table-like sources: graph_neighbors(...) / graph_paths(...)
-                if let Some(df) = Self::try_graph_tvf(store, name)? {
-                    return Self::prefix_columns(df, t);
-                }
-                // Vector TVFs as table-like sources: nearest_neighbors(...), vector_search(...)
-                if let Some(df) = crate::server::exec::exec_vector_tvf::try_vector_tvf(store, name)? {
-                    return Self::prefix_columns(df, t);
-                }
                 // Check CTEs first - they take precedence over everything
                 if let Some(cte_df) = self.cte_tables.get(name) {
                     tracing::debug!(target: "clarium::exec", "load_source_df: CTE hit name='{}' alias={:?}", name, alias);
@@ -726,6 +791,18 @@ impl DataContext {
                 // Prefix columns with the subquery alias
                 Self::prefix_columns(subquery_df, t)
             }
+            TableRef::Tvf { call, alias } => {
+                tracing::debug!(target: "clarium::exec", "load_source_df: evaluating TVF call='{}' alias={:?}", call, alias);
+                // Try known TVF families
+                if let Some(df) = Self::try_graph_tvf(store, call)? {
+                    // Apply alias-based prefixing only; no function-call leakage
+                    return Self::prefix_columns_tvf(df, alias.as_deref());
+                }
+                if let Some(df) = crate::server::exec::exec_vector_tvf::try_vector_tvf(store, call)? {
+                    return Self::prefix_columns_tvf(df, alias.as_deref());
+                }
+                anyhow::bail!("Unknown table-valued function: {}", call)
+            }
         }
     }
 
@@ -798,6 +875,10 @@ impl DataContext {
 
     fn prefix_columns(df: DataFrame, t: &TableRef) -> anyhow::Result<DataFrame> {
         let pref = t.effective_name();
+        // For TVFs without alias, effective_name is empty string => return df unchanged
+        if pref.is_empty() {
+            return Ok(df);
+        }
         let mut cols: Vec<polars::prelude::Column> = Vec::new();
         for cname in df.get_column_names() {
             let new_name = format!("{}.{}", pref, cname);
@@ -806,6 +887,21 @@ impl DataContext {
             cols.push(s);
         }
         Ok(DataFrame::new(cols)?)
+    }
+
+    // Prefix helper specifically for TVFs using optional alias; when alias is None or empty, return df unchanged.
+    fn prefix_columns_tvf(df: DataFrame, alias: Option<&str>) -> anyhow::Result<DataFrame> {
+        if let Some(a) = alias { if !a.is_empty() {
+            let mut cols: Vec<polars::prelude::Column> = Vec::new();
+            for cname in df.get_column_names() {
+                let new_name = format!("{}.{}", a, cname);
+                let mut s = df.column(cname.as_str())?.clone();
+                s.rename(new_name.into());
+                cols.push(s);
+            }
+            return Ok(DataFrame::new(cols)?);
+        } }
+        Ok(df)
     }
 
     // read_df_or_kv: removed duplicate; use crate::server::exec::df_utils::read_df_or_kv instead
