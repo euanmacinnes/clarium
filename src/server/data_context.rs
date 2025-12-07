@@ -346,8 +346,34 @@ impl DataContext {
                         crate::tprintln!("[resolve_column] no exact match found");
                     }
                 } else {
-                    // Alias unknown: bail early to avoid accidentally mapping to inner columns like o.customer_id == o.customer_id
-                    anyhow::bail!(format!("Column not found: {} (unknown alias '{}')", name, maybe_alias));
+                    // If the left side looks like a table path (contains '/') or a schema/table identifier
+                    // treat it as a partially/fully-qualified table reference rather than an alias.
+                    // Attempt to canonicalize with current defaults and resolve by exact or suffix.
+                    let looks_table_path = maybe_alias.contains('/');
+                    if looks_table_path {
+                        if let (Some(db), Some(schema)) = (def_db, def_schema) {
+                            // Try exact with defaults
+                            let has_slash_count = maybe_alias.matches('/').count();
+                            let lhs_canon = match has_slash_count {
+                                0 => format!("{}/{}/{}", db, schema, maybe_alias),
+                                1 => format!("{}/{}", db, maybe_alias),
+                                _ => maybe_alias.to_string(),
+                            };
+                            let candidate = format!("{}.{}", lhs_canon, col_part);
+                            if let Some(actual_name) = exact_in_df(&candidate) { return Ok(actual_name); }
+                        }
+                        // Fallback: unique suffix match on column part within current df
+                        let mut matches = suffix_matches_in_df(col_part);
+                        if matches.len() > 1 {
+                            if let (Some(db), Some(schema)) = (def_db, def_schema) {
+                                matches.retain(|m| m.starts_with(&format!("{}/{}/", db, schema)));
+                            }
+                        }
+                        if matches.len() == 1 { return Ok(matches.remove(0)); }
+                        // If still ambiguous or none, continue to generic resolution below
+                    } else {
+                        // Not a known alias and not a table path — keep searching using defaults branch below
+                    }
                 }
             }
             // If missing db/schema and not in alias.col form, try to prepend defaults
@@ -666,14 +692,28 @@ impl DataContext {
                 };
                 let pref = alias.as_deref().unwrap_or(name.as_str());
                 let mut prefixed = Self::prefix_columns(df, t)?;
-                // Inject a stable ordinal <alias>.__row_id.<alias> to aid ANN row-id mapping and avoid name collisions in joins
-                let rid_name_fq = format!("{}.{}", pref, format!("__row_id.{}", pref));
-                if !prefixed.get_column_names().iter().any(|c| c.as_str() == rid_name_fq.as_str()) {
+                // Inject a stable ordinal <prefix>.__row_id to aid ANN row-id mapping and avoid name collisions in joins
+                // Where <prefix> is the alias if present, else the fully/partially qualified table name used for prefixing.
+                let rid_alias_name = format!("{}.{}", pref, "__row_id");
+                if !prefixed.get_column_names().iter().any(|c| c.as_str().eq_ignore_ascii_case(&rid_alias_name)) {
                     let h = prefixed.height();
                     let mut ids: Vec<u64> = Vec::with_capacity(h);
                     for i in 0..h { ids.push(i as u64); }
-                    let s = Series::new(rid_name_fq.into(), ids);
+                    let s = Series::new(rid_alias_name.clone().into(), ids);
                     let _ = prefixed.with_column(s);
+                }
+                // Also inject fully-qualified <fq>.__row_id if this is a regular table and fq can be resolved
+                if !name.contains(".store.") {
+                    let fq = self.resolve_table_name(name);
+                    let rid_fq_name = format!("{}.{}", fq, "__row_id");
+                    if !prefixed.get_column_names().iter().any(|c| c.as_str().eq_ignore_ascii_case(&rid_fq_name)) {
+                        // Reuse same IDs
+                        let h = prefixed.height();
+                        let mut ids: Vec<u64> = Vec::with_capacity(h);
+                        for i in 0..h { ids.push(i as u64); }
+                        let s = Series::new(rid_fq_name.into(), ids);
+                        let _ = prefixed.with_column(s);
+                    }
                 }
                 tracing::debug!(target: "clarium::exec", "load_source_df: prefixed with '{}' -> cols={:?}", pref, prefixed.get_column_names());
                 Ok(prefixed)

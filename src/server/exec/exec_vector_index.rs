@@ -66,10 +66,33 @@ pub(crate) fn delete_vindex_file(store: &SharedStore, qualified: &str) -> Result
 pub(crate) fn now_iso() -> String { chrono::Utc::now().to_rfc3339() }
 
 fn table_exists(store: &SharedStore, qualified_table: &str) -> bool {
-    let mut p = store.0.lock().root_path().clone();
-    let local = qualified_table.replace('/', std::path::MAIN_SEPARATOR.to_string().as_str());
-    p.push(local);
-    p.is_dir() && p.join("schema.json").exists()
+    // Resolve to local path via storage helpers to ensure consistent layout handling
+    let guard = store.0.lock();
+    let dir = guard.db_dir(qualified_table);
+    let has_dir = dir.is_dir();
+    let has_schema = dir.join("schema.json").exists();
+    let data_parquet = dir.join("data.parquet");
+    let has_data_file = data_parquet.exists();
+    // Also consider chunked parquet files like data-<min>-<max>-<ts>.parquet
+    let mut has_chunk = false;
+    if has_dir && !has_schema && !has_data_file {
+        if let Ok(rd) = std::fs::read_dir(&dir) {
+            for e in rd.flatten() {
+                let p = e.path();
+                if p.is_file() && p.extension().and_then(|s| s.to_str()) == Some("parquet") {
+                    if let Some(name) = p.file_name().and_then(|s| s.to_str()) {
+                        if name == "data.parquet" || name.starts_with("data-") { has_chunk = true; break; }
+                    }
+                }
+            }
+        }
+    }
+    let exists = has_dir && (has_schema || has_data_file || has_chunk);
+    crate::tprintln!(
+        "[DDL] table_exists: table='{}' dir='{}' has_dir={} has_schema={} has_data_file={} has_chunk={} -> {}",
+        qualified_table, dir.display(), has_dir, has_schema, has_data_file, has_chunk, exists
+    );
+    exists
 }
 
 fn list_vector_indexes(store: &SharedStore) -> Result<Value> {

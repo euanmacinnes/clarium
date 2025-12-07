@@ -4,7 +4,7 @@
 //! - nearest_neighbors(table, column, qvec, k [, metric, ef_search, with_ord])
 //! - vector_search(index_name, qvec, k [, topk, engine])
 //!
-//! Returns a DataFrame with columns: row_id (UInt32), score (Float32) and optional ord (UInt32)
+//! Returns a DataFrame with columns: row_id (UInt64), score (Float32) and optional ord (UInt32)
 //! Polars 0.51+ compliant DataFrame construction.
 
 use anyhow::{Result, anyhow};
@@ -86,8 +86,8 @@ pub fn try_vector_tvf(store: &crate::storage::SharedStore, raw: &str) -> Result<
             };
             let mut res = crate::server::exec::exec_vector_runtime::search_vector_index_with_opts(store, &vf, &qvec, k, &opts)?;
             if let Some(topk) = topk_opt { if topk < res.len() { res.truncate(topk); } }
-            let (mut ids, mut scores): (Vec<u32>, Vec<f32>) = (Vec::with_capacity(res.len()), Vec::with_capacity(res.len()));
-            for (id, sc) in res { ids.push(id); scores.push(sc); }
+            let (mut ids, mut scores): (Vec<u64>, Vec<f32>) = (Vec::with_capacity(res.len()), Vec::with_capacity(res.len()));
+            for (id, sc) in res { ids.push(id as u64); scores.push(sc); }
             let df = DataFrame::new(vec![
                 Series::new("row_id".into(), ids).into(),
                 Series::new("score".into(), scores).into(),
@@ -154,8 +154,8 @@ pub fn try_vector_tvf(store: &crate::storage::SharedStore, raw: &str) -> Result<
                     engine_hint: None,
                 };
                 let res = crate::server::exec::exec_vector_runtime::search_vector_index_with_opts(store, &vf, &qvec, k, &opts)?;
-                let (mut ids, mut scores): (Vec<u32>, Vec<f32>) = (Vec::with_capacity(res.len()), Vec::with_capacity(res.len()));
-                for (id, sc) in res { ids.push(id); scores.push(sc); }
+                let (mut ids, mut scores): (Vec<u64>, Vec<f32>) = (Vec::with_capacity(res.len()), Vec::with_capacity(res.len()));
+                for (id, sc) in res { ids.push(id as u64); scores.push(sc); }
                 let mut cols: Vec<Column> = vec![Series::new("row_id".into(), ids).into(), Series::new("score".into(), scores).into()];
                 if with_ord {
                     // We cannot recover original row ordinal from the vindex without scanning source; leave absent on index path.
@@ -188,8 +188,8 @@ pub fn try_vector_tvf(store: &crate::storage::SharedStore, raw: &str) -> Result<
                     }
                     let mut items: Vec<(u32,u32)> = heap.into_iter().map(|std::cmp::Reverse(t)| t).collect();
                     items.sort_by(|a,b| b.0.cmp(&a.0));
-                    let mut ids: Vec<u32> = Vec::with_capacity(items.len()); let mut scores: Vec<f32> = Vec::with_capacity(items.len()); let mut ords: Vec<u32> = Vec::with_capacity(items.len());
-                    for (_k, i) in items { ids.push(i); let vv = vector_utils::extract_vec_f32_col(col, i as usize).unwrap_or_default(); let sc = match metric.as_deref(){Some("cosine")=>cosine(&vv,&qvec),Some("ip")|Some("dot")=>dot(&vv,&qvec), _=>l2(&vv,&qvec)}; scores.push(sc); ords.push(i);}
+                    let mut ids: Vec<u64> = Vec::with_capacity(items.len()); let mut scores: Vec<f32> = Vec::with_capacity(items.len()); let mut ords: Vec<u32> = Vec::with_capacity(items.len());
+                    for (_k, i) in items { ids.push(i as u64); let vv = vector_utils::extract_vec_f32_col(col, i as usize).unwrap_or_default(); let sc = match metric.as_deref(){Some("cosine")=>cosine(&vv,&qvec),Some("ip")|Some("dot")=>dot(&vv,&qvec), _=>l2(&vv,&qvec)}; scores.push(sc); ords.push(i);}            
                     let mut cols: Vec<Column> = vec![Series::new("row_id".into(), ids).into(), Series::new("score".into(), scores).into()];
                     if with_ord { cols.push(Series::new("ord".into(), ords).into()); }
                     let df = DataFrame::new(cols)?;
@@ -207,8 +207,8 @@ pub fn try_vector_tvf(store: &crate::storage::SharedStore, raw: &str) -> Result<
                     }
                     let mut items: Vec<(u32,u32)> = heap.into_iter().collect();
                     items.sort_by(|a,b| b.0.cmp(&a.0));
-                    let mut ids: Vec<u32> = Vec::with_capacity(items.len()); let mut scores: Vec<f32> = Vec::with_capacity(items.len()); let mut ords: Vec<u32> = Vec::with_capacity(items.len());
-                    for (_k, i) in items { ids.push(i); let vv = vector_utils::extract_vec_f32_col(col, i as usize).unwrap_or_default(); scores.push(l2(&vv,&qvec)); ords.push(i); }
+                    let mut ids: Vec<u64> = Vec::with_capacity(items.len()); let mut scores: Vec<f32> = Vec::with_capacity(items.len()); let mut ords: Vec<u32> = Vec::with_capacity(items.len());
+                    for (_k, i) in items { ids.push(i as u64); let vv = vector_utils::extract_vec_f32_col(col, i as usize).unwrap_or_default(); scores.push(l2(&vv,&qvec)); ords.push(i); }
                     let mut cols: Vec<Column> = vec![Series::new("row_id".into(), ids).into(), Series::new("score".into(), scores).into()];
                     if with_ord { cols.push(Series::new("ord".into(), ords).into()); }
                     let df = DataFrame::new(cols)?;

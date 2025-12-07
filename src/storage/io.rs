@@ -90,9 +90,12 @@ impl Store {
             }
         }
         if dfs.is_empty() {
-            // Return empty dataframe with schema from schema.json if present
+            // Return empty dataframe with schema from schema.json if present.
+            // Only include `_time` automatically for time-series tables (*.time).
             let mut cols: Vec<Column> = Vec::new();
-            cols.push(Series::new("_time".into(), Vec::<i64>::new()).into());
+            if table.ends_with(".time") {
+                cols.push(Series::new("_time".into(), Vec::<i64>::new()).into());
+            }
             let schema = self.load_schema(table).unwrap_or_default();
             for (name, dt) in schema.into_iter() {
                 let s: Column = match dt {

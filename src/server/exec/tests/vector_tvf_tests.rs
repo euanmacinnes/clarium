@@ -13,7 +13,7 @@ fn nearest_neighbors_join_back_by_row_id_exact_scan_with_ord() {
     // Use with_ord=true to ensure ord is provided on exact path
     let sql = "SELECT d.id, nn.score \
                FROM nearest_neighbors('clarium/public/docs','body_embed','[0.21,0,0]', 2, 'l2', 64, true) AS nn \
-               JOIN clarium/public/docs AS d ON nn.row_id = d.\"__row_id.d\" \
+               JOIN clarium/public/docs AS d ON nn.row_id = d.__row_id \
                ORDER BY nn.score";
     let q = match query::parse(sql).unwrap() { Command::Select(q) => q, _ => unreachable!() };
     let df = run_select(&store, &q).unwrap();

@@ -444,11 +444,18 @@ fn ann_order_dataframe(
         .map(|c| c.to_string())
         .unwrap_or_else(|| col_name.to_string());
     let col_series = df.column(&cname)?;
-    // Identify a stable row-id column if present (prefer namespaced __row_id.<alias>, else __row_id)
+    // Identify a stable row-id column if present
+    // Accepted forms:
+    // - alias.__row_id (preferred when an alias is used)
+    // - fully/partially-qualified.__row_id (e.g., db/schema/table.__row_id)
+    // - __row_id (unqualified, if unique)
+    // - legacy: __row_id.<alias>
     let mut rid_col_name: Option<String> = None;
     for n in df.get_column_names() {
         let ns = n.as_str();
-        if ns == "__row_id" || ns.starts_with("__row_id.") || ns.contains(".__row_id.") {
+        if ns == "__row_id"
+            || ns.ends_with(".__row_id")   // new preferred alias/fq form: alias.__row_id or fq.__row_id
+        {
             rid_col_name = Some(ns.to_string());
             break;
         }

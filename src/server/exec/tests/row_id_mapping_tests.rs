@@ -2,7 +2,7 @@ use crate::server::exec::exec_select::run_select;
 use crate::server::query::{self, Command};
 use crate::server::exec::tests::fixtures::*;
 
-// Validate row-id mapping under filters and joins using __row_id.<alias>
+// Validate row-id mapping under filters and joins using alias-qualified __row_id
 #[test]
 fn row_id_mapping_with_filter_then_join_back() {
     let tmp = tempfile::tempdir().unwrap();
@@ -14,7 +14,7 @@ fn row_id_mapping_with_filter_then_join_back() {
                SELECT d.id, nn.score \
                FROM d \
                JOIN nearest_neighbors('clarium/public/docs','body_embed','[0.21,0,0]', 2, 'l2', 64, true) AS nn \
-                 ON nn.row_id = d.'__row_id.d' \
+                 ON nn.row_id = d.__row_id \
                ORDER BY nn.score ASC";
     let q = match query::parse(sql).unwrap() { Command::Select(q) => q, _ => unreachable!() };
     let df = run_select(&store, &q).unwrap();
@@ -30,11 +30,11 @@ fn row_id_mapping_survives_join_then_project_alias() {
     let store = new_store(&tmp);
     seed_docs_with_embeddings(&store, "clarium/public/docs");
 
-    // Join first, then select using alias to ensure __row_id.<alias> resolution works
+    // Join first, then select using alias to ensure alias.__row_id resolution works
     let sql = "SELECT d.id AS did, nn.score \
                FROM clarium/public/docs AS d \
                JOIN nearest_neighbors('clarium/public/docs','body_embed','[0.29,0,0]', 2, 'l2', 64, true) AS nn \
-                 ON nn.row_id = d.'__row_id.d' \
+                 ON nn.row_id = d.__row_id \
                ORDER BY nn.score ASC";
     let q = match query::parse(sql).unwrap() { Command::Select(q) => q, _ => unreachable!() };
     let df = run_select(&store, &q).unwrap();

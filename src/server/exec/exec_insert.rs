@@ -251,7 +251,83 @@ pub fn handle_insert(store: &SharedStore, table: String, columns: Vec<String>, v
         guard.read_df(&table_path)
     };
     let combined = match existing_res {
-        Ok(existing) => existing.vstack(&new_df)?,
+        Ok(existing) => {
+            // If existing is empty with zero columns, just take new_df
+            if existing.width() == 0 && existing.height() == 0 {
+                new_df.clone()
+            } else if existing.width() == 0 {
+                // No columns in existing: skip alignment and use new_df
+                new_df.clone()
+            } else if new_df.width() == 0 {
+                existing.clone()
+            } else {
+                // Align schemas by column name before vstack
+                let mut left = existing.clone();
+                let mut right = new_df.clone();
+                let left_names = left.get_column_names();
+                let right_names = right.get_column_names();
+                use std::collections::HashSet;
+                // Build name sets as HashSet<&str> or String; use &str borrowing for contains
+                let left_set: HashSet<String> = left_names.iter().map(|n| n.as_str().to_string()).collect();
+                let right_set: HashSet<String> = right_names.iter().map(|n| n.as_str().to_string()).collect();
+                // Columns present in left but missing in right → add as nulls
+                for name in left_names.iter() {
+                    if !right_set.contains(name.as_str()) {
+                        let dtype = left.column(name.as_str()).map(|c| c.dtype().clone()).unwrap_or(DataType::Null);
+                        let s: Series = match dtype {
+                            DataType::Int64 => Series::new(name.as_str().into(), vec![Option::<i64>::None; right.height()]),
+                            DataType::Float64 => Series::new(name.as_str().into(), vec![Option::<f64>::None; right.height()]),
+                            DataType::String => Series::new(name.as_str().into(), vec![Option::<String>::None; right.height()]),
+                            DataType::UInt64 => Series::new(name.as_str().into(), vec![Option::<u64>::None; right.height()]),
+                            DataType::UInt32 => Series::new(name.as_str().into(), vec![Option::<u32>::None; right.height()]),
+                            DataType::Boolean => Series::new(name.as_str().into(), vec![Option::<bool>::None; right.height()]),
+                            DataType::List(inner) => {
+                                match *inner {
+                                    DataType::Float64 => Series::new(name.as_str().into(), Vec::<Option<f64>>::new()),
+                                    DataType::Int64 => Series::new(name.as_str().into(), Vec::<Option<i64>>::new()),
+                                    _ => Series::new(name.as_str().into(), Vec::<Option<String>>::new()),
+                                }
+                            }
+                            _ => Series::new_null(name.as_str().into(), right.height()),
+                        };
+                        right = right.hstack(&[s.into()])?;
+                    }
+                }
+                // Columns present in right but missing in left → add as nulls
+                for name in right.get_column_names().iter() {
+                    if !left_set.contains(name.as_str()) {
+                        // Infer dtype from right column to create nulls in left
+                        let dtype = right.column(name.as_str()).map(|c| c.dtype().clone()).unwrap_or(DataType::Null);
+                        let s: Series = match dtype {
+                            DataType::Int64 => Series::new(name.as_str().into(), vec![Option::<i64>::None; left.height()]),
+                            DataType::Float64 => Series::new(name.as_str().into(), vec![Option::<f64>::None; left.height()]),
+                            DataType::String => Series::new(name.as_str().into(), vec![Option::<String>::None; left.height()]),
+                            DataType::UInt64 => Series::new(name.as_str().into(), vec![Option::<u64>::None; left.height()]),
+                            DataType::UInt32 => Series::new(name.as_str().into(), vec![Option::<u32>::None; left.height()]),
+                            DataType::Boolean => Series::new(name.as_str().into(), vec![Option::<bool>::None; left.height()]),
+                            DataType::List(inner) => {
+                                match *inner {
+                                    DataType::Float64 => Series::new(name.as_str().into(), Vec::<Option<f64>>::new()),
+                                    DataType::Int64 => Series::new(name.as_str().into(), Vec::<Option<i64>>::new()),
+                                    _ => Series::new(name.as_str().into(), Vec::<Option<String>>::new()),
+                                }
+                            }
+                            _ => Series::new_null(name.as_str().into(), left.height()),
+                        };
+                        left = left.hstack(&[s.into()])?;
+                    }
+                }
+                // Reorder right to match left column order for vstack
+                let final_order = left.get_column_names();
+                let mut reordered_right_cols: Vec<Column> = Vec::with_capacity(final_order.len());
+                for name in &final_order {
+                    let s = right.column(name.as_str())?.clone();
+                    reordered_right_cols.push(s);
+                }
+                let right_reordered = DataFrame::new(reordered_right_cols)?;
+                left.vstack(&right_reordered)?
+            }
+        }
         Err(_) => new_df.clone(),
     };
     {
