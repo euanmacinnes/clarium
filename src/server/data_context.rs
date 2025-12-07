@@ -801,6 +801,23 @@ impl DataContext {
                 if let Some(df) = crate::server::exec::exec_vector_tvf::try_vector_tvf(store, call)? {
                     return Self::prefix_columns_tvf(df, alias.as_deref());
                 }
+                // Try Lua UDF TVFs via registry
+                if let Some(reg) = crate::scripts::get_script_registry() {
+                    let reg_snapshot = reg.snapshot().ok();
+                    if let Some(rs) = reg_snapshot {
+                        match rs.try_eval_tvf_call(call, Some(self)) {
+                            Ok(Some(df)) => {
+                                tracing::debug!(target: "clarium::exec", "load_source_df: Lua TVF produced cols={:?} rows={}", df.get_column_names(), df.height());
+                                return Self::prefix_columns_tvf(df, alias.as_deref());
+                            }
+                            Ok(None) => { /* not a TVF or not found; fallthrough */ }
+                            Err(e) => {
+                                // Graceful error per guidelines
+                                anyhow::bail!("Error executing TVF '{}': {}", call, e);
+                            }
+                        }
+                    }
+                }
                 anyhow::bail!("Unknown table-valued function: {}", call)
             }
         }

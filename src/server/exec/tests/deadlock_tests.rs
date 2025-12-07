@@ -68,7 +68,7 @@ fn no_deadlocks_under_registry_and_query_load() {
     let reg = crate::scripts::get_script_registry().expect("global ScriptRegistry should be initialized");
     // Ensure the 'inc' UDF exists for this test
     reg.load_script_text("inc", "function inc(x) if x==nil then return 0 end return x+1 end").unwrap();
-    reg.set_meta("inc", ScriptMeta { kind: ScriptKind::Scalar, returns: vec![DataType::Int64], nullable: true, version: 0 });
+    reg.set_meta("inc", ScriptMeta { kind: ScriptKind::Scalar, returns: vec![DataType::Int64], nullable: true, version: 0, tvf_columns: Vec::new() });
 
     // Seed a temp table
     let tmp = tempfile::tempdir().unwrap();
@@ -112,7 +112,7 @@ fn no_deadlocks_under_registry_and_query_load() {
                         let name_old = format!("f{}_{}", i, iter);
                         let name_new = format!("f{}_{}", i, iter+1);
                         let _ = reg.load_script_text(&name_old, "function f(x) return x end");
-                        reg.set_meta(&name_old, ScriptMeta { kind: ScriptKind::Scalar, returns: vec![DataType::Int64], nullable: true, version: 0 });
+                        reg.set_meta(&name_old, ScriptMeta { kind: ScriptKind::Scalar, returns: vec![DataType::Int64], nullable: true, version: 0, tvf_columns: Vec::new() });
                         let _ = reg.rename_function(&name_old, &name_new);
                         reg.unload_function(&name_new);
                     } else {

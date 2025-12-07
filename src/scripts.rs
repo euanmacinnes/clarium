@@ -10,7 +10,7 @@ use anyhow::{anyhow, Result};
 use parking_lot::Mutex;
 use std::{collections::HashMap, path::{Path, PathBuf}, fs};
 use std::sync::atomic::{AtomicU64, Ordering};
-use polars::prelude::DataType;
+use polars::prelude::{DataType, Series, DataFrame, NamedFrom};
 use std::cell::RefCell;
 use std::hash::Hash;
 use tracing::debug;
@@ -23,8 +23,13 @@ pub struct ScriptRegistry {
 
 #[derive(Clone, Debug)]
 #[derive(Default)]
-pub enum ScriptKind { #[default]
-Scalar, Aggregate, Constraint }
+pub enum ScriptKind {
+    #[default]
+    Scalar,
+    Aggregate,
+    Constraint,
+    Tvf,
+}
 
 
 #[derive(Clone, Debug, Default)]
@@ -33,6 +38,8 @@ pub struct ScriptMeta {
     pub returns: Vec<DataType>, // empty means unknown; single means scalar; >1 means multi-return
     pub nullable: bool,
     pub version: u64, // bump when code changes
+    // For TVFs, describe output columns (name + dtype). If empty, engine will infer from Lua data.
+    pub tvf_columns: Vec<(String, DataType)>,
 }
 
 impl ScriptRegistry {
@@ -164,6 +171,7 @@ impl ScriptRegistry {
         let scalars = dir.join("scalars");
         let aggregates = dir.join("aggregates");
         let constraints = dir.join("constraints");
+        let tvfs = dir.join("tvfs");
         let load_dir = |folder: &Path, kind: ScriptKind| -> Result<()> {
             if !folder.exists() { return Ok(()); }
             for ent in fs::read_dir(folder)? {
@@ -208,7 +216,7 @@ impl ScriptRegistry {
                     }
                     // default meta when not provided
                     if !applied_meta {
-                        let meta = ScriptMeta { kind: kind.clone(), returns: Vec::new(), nullable: true, version: 0 };
+                        let meta = ScriptMeta { kind: kind.clone(), returns: Vec::new(), nullable: true, version: 0, tvf_columns: Vec::new() };
                         self.set_meta(&name, meta.clone());
                         self.set_meta(&qualified, meta);
                     }
@@ -219,6 +227,7 @@ impl ScriptRegistry {
         load_dir(&scalars, ScriptKind::Scalar)?;
         load_dir(&aggregates, ScriptKind::Aggregate)?;
         load_dir(&constraints, ScriptKind::Constraint)?;
+        load_dir(&tvfs, ScriptKind::Tvf)?;
         Ok(())
     }
 
@@ -228,10 +237,11 @@ impl ScriptRegistry {
     }
 
     fn meta_from_json_value(v: serde_json::Value, default_kind: &ScriptKind) -> Result<ScriptMeta> {
-        let mut meta = ScriptMeta { kind: default_kind.clone(), returns: Vec::new(), nullable: true, version: 0 };
+        let mut meta = ScriptMeta { kind: default_kind.clone(), returns: Vec::new(), nullable: true, version: 0, tvf_columns: Vec::new() };
         if let Some(k) = v.get("kind").and_then(|x| x.as_str()) {
             meta.kind = if k.eq_ignore_ascii_case("aggregate") { ScriptKind::Aggregate }
                 else if k.eq_ignore_ascii_case("constraint") { ScriptKind::Constraint }
+                else if k.eq_ignore_ascii_case("tvf") { ScriptKind::Tvf }
                 else { ScriptKind::Scalar };
         }
         if let Some(nul) = v.get("nullable").and_then(|x| x.as_bool()) { meta.nullable = nul; }
@@ -239,6 +249,16 @@ impl ScriptRegistry {
             let mut outs = Vec::new();
             for s in arr.iter().filter_map(|e| e.as_str()) { outs.push(str_to_dtype(s)?); }
             meta.returns = outs;
+        }
+        // TVF output schema: columns: [ { name: "col", type: "int64" }, ... ]
+        if let Some(cols) = v.get("columns").and_then(|x| x.as_array()) {
+            let mut out_cols: Vec<(String, DataType)> = Vec::with_capacity(cols.len());
+            for c in cols {
+                let name = c.get("name").and_then(|x| x.as_str()).unwrap_or("").to_string();
+                let ty = c.get("type").and_then(|x| x.as_str()).ok_or_else(|| anyhow!("TVF column missing type"))?;
+                out_cols.push((name, str_to_dtype(ty)?));
+            }
+            meta.tvf_columns = out_cols;
         }
         if let Some(vv) = v.get("version").and_then(|x| x.as_u64()) { meta.version = vv; }
         Ok(meta)
@@ -268,7 +288,7 @@ impl ScriptRegistry {
         for (_n, code) in snapshot.iter() { lua.load(code.as_str()).exec()?; }
         let globals = lua.globals();
         let meta_fn: Option<mlua::Function> = globals.get(format!("{}__meta", name).as_str()).ok();
-        let mut meta = ScriptMeta { kind: default_kind.clone(), returns: Vec::new(), nullable: true, version: 0 };
+        let mut meta = ScriptMeta { kind: default_kind.clone(), returns: Vec::new(), nullable: true, version: 0, tvf_columns: Vec::new() };
         if let Some(mf) = meta_fn {
             let v: mlua::Value = mf.call(())?;
             // Expect a table with fields: kind, returns (array of strings), nullable (bool)
@@ -300,7 +320,7 @@ impl ScriptRegistry {
             let meta = m.get(&name);
             match meta {
                 Some(meta) => {
-                    let kind = match meta.kind { ScriptKind::Scalar => "scalar", ScriptKind::Aggregate => "aggregate", ScriptKind::Constraint => "constraint" };
+                    let kind = match meta.kind { ScriptKind::Scalar => "scalar", ScriptKind::Aggregate => "aggregate", ScriptKind::Constraint => "constraint", ScriptKind::Tvf => "tvf" };
                     let returns: Vec<&'static str> = meta.returns.iter().map(|dt| match dt {
                         DataType::Boolean => "bool",
                         DataType::Int64 => "int64",
@@ -340,6 +360,239 @@ impl ScriptRegistry {
             inner: std::sync::Arc::new(Mutex::new(scripts)),
             meta: std::sync::Arc::new(Mutex::new(metas)),
         })
+    }
+
+    /// Try to evaluate a table-valued Lua function given a raw call string like
+    /// "my_tvf(arg1, 'arg2', [1,2,3])". Returns Ok(Some(DataFrame)) on success when
+    /// the function exists and is of kind Tvf, Ok(None) if the function name is not
+    /// registered as a TVF, and Err on execution/conversion errors.
+    pub fn try_eval_tvf_call(
+        &self,
+        call: &str,
+        ctx: Option<&crate::server::data_context::DataContext>,
+    ) -> Result<Option<DataFrame>> {
+        // Extract name and args as strings first
+        let s = call.trim();
+        let fname = s.split('(').next().unwrap_or("").trim();
+        let lname = Self::norm(fname);
+        // Check metadata to ensure TVF
+        if let Some(meta) = self.get_meta(&lname) {
+            if !matches!(meta.kind, ScriptKind::Tvf) {
+                return Ok(None);
+            }
+        } else {
+            return Ok(None);
+        }
+
+        fn extract_args(fcall: &str) -> Option<Vec<String>> {
+            let open = fcall.find('(')?;
+            if !fcall.ends_with(')') { return Some(vec![]); }
+            let inside = &fcall[open+1..fcall.len()-1];
+            let mut args: Vec<String> = Vec::new();
+            let mut cur = String::new();
+            let mut in_sq = false; let mut in_dq = false; let mut depth_br = 0usize; let mut prev_bs = false;
+            for ch in inside.chars() {
+                if ch == '\\' { prev_bs = !prev_bs; cur.push(ch); continue; } else { prev_bs = false; }
+                if !in_dq && ch=='\'' { in_sq = !in_sq; cur.push(ch); continue; }
+                if !in_sq && ch=='"' { in_dq = !in_dq; cur.push(ch); continue; }
+                if !in_sq && !in_dq {
+                    if ch=='[' || ch=='{' { depth_br += 1; }
+                    if ch==']' || ch=='}' { if depth_br>0 { depth_br -= 1; } }
+                    if ch==',' && depth_br==0 { args.push(cur.trim().to_string()); cur.clear(); continue; }
+                }
+                cur.push(ch);
+            }
+            if !cur.is_empty() { args.push(cur.trim().to_string()); }
+            Some(args)
+        }
+
+        fn strip_quotes(x: &str) -> String {
+            let t = x.trim();
+            if (t.starts_with('\'') && t.ends_with('\'')) || (t.starts_with('"') && t.ends_with('"')) {
+                if t.len() >= 2 { return t[1..t.len()-1].to_string(); }
+            }
+            t.to_string()
+        }
+
+        // Prepare Lua and call function
+        let df = self.with_prepared_lua(|lua| {
+            // Optionally register context accessor
+            if let Some(dc) = ctx { Self::register_context_accessor(lua, &ContextInfo::from_data_context(dc))?; }
+            let globals = lua.globals();
+            let func: mlua::Function = globals.get(lname.as_str())
+                .map_err(|e| anyhow!("TVF '{}' not found: {}", lname, e))?;
+            // Build argument list
+            use mlua::{Value as LVal, MultiValue};
+            let mut mvals = MultiValue::new();
+            if let Some(arg_strs) = extract_args(s) {
+                for a in arg_strs {
+                    let lv: LVal = if a.is_empty() { LVal::Nil }
+                        else if (a.starts_with('[') && a.ends_with(']')) || (a.starts_with('{') && a.ends_with('}')) {
+                            // Try parse as JSON
+                            match serde_json::from_str::<serde_json::Value>(&a) {
+                                Ok(j) => json_to_lua_mode(lua, &j, NullMode::RealNil)?,
+                                Err(_) => LVal::String(lua.create_string(strip_quotes(&a))?),
+                            }
+                        } else if a.starts_with('\'') || a.starts_with('"') {
+                            LVal::String(lua.create_string(strip_quotes(&a))?)
+                        } else {
+                            // Try number or boolean
+                            if let Ok(i) = a.parse::<i64>() { LVal::Integer(i) }
+                            else if let Ok(f) = a.parse::<f64>() { LVal::Number(f) }
+                            else if a.eq_ignore_ascii_case("true") { LVal::Boolean(true) }
+                            else if a.eq_ignore_ascii_case("false") { LVal::Boolean(false) }
+                            else { LVal::String(lua.create_string(&a)?) }
+                        };
+                    mvals.push_front(lv);
+                }
+            }
+            let outv: LVal = func.call(mvals)
+                .map_err(|e| anyhow!("TVF '{}' execution error: {}", lname, e))?;
+            let j = lua_to_json(outv)?;
+            // Convert JSON to DataFrame
+            Self::json_to_df(&j, self.get_meta(&lname))
+        })?;
+        Ok(Some(df))
+    }
+
+    fn json_to_df(j: &serde_json::Value, meta: Option<ScriptMeta>) -> Result<DataFrame> {
+        match j {
+            serde_json::Value::Array(rows) => {
+                // Expect array of row objects or arrays
+                if rows.is_empty() {
+                    return Ok(DataFrame::new(vec![])?);
+                }
+                // Determine columns
+                let (col_names, col_values_per_row): (Vec<String>, Vec<Vec<serde_json::Value>>) = match &rows[0] {
+                    serde_json::Value::Object(obj0) => {
+                        // Union of keys across rows; prefer meta.tvf_columns order if provided
+                        let mut names: Vec<String> = if let Some(m) = &meta { if !m.tvf_columns.is_empty() { m.tvf_columns.iter().map(|(n, _)| n.clone()).collect() } else { Vec::new() } } else { Vec::new() };
+                        if names.is_empty() {
+                            names = obj0.keys().cloned().collect();
+                            names.sort();
+                        }
+                        let mut per_row: Vec<Vec<serde_json::Value>> = Vec::with_capacity(rows.len());
+                        for r in rows {
+                            let mut rowvals: Vec<serde_json::Value> = Vec::with_capacity(names.len());
+                            let robj = r.as_object().unwrap();
+                            for n in &names {
+                                rowvals.push(robj.get(n).cloned().unwrap_or(serde_json::Value::Null));
+                            }
+                            per_row.push(rowvals);
+                        }
+                        (names, per_row)
+                    }
+                    serde_json::Value::Array(arr0) => {
+                        // Positional columns; use meta names or c0..cN
+                        let names: Vec<String> = if let Some(m) = &meta { if !m.tvf_columns.is_empty() { m.tvf_columns.iter().map(|(n, _)| n.clone()).collect() } else { (0..arr0.len()).map(|i| format!("c{}", i)).collect() } } else { (0..arr0.len()).map(|i| format!("c{}", i)).collect() };
+                        let mut per_row: Vec<Vec<serde_json::Value>> = Vec::with_capacity(rows.len());
+                        for r in rows { let rarr = r.as_array().unwrap(); per_row.push(rarr.clone()); }
+                        (names, per_row)
+                    }
+                    _ => { return Err(anyhow!("Unsupported TVF row format")); }
+                };
+                // Build Series per column using dtype inference or meta
+                let mut cols: Vec<Series> = Vec::with_capacity(col_names.len());
+                for (ci, cname) in col_names.iter().enumerate() {
+                    // Collect values for this column
+                    let mut vals: Vec<serde_json::Value> = Vec::with_capacity(col_values_per_row.len());
+                    for r in &col_values_per_row { vals.push(r.get(ci).cloned().unwrap_or(serde_json::Value::Null)); }
+                    let dtype_hint = meta.as_ref().and_then(|m| m.tvf_columns.get(ci)).map(|(_, dt)| dt.clone());
+                    cols.push(Self::json_values_to_series(cname, &vals, dtype_hint)?);
+                }
+                Ok(DataFrame::new(cols.into_iter().map(|s| s.into()).collect())?)
+            }
+            serde_json::Value::Object(cols_obj) => {
+                // Columnar format: object of arrays
+                let mut names: Vec<String> = if let Some(m) = &meta { if !m.tvf_columns.is_empty() { m.tvf_columns.iter().map(|(n, _)| n.clone()).collect() } else { cols_obj.keys().cloned().collect() } } else { cols_obj.keys().cloned().collect() };
+                if meta.as_ref().map(|m| m.tvf_columns.is_empty()).unwrap_or(true) { names.sort(); }
+                let mut cols: Vec<Series> = Vec::with_capacity(names.len());
+                for (i, n) in names.iter().enumerate() {
+                    let arr = cols_obj.get(n).cloned().unwrap_or(serde_json::Value::Array(vec![]));
+                    let list = match arr { serde_json::Value::Array(v) => v, _ => Vec::new() };
+                    let dtype_hint = meta.as_ref().and_then(|m| m.tvf_columns.get(i)).map(|(_, dt)| dt.clone());
+                    cols.push(Self::json_values_to_series(n, &list, dtype_hint)?);
+                }
+                Ok(DataFrame::new(cols.into_iter().map(|s| s.into()).collect())?)
+            }
+            _ => Err(anyhow!("TVF must return an array of rows or object of arrays")),
+        }
+    }
+
+    fn json_values_to_series(name: &str, vals: &Vec<serde_json::Value>, hint: Option<DataType>) -> Result<Series> {
+        // Detect vectors (array of numbers) and other types
+        let inferred = if let Some(dt) = hint { dt } else { Self::infer_dtype(vals) };
+        use serde_json::Value as JV;
+        let s = match inferred {
+            DataType::Boolean => {
+                let mut v: Vec<Option<bool>> = Vec::with_capacity(vals.len());
+                for x in vals { v.push(match x { JV::Bool(b)=>Some(*b), JV::Null=>None, JV::Number(n)=>Some(n.as_i64().unwrap_or(0)!=0), JV::String(s)=>Some(!s.is_empty()), _=>None }); }
+                Series::new(name.into(), v)
+            }
+            DataType::Int64 => {
+                let mut v: Vec<Option<i64>> = Vec::with_capacity(vals.len());
+                for x in vals { v.push(match x { JV::Number(n)=>n.as_i64(), JV::String(s)=>s.parse::<i64>().ok(), JV::Bool(b)=>Some(if *b {1} else {0}), JV::Null=>None, _=>None }); }
+                Series::new(name.into(), v)
+            }
+            DataType::Float64 => {
+                let mut v: Vec<Option<f64>> = Vec::with_capacity(vals.len());
+                for x in vals { v.push(match x { JV::Number(n)=>n.as_f64(), JV::String(s)=>s.parse::<f64>().ok(), JV::Bool(b)=>Some(if *b {1.0} else {0.0}), JV::Null=>None, _=>None }); }
+                Series::new(name.into(), v)
+            }
+            DataType::List(inner) if matches!(*inner, DataType::Float64) => {
+                // VECTOR: each value is an array of numbers
+                let mut avs: Vec<polars::prelude::AnyValue> = Vec::with_capacity(vals.len());
+                for x in vals {
+                    match x {
+                        JV::Array(a) => {
+                            let mut vv: Vec<f64> = Vec::with_capacity(a.len());
+                            for e in a { if let Some(f)=e.as_f64() { vv.push(f); } else if let Some(i)=e.as_i64(){ vv.push(i as f64);} }
+                            avs.push(polars::prelude::AnyValue::List(Series::new("".into(), vv)));
+                        }
+                        JV::String(s) if s.starts_with('[') && s.ends_with(']') => {
+                            if let Ok(arr) = serde_json::from_str::<Vec<f64>>(s) {
+                                avs.push(polars::prelude::AnyValue::List(Series::new("".into(), arr)));
+                            } else {
+                                avs.push(polars::prelude::AnyValue::Null);
+                            }
+                        }
+                        JV::Null => avs.push(polars::prelude::AnyValue::Null),
+                        _ => avs.push(polars::prelude::AnyValue::Null),
+                    }
+                }
+                Series::from_any_values_and_dtype(
+                    name.into(),
+                    &avs,
+                    &DataType::List(Box::new(DataType::Float64)),
+                    false,
+                ).map_err(|e| anyhow!(e.to_string()))?
+            }
+            _ => {
+                // Default to String
+                let mut v: Vec<Option<String>> = Vec::with_capacity(vals.len());
+                for x in vals { v.push(match x { JV::String(s)=>Some(s.clone()), JV::Number(n)=>Some(n.to_string()), JV::Bool(b)=>Some(b.to_string()), JV::Null=>None, JV::Array(_)|JV::Object(_)=>Some(x.to_string()) }); }
+                Series::new(name.into(), v)
+            }
+        };
+        Ok(s)
+    }
+
+    fn infer_dtype(vals: &Vec<serde_json::Value>) -> DataType {
+        use serde_json::Value as JV;
+        for x in vals {
+            match x {
+                JV::Null => continue,
+                JV::Bool(_) => return DataType::Boolean,
+                JV::Number(n) => { if n.is_i64() { return DataType::Int64; } else { return DataType::Float64; } }
+                JV::Array(a) => {
+                    if a.iter().all(|e| e.is_number()) { return DataType::List(Box::new(DataType::Float64)); }
+                    return DataType::String;
+                }
+                JV::Object(_) => return DataType::String,
+                JV::String(_) => return DataType::String,
+            }
+        }
+        DataType::Null
     }
 }
 
@@ -395,10 +648,20 @@ impl ScriptRegistry {
                     ScriptKind::Scalar => 0u8.hash(&mut hasher),
                     ScriptKind::Aggregate => 1u8.hash(&mut hasher),
                     ScriptKind::Constraint => 2u8.hash(&mut hasher),
+                    ScriptKind::Tvf => 3u8.hash(&mut hasher),
                 }
                 // returns: hash Debug representation for stability across Polars versions
                 meta.returns.len().hash(&mut hasher);
                 for dt in &meta.returns {
+                    use std::fmt::Write as _;
+                    let mut s = String::new();
+                    let _ = write!(&mut s, "{:?}", dt);
+                    s.hash(&mut hasher);
+                }
+                // Hash tvf columns schema
+                meta.tvf_columns.len().hash(&mut hasher);
+                for (n, dt) in &meta.tvf_columns {
+                    n.hash(&mut hasher);
                     use std::fmt::Write as _;
                     let mut s = String::new();
                     let _ = write!(&mut s, "{:?}", dt);
@@ -782,7 +1045,7 @@ impl ScriptRegistry {
                 }
             }
             if !applied_meta {
-                let meta = ScriptMeta { kind, returns: Vec::new(), nullable: true, version: 0 };
+                let meta = ScriptMeta { kind, returns: Vec::new(), nullable: true, version: 0, tvf_columns: Vec::new() };
                 self.set_meta(name, meta.clone());
                 self.set_meta(&qualified, meta);
             }

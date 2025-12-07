@@ -19,26 +19,26 @@ pub(super) mod udf_common {
             
             // Scalar UDFs
             reg.load_script_text("is_pos", "function is_pos(x) if x==nil then return false end return x>0 end").unwrap();
-            reg.set_meta("is_pos", ScriptMeta { kind: ScriptKind::Scalar, returns: vec![DataType::Boolean], nullable: true, version: 0 });
+            reg.set_meta("is_pos", ScriptMeta { kind: ScriptKind::Scalar, returns: vec![DataType::Boolean], nullable: true, version: 0, tvf_columns: Vec::new() });
             
             reg.load_script_text("dbl", "function dbl(x) if x==nil then return 0 end return x*2 end").unwrap();
-            reg.set_meta("dbl", ScriptMeta { kind: ScriptKind::Scalar, returns: vec![DataType::Int64], nullable: true, version: 0 });
+            reg.set_meta("dbl", ScriptMeta { kind: ScriptKind::Scalar, returns: vec![DataType::Int64], nullable: true, version: 0, tvf_columns: Vec::new() });
             
             reg.load_script_text("hello", "function hello(x) return 'hi:'..tostring(x) end").unwrap();
-            reg.set_meta("hello", ScriptMeta { kind: ScriptKind::Scalar, returns: vec![DataType::String], nullable: true, version: 0 });
+            reg.set_meta("hello", ScriptMeta { kind: ScriptKind::Scalar, returns: vec![DataType::String], nullable: true, version: 0, tvf_columns: Vec::new() });
             
             reg.load_script_text("err_if_neg", "function err_if_neg(x) if x==nil then error('nil') end if x<0 then error('neg') end return x end").unwrap();
-            reg.set_meta("err_if_neg", ScriptMeta { kind: ScriptKind::Scalar, returns: vec![DataType::Int64], nullable: true, version: 0 });
+            reg.set_meta("err_if_neg", ScriptMeta { kind: ScriptKind::Scalar, returns: vec![DataType::Int64], nullable: true, version: 0, tvf_columns: Vec::new() });
             
             reg.load_script_text("split2", "function split2(x) if x==nil then return {nil,nil} end return {x, x+1} end").unwrap();
-            reg.set_meta("split2", ScriptMeta { kind: ScriptKind::Scalar, returns: vec![DataType::Int64, DataType::Int64], nullable: true, version: 0 });
+            reg.set_meta("split2", ScriptMeta { kind: ScriptKind::Scalar, returns: vec![DataType::Int64, DataType::Int64], nullable: true, version: 0, tvf_columns: Vec::new() });
             
             reg.load_script_text("echo2", r#"
                 function echo2(a,b)
                     return { tostring(a), tostring(b) }
                 end
             "#).unwrap();
-            reg.set_meta("echo2", ScriptMeta { kind: ScriptKind::Scalar, returns: vec![DataType::String, DataType::String], nullable: true, version: 0 });
+            reg.set_meta("echo2", ScriptMeta { kind: ScriptKind::Scalar, returns: vec![DataType::String, DataType::String], nullable: true, version: 0, tvf_columns: Vec::new() });
             
             // Aggregate UDFs
             reg.load_script_text("sum_plus", r#"
@@ -48,7 +48,7 @@ pub(super) mod udf_common {
                     return s + 1
                 end
             "#).unwrap();
-            reg.set_meta("sum_plus", ScriptMeta { kind: ScriptKind::Aggregate, returns: vec![DataType::Int64], nullable: true, version: 0 });
+            reg.set_meta("sum_plus", ScriptMeta { kind: ScriptKind::Aggregate, returns: vec![DataType::Int64], nullable: true, version: 0, tvf_columns: Vec::new() });
             
             reg.load_script_text("minmax", r#"
                 function minmax(arr)
@@ -57,7 +57,7 @@ pub(super) mod udf_common {
                     return {mn, mx}
                 end
             "#).unwrap();
-            reg.set_meta("minmax", ScriptMeta { kind: ScriptKind::Aggregate, returns: vec![DataType::Int64, DataType::Int64], nullable: true, version: 0 });
+            reg.set_meta("minmax", ScriptMeta { kind: ScriptKind::Aggregate, returns: vec![DataType::Int64, DataType::Int64], nullable: true, version: 0, tvf_columns: Vec::new() });
             
             reg.load_script_text("agg_err_if_bad", r#"
                 function agg_err_if_bad(arrk, arrv)
@@ -67,7 +67,7 @@ pub(super) mod udf_common {
                     return s
                 end
             "#).unwrap();
-            reg.set_meta("agg_err_if_bad", ScriptMeta { kind: ScriptKind::Aggregate, returns: vec![DataType::Int64], nullable: true, version: 0 });
+            reg.set_meta("agg_err_if_bad", ScriptMeta { kind: ScriptKind::Aggregate, returns: vec![DataType::Int64], nullable: true, version: 0, tvf_columns: Vec::new() });
             
             reg.load_script_text("argtypes", r#"
                 function argtypes(arrk, arrv)
@@ -78,7 +78,7 @@ pub(super) mod udf_common {
                     return { tp(arrk[1]), tp(arrv[1]) }
                 end
             "#).unwrap();
-            reg.set_meta("argtypes", ScriptMeta { kind: ScriptKind::Aggregate, returns: vec![DataType::String, DataType::String], nullable: true, version: 0 });
+            reg.set_meta("argtypes", ScriptMeta { kind: ScriptKind::Aggregate, returns: vec![DataType::String, DataType::String], nullable: true, version: 0, tvf_columns: Vec::new() });
 
 
             
