@@ -637,10 +637,14 @@ pub fn by_or_groupby(store: &SharedStore, mut df: DataFrame, q: &Query, ctx: &mu
                 }
             }
         }
-        // Always include group time bounds (instrumented)
-        crate::tprintln!("[GROUPBY] injecting time bounds: using='{}'", time_col);
-        agg_cols.push(col(&time_col).min().alias("_start_time"));
-        agg_cols.push(col(&time_col).max().alias("_end_time"));
+        // Include group time bounds only if a time column is present (instrumented)
+        if has_time_col {
+            crate::tprintln!("[GROUPBY] injecting time bounds: using='{}'", time_col);
+            agg_cols.push(col(&time_col).min().alias("_start_time"));
+            agg_cols.push(col(&time_col).max().alias("_end_time"));
+        } else {
+            crate::tprintln!("[GROUPBY] no time column present; skipping _start_time/_end_time injection");
+        }
         tracing::debug!(target: "clarium::groupby", "GROUPBY executing: gb_keys={:?}", resolved_group_cols);
         crate::tprintln!("[GROUPBY] gb_keys={:?} agg_cols_pre={} notnull={}", resolved_group_cols, agg_cols.len(), !notnull_set.is_empty());
         let mut out = lf.group_by(gb_exprs).agg(agg_cols).collect()?;
@@ -703,8 +707,8 @@ pub fn by_or_groupby(store: &SharedStore, mut df: DataFrame, q: &Query, ctx: &mu
             }
         }
         // Defer HAVING until after aggregate UDFs are evaluated so HAVING can reference their outputs
-        // Sort for stable output; if NOTNULL used, sort by _start_time else by resolved group cols
-        let mut out = if !notnull_set.is_empty() {
+        // Sort for stable output; if NOTNULL used and time is present, sort by _start_time else by resolved group cols
+        let mut out = if !notnull_set.is_empty() && has_time_col {
             out.sort(["_start_time"], polars::prelude::SortMultipleOptions::default())?
         } else if !resolved_group_cols.is_empty() {
             // sort by the (potentially renamed) columns
