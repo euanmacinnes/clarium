@@ -465,6 +465,10 @@ pub fn parse_select(s: &str) -> Result<Query> {
             if let Some(i) = after_up.find(" WHERE ") { win_end = win_end.min(i); }
             if let Some(i) = after_up.find(" HAVING ") { win_end = win_end.min(i); }
             if let Some(i) = after_up.find(" GROUP BY ") { win_end = win_end.min(i); }
+            // Also terminate on ORDER BY/LIMIT/INTO which may follow window spec
+            if let Some(i) = after_up.find(" ORDER BY ") { win_end = win_end.min(i); }
+            if let Some(i) = after_up.find(" LIMIT ") { win_end = win_end.min(i); }
+            if let Some(i) = after_up.find(" INTO ") { win_end = win_end.min(i); }
             rolling_window_ms = Some(parse_window(after[..win_end].trim())?);
             t = after[win_end..].trim_start();
             continue;
@@ -493,6 +497,10 @@ pub fn parse_select(s: &str) -> Result<Query> {
                 if let Some(i) = after_up2.find(" WHERE ") { win_end = win_end.min(i); }
                 if let Some(i) = after_up2.find(" HAVING ") { win_end = win_end.min(i); }
                 if let Some(i) = after_up2.find(" GROUP BY ") { win_end = win_end.min(i); }
+                // Ensure ORDER BY/LIMIT/INTO do not leak into window text
+                if let Some(i) = after_up2.find(" ORDER BY ") { win_end = win_end.min(i); }
+                if let Some(i) = after_up2.find(" LIMIT ") { win_end = win_end.min(i); }
+                if let Some(i) = after_up2.find(" INTO ") { win_end = win_end.min(i); }
                 by_window_ms = Some(parse_window(after_by[..win_end].trim())?);
                 t = after_by[win_end..].trim_start();
                 continue;
