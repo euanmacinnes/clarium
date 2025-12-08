@@ -12,7 +12,7 @@ def _temp_table_name(prefix: str = "pytest_") -> str:
 @pytest.mark.parametrize("with_schema", [True, False])
 def test_create_insert_select(conn: Connection, with_schema: bool):
     tbl = _temp_table_name()
-    fq = f"public.{tbl}" if with_schema else tbl
+    fq = f"public/{tbl}" if with_schema else tbl
 
     # Try to create a simple table; Clarium may restrict DDL — mark xfail on clear unsupported cases
     try:

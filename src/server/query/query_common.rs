@@ -1,5 +1,20 @@
 use anyhow::Result;
 
+/// Build an uppercase "shadow" string used only for keyword scanning.
+/// - Converts ASCII letters to uppercase
+/// - Replaces newlines (\n, \r) with a single space to keep clause cuts stable across lines
+/// - Preserves overall length to keep indices aligned with the original input
+pub fn upper_shadow(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for ch in s.chars() {
+        match ch {
+            '\n' | '\r' => out.push(' '),
+            _ => out.push(ch.to_ascii_uppercase()),
+        }
+    }
+    out
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum CompOp { Gt, Ge, Lt, Le, Eq, Ne, Like, NotLike }
 

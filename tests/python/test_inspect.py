@@ -19,6 +19,6 @@ def test_sqlalchemy_inspector_tables_enumeration(conn: Connection):
     # If demo exists, it should be discoverable
     if "demo" in tables:
         # Try a trivial query against it to ensure pgwire path works end-to-end
-        res = conn.execute(text("SELECT COUNT(*) FROM public.demo"))
+        res = conn.execute(text("SELECT COUNT(*) FROM public/demo"))
         count = res.scalar_one()
         assert isinstance(count, int)

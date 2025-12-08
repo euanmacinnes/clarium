@@ -9,6 +9,7 @@ use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tracing::{error, info, debug, warn};
+use crate::tprintln;
 
 use crate::{storage::SharedStore, server::exec};
 use crate::ident::{DEFAULT_DB, DEFAULT_SCHEMA};
@@ -73,10 +74,12 @@ struct ConnState {
     portals: HashMap<String, Portal>,
     // if an error occurred in extended flow, we keep going until Sync
     in_error: bool,
+    // inside explicit transaction block (BEGIN..)
+    in_tx: bool,
 }
 
 async fn handle_conn(socket: &mut tokio::net::TcpStream, store: SharedStore, conn_id: u64, peer: &str) -> Result<()> {
-    debug!(target: "pgwire", "conn_id={} new connection established from {}", conn_id, peer);
+    tprintln!("[pgwire] conn_id={} new connection established from {}", conn_id, peer);
     #[inline]
     fn env_default_db() -> String {
         std::env::var("CLARIUM_DEFAULT_DB").unwrap_or_else(|_| DEFAULT_DB.to_string())
@@ -97,9 +100,9 @@ async fn handle_conn(socket: &mut tokio::net::TcpStream, store: SharedStore, con
     let mut buf = vec![0u8; (len - 4) as usize];
     socket.read_exact(&mut buf).await?;
     if pgwire_trace_enabled() {
-        debug!(target: "pgwire", "conn_id={} startup packet len={}, first={} bytes: {}", conn_id, len, buf.len().min(32), hex_dump_prefix(&buf, 32));
+        tprintln!("[pgwire] conn_id={} startup packet len={}, first={} bytes: {}", conn_id, len, buf.len().min(32), hex_dump_prefix(&buf, 32));
     } else {
-        debug!(target: "pgwire", "conn_id={} received startup packet, len={}", conn_id, len);
+        tprintln!("[pgwire] conn_id={} received startup packet, len={}", conn_id, len);
     }
     // Check for SSLRequest (0x04D2162F) or GSSENC (0x04D2162A)
     if buf.len() == 4 {
@@ -136,7 +139,7 @@ async fn handle_conn(socket: &mut tokio::net::TcpStream, store: SharedStore, con
             let db = params.get("database").cloned()
                 .or_else(|| params.get("dbname").cloned())
                 .unwrap_or_else(|| env_default_db());
-            let mut state = ConnState { current_database: db, current_schema: env_default_schema(), statements: HashMap::new(), portals: HashMap::new(), in_error: false };
+            let mut state = ConnState { current_database: db, current_schema: env_default_schema(), statements: HashMap::new(), portals: HashMap::new(), in_error: false, in_tx: false };
             run_query_loop(socket, &store, &user, &mut state, conn_id).await?;
             Ok(())
         } else {
@@ -169,7 +172,7 @@ async fn handle_conn(socket: &mut tokio::net::TcpStream, store: SharedStore, con
         let db = params.get("database").cloned()
             .or_else(|| params.get("dbname").cloned())
             .unwrap_or_else(|| env_default_db());
-        let mut state = ConnState { current_database: db, current_schema: env_default_schema(), statements: HashMap::new(), portals: HashMap::new(), in_error: false };
+        let mut state = ConnState { current_database: db, current_schema: env_default_schema(), statements: HashMap::new(), portals: HashMap::new(), in_error: false, in_tx: false };
         run_query_loop(socket, &store, &user, &mut state, conn_id).await?;
         Ok(())
     }
@@ -209,8 +212,8 @@ async fn send_auth_ok_and_params(socket: &mut tokio::net::TcpStream, startup_par
     write_i32(socket, std::process::id() as i32).await?; // process ID
     write_i32(socket, 12345).await?; // secret key (dummy value)
     debug!(target: "pgwire", "sent BackendKeyData (pid={}, secret=12345)", std::process::id());
-    // ReadyForQuery
-    send_ready(socket).await
+    // ReadyForQuery (always idle right after startup)
+    send_ready_with_status(socket, b'I').await
 }
 
 fn parse_startup_params(payload: &[u8]) -> std::collections::HashMap<String, String> {
@@ -298,7 +301,7 @@ async fn send_parameter_description(socket: &mut tokio::net::TcpStream, param_ty
 }
 
 async fn run_query_loop(socket: &mut tokio::net::TcpStream, store: &SharedStore, user: &str, state: &mut ConnState, conn_id: u64) -> Result<()> {
-    debug!(target: "pgwire", "conn_id={} entering query loop for user '{}' (db='{}', schema='{}')", conn_id, user, state.current_database, state.current_schema);
+    tprintln!("[pgwire] conn_id={} entering query loop for user '{}' (db='{}', schema='{}')", conn_id, user, state.current_database, state.current_schema);
     // Accumulate a simple cycle summary between Sync boundaries to quickly verify message order.
     // Emitted when Sync -> ReadyForQuery completes.
     let mut cycle_summary = String::new();
@@ -311,11 +314,11 @@ async fn run_query_loop(socket: &mut tokio::net::TcpStream, store: &SharedStore,
             Ok(_) => {}
             Err(e) => {
                 if !cycle_summary.is_empty() {
-                    debug!(target: "pgwire", "conn_id={} cycle(partial): {}", conn_id, cycle_summary.trim());
+                    tprintln!("[pgwire] conn_id={} cycle(partial): {}", conn_id, cycle_summary.trim());
                     cycle_summary.clear();
                 }
                 warn!(target: "pgwire", "conn_id={} read_exact(tag) failed: {} (os_error={:?}); exiting query loop", conn_id, e, e.raw_os_error());
-                debug!(target: "pgwire", "conn_id={} snapshot on exit: db='{}' schema='{}' stmts={} portals={} in_error={} last_msg={} last_err='{}'",
+                tprintln!("[pgwire] conn_id={} snapshot on exit: db='{}' schema='{}' stmts={} portals={} in_error={} last_msg={} last_err='{}'",
                     conn_id,
                     state.current_database,
                     state.current_schema,
@@ -328,7 +331,7 @@ async fn run_query_loop(socket: &mut tokio::net::TcpStream, store: &SharedStore,
                 break;
             }
         }
-        debug!(target: "pgwire", "conn_id={} received message type byte={} (as char='{}')", conn_id, tag[0], tag[0] as char);
+        tprintln!("[pgwire] conn_id={} received message type byte={} (as char='{}')", conn_id, tag[0], tag[0] as char);
         last_msg = Some(tag[0]);
         // Detect zero byte as potential connection closure (client side closed)
         if tag[0] == 0 {
@@ -336,8 +339,8 @@ async fn run_query_loop(socket: &mut tokio::net::TcpStream, store: &SharedStore,
                 debug!(target: "pgwire", "conn_id={} cycle(partial): {}", conn_id, cycle_summary.trim());
                 cycle_summary.clear();
             }
-            debug!(target: "pgwire", "conn_id={} received zero byte (likely connection closing), exiting query loop", conn_id);
-            debug!(target: "pgwire", "conn_id={} snapshot on exit: db='{}' schema='{}' stmts={} portals={} in_error={} last_msg={} last_err='{}'",
+            tprintln!("[pgwire] conn_id={} received zero byte (likely connection closing), exiting query loop", conn_id);
+            tprintln!("[pgwire] conn_id={} snapshot on exit: db='{}' schema='{}' stmts={} portals={} in_error={} last_msg={} last_err='{}'",
                 conn_id,
                 state.current_database,
                 state.current_schema,
@@ -351,7 +354,7 @@ async fn run_query_loop(socket: &mut tokio::net::TcpStream, store: &SharedStore,
         }
         match tag[0] {
             b'Q' => {
-                debug!(target: "pgwire", "conn_id={} handling simple Query message", conn_id);
+                tprintln!("[pgwire] conn_id={} handling simple Query message", conn_id);
                 let len = match read_u32(socket).await { Ok(v) => v, Err(e) => { error!(target:"pgwire", "read_u32 for Q failed: {}", e); break; } };
                 let mut qbuf = vec![0u8; (len - 4) as usize];
                 if let Err(e) = socket.read_exact(&mut qbuf).await { error!(target:"pgwire", "read_exact(query payload) failed: {}", e); break; }
@@ -367,7 +370,7 @@ async fn run_query_loop(socket: &mut tokio::net::TcpStream, store: &SharedStore,
                 }
             }
             b'P' => { // Parse
-                debug!(target: "pgwire", "conn_id={} handling Parse message", conn_id);
+                tprintln!("[pgwire] conn_id={} handling Parse message", conn_id);
                 if let Err(e) = handle_parse(socket, state).await {
                     error!(target: "pgwire", "handle_parse error: {}", e);
                     let _ = send_error(socket, &format!("{}", e)).await; state.in_error = true;
@@ -378,7 +381,7 @@ async fn run_query_loop(socket: &mut tokio::net::TcpStream, store: &SharedStore,
                 }
             }
             b'B' => { // Bind
-                debug!(target: "pgwire", "conn_id={} handling Bind message", conn_id);
+                tprintln!("[pgwire] conn_id={} handling Bind message", conn_id);
                 if let Err(e) = handle_bind(socket, state).await {
                     error!(target: "pgwire", "handle_bind error: {}", e);
                     let _ = send_error(socket, &format!("{}", e)).await; state.in_error = true;
@@ -389,7 +392,7 @@ async fn run_query_loop(socket: &mut tokio::net::TcpStream, store: &SharedStore,
                 }
             }
             b'D' => { // Describe
-                debug!(target: "pgwire", "conn_id={} handling Describe message", conn_id);
+                tprintln!("[pgwire] conn_id={} handling Describe message", conn_id);
                 if let Err(e) = handle_describe(socket, store, state).await {
                     error!(target: "pgwire", "handle_describe error: {}", e);
                     let _ = send_error(socket, &format!("{}", e)).await; state.in_error = true;
@@ -400,7 +403,7 @@ async fn run_query_loop(socket: &mut tokio::net::TcpStream, store: &SharedStore,
                 }
             }
             b'E' => { // Execute
-                debug!(target: "pgwire", "conn_id={} handling Execute message", conn_id);
+                tprintln!("[pgwire] conn_id={} handling Execute message", conn_id);
                 if let Err(e) = handle_execute(socket, store, user, state).await {
                     error!(target: "pgwire", "handle_execute error: {}", e);
                     let _ = send_error(socket, &format!("{}", e)).await; state.in_error = true;
@@ -411,7 +414,7 @@ async fn run_query_loop(socket: &mut tokio::net::TcpStream, store: &SharedStore,
                 }
             }
             b'H' => { // Flush
-                debug!(target: "pgwire", "conn_id={} handling Flush message", conn_id);
+                tprintln!("[pgwire] conn_id={} handling Flush message", conn_id);
                 // Read and discard the message length (Flush has no additional payload)
                 let _len = match read_u32(socket).await { Ok(v) => v, Err(e) => { error!(target:"pgwire", "read_u32 for H failed: {}", e); break; } };
                 // Flush pending output; per protocol, no response is sent for Flush itself
@@ -419,11 +422,13 @@ async fn run_query_loop(socket: &mut tokio::net::TcpStream, store: &SharedStore,
                 cycle_summary.push_str("H; ");
             }
             b'S' => { // Sync
-                debug!(target: "pgwire", "conn_id={} handling Sync message", conn_id);
+                tprintln!("[pgwire] conn_id={} handling Sync message", conn_id);
                 // Read and discard the message length (Sync has no additional payload)
                 let _len = match read_u32(socket).await { Ok(v) => v, Err(e) => { error!(target:"pgwire", "read_u32 for S failed: {}", e); break; } };
-                state.in_error = false;
-                if let Err(e) = send_ready(socket).await { error!(target:"pgwire", "send_ready error: {}", e); break; }
+                // Clear error state only if not in an explicit transaction. When in_tx and an
+                // error occurred, the session remains in failed-transaction state until ROLLBACK.
+                if !state.in_tx { state.in_error = false; }
+                if let Err(e) = send_ready(socket, state).await { error!(target:"pgwire", "send_ready error: {}", e); break; }
                 cycle_summary.push_str("S ready; ");
                 // Emit the summary of this extended-protocol cycle
                 if !cycle_summary.is_empty() {
@@ -432,7 +437,7 @@ async fn run_query_loop(socket: &mut tokio::net::TcpStream, store: &SharedStore,
                 }
             }
             b'C' => { // Close
-                debug!(target: "pgwire", "conn_id={} handling Close message", conn_id);
+                tprintln!("[pgwire] conn_id={} handling Close message", conn_id);
                 if let Err(e) = handle_close(socket, state).await {
                     error!(target: "pgwire", "handle_close error: {}", e);
                     let _ = send_error(socket, &format!("{}", e)).await; state.in_error = true;
@@ -443,10 +448,10 @@ async fn run_query_loop(socket: &mut tokio::net::TcpStream, store: &SharedStore,
                 }
             }
             b'X' => { 
-                debug!(target: "pgwire", "conn_id={} received Terminate message, closing connection", conn_id);
+                tprintln!("[pgwire] conn_id={} received Terminate message, closing connection", conn_id);
                 // Read and discard the message length (Terminate has no additional payload)
                 let _len = match read_u32(socket).await { Ok(v) => v, Err(e) => { error!(target:"pgwire", "read_u32 for X failed: {}", e); break; } };
-                debug!(target: "pgwire", "conn_id={} snapshot on exit: db='{}' schema='{}' stmts={} portals={} in_error={} last_msg={} last_err='{}'",
+                tprintln!("[pgwire] conn_id={} snapshot on exit: db='{}' schema='{}' stmts={} portals={} in_error={} last_msg={} last_err='{}'",
                     conn_id,
                     state.current_database,
                     state.current_schema,
@@ -460,7 +465,7 @@ async fn run_query_loop(socket: &mut tokio::net::TcpStream, store: &SharedStore,
             }
             _ => { 
                 // Unknown message: send ErrorResponse and enter error state; client should follow with Sync
-                debug!(target: "pgwire", "conn_id={} unknown message type byte={} (as char='{}'), sending ErrorResponse and waiting for Sync", conn_id, tag[0], tag[0] as char);
+                tprintln!("[pgwire] conn_id={} unknown message type byte={} (as char='{}'), sending ErrorResponse and waiting for Sync", conn_id, tag[0], tag[0] as char);
                 if pgwire_trace_enabled() {
                     // Try to read the length to dump some bytes (non-destructive best-effort)
                     if let Ok(len) = read_u32(socket).await { 
@@ -481,14 +486,23 @@ async fn run_query_loop(socket: &mut tokio::net::TcpStream, store: &SharedStore,
     Ok(())
 }
 
-async fn send_ready(socket: &mut tokio::net::TcpStream) -> Result<()> {
-    debug!(target: "pgwire", "sending ReadyForQuery (status='I')");
+async fn send_ready_with_status(socket: &mut tokio::net::TcpStream, status: u8) -> Result<()> {
+    debug!(target: "pgwire", "sending ReadyForQuery (status='{}')", status as char);
+    crate::tprintln!("pgwire ReadyForQuery status='{}'", status as char);
     socket.write_all(b"Z").await?;
     write_i32(socket, 5).await?; // len
-    socket.write_all(b"I").await?; // idle
+    socket.write_all(&[status]).await?; // 'I' idle, 'T' in-transaction, 'E' failed txn
     if let Err(e) = socket.flush().await { error!(target:"pgwire", "flush ReadyForQuery failed: {}", e); return Err(e.into()); }
     debug!(target: "pgwire", "ReadyForQuery flushed to client");
     Ok(())
+}
+
+#[inline]
+async fn send_ready(socket: &mut tokio::net::TcpStream, state: &ConnState) -> Result<()> {
+    let status = if state.in_tx {
+        if state.in_error { b'E' } else { b'T' }
+    } else { b'I' };
+    send_ready_with_status(socket, status).await
 }
 
 async fn write_parameter(socket: &mut tokio::net::TcpStream, k: &str, v: &str) -> Result<()> {
@@ -515,10 +529,13 @@ async fn handle_query(socket: &mut tokio::net::TcpStream, store: &SharedStore, _
         .filter(|s| !s.is_empty())
         .map(|s| s.to_string())
         .collect();
-    eprintln!("pgwire simple query: {} statement(s)\n {:?}", parts.len(), parts);
+    tprintln!("pgwire simple query: {} statement(s)\n {:?}", parts.len(), parts);
     for (idx, stmt) in parts.iter().enumerate() {
         let q_trim = stmt.trim();
         debug!("pgwire simple query [{}]: {}", idx, q_trim);
+        // Intercept transaction control and common SHOW/SELECT meta that ORMs send
+        let up = q_trim.to_uppercase();
+
         let q_effective = exec::normalize_query_with_defaults(q_trim, &state.current_database, &state.current_schema);
         match exec::execute_query_safe(store, &q_effective).await {
             Ok(val) => {
@@ -555,7 +572,8 @@ async fn handle_query(socket: &mut tokio::net::TcpStream, store: &SharedStore, _
         }
     }
     // Finish the Simple Query message cycle
-    send_ready(socket).await?;
+    crate::tprintln!("pgwire: simple cycle end; in_tx={} in_error={}", state.in_tx, state.in_error);
+    send_ready(socket, state).await?;
     Ok(())
 }
 
@@ -1081,9 +1099,12 @@ async fn describe_row_description(socket: &mut tokio::net::TcpStream, store: &Sh
     let q = sql.trim();
     let up = q.to_uppercase();
     if up.starts_with("SELECT") || up.starts_with("WITH ") || up.starts_with("SHOW ") {
+        tprintln!("[pgwire] describe_row_description normalize_query_with_defaults {}, cd: {}, cs: {}", q, &state.current_database, &state.current_schema);
         let q_eff = exec::normalize_query_with_defaults(q, &state.current_database, &state.current_schema);
+        tprintln!("[pgwire] describe_row_description execute_query_safe");
         match exec::execute_query_safe(store, &q_eff).await {
             Ok(val) => {
+                tprintln!("[pgwire] describe_row_description execute_query_safe Ok");
                 let (cols, _data) = match &val {
                     serde_json::Value::Array(arr) => to_table(arr.clone())?,
                     serde_json::Value::Object(_) => to_table(vec![val.clone()])?,
@@ -1093,6 +1114,7 @@ async fn describe_row_description(socket: &mut tokio::net::TcpStream, store: &Sh
                 return send_row_description(socket, &cols).await;
             }
             Err(_e) => {
+                tprintln!("[pgwire] describe_row_description execute_query_safe Err");
                 // On error, fall back to NoData to keep the protocol moving
                 return send_no_data(socket).await;
             }
@@ -1106,9 +1128,10 @@ async fn handle_describe(socket: &mut tokio::net::TcpStream, store: &SharedStore
     let _len = read_u32(socket).await? as usize;
     let mut tag = [0u8;1]; socket.read_exact(&mut tag).await?;
     let name = read_cstring(socket).await?;
-    debug!("pgwire describe: type='{}', name='{}'", tag[0] as char, name);
+    tprintln!("[pgwire] describe: type='{}', name='{}'", tag[0] as char, name);
     let res = match tag[0] {
         b'S' => {
+            tprintln!("[pgwire] describe prepared statement");
             // prepared statement
             if let Some(stmt) = state.statements.get(&name) {
                 // ParameterDescription first
@@ -1126,18 +1149,22 @@ async fn handle_describe(socket: &mut tokio::net::TcpStream, store: &SharedStore
             }
         }
         b'P' => {
+            tprintln!("[pgwire] describe portal");
             // portal: find its stmt
             if let Some(portal) = state.portals.get(&name) {
                 if let Some(stmt) = state.statements.get(&portal.stmt_name) {
                     // Perform substitution to allow parser to see final forms (aliases, literal exprs)
+                    tprintln!("[pgwire] describe portal, substitute placeholders");
                     let sql_eff = match substitute_placeholders(&stmt.sql, &portal.params) { Ok(s) => s, Err(_) => stmt.sql.clone() };
                     // ParameterDescription is optional for portal Describe; many servers send only RowDescription
+                    tprintln!("[pgwire] describe portal, row description");
                     describe_row_description(socket, store, state, &sql_eff).await
                 } else { send_no_data(socket).await }
             } else { send_no_data(socket).await }
         }
         _ => send_no_data(socket).await,
     };
+    tprintln!("[pgwire] describe done");
     // Ensure frames are pushed promptly for Describe
     if let Err(e) = socket.flush().await { error!("pgwire: flush error after Describe: {}", e); }
     res

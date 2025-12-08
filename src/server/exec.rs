@@ -31,6 +31,7 @@ pub mod explain;         // EXPLAIN data model and renderers (skeleton)
 use anyhow::Result;
 use polars::prelude::*;
 use crate::storage::{SharedStore, KvValue};
+use crate::tprintln;
 use crate::ident::QueryDefaults;
 use crate::lua_bc::{LuaBytecodeCache, DEFAULT_DB, DEFAULT_KV_STORE};
 // Bring frequently used helpers from submodules into scope
@@ -67,18 +68,25 @@ fn is_transaction_control(text: &str) -> bool {
 pub async fn execute_query(store: &SharedStore, text: &str) -> Result<serde_json::Value> {
     // Accept transaction control statements as no-ops globally so all frontends
     // (HTTP/WS/pgwire) behave consistently even without real transactional storage.
+
+    tprintln!("[exec] execute_query");
     if is_transaction_control(text) {
         return Ok(serde_json::json!({"status":"ok"}));
     }
     // Intercept CREATE TABLE with column definitions (contains parentheses) before parsing
     // because Command::CreateTable doesn't carry column info - route to do_create_table instead
+
     let trimmed = text.trim().strip_suffix(';').unwrap_or(text.trim());
     let up = trimmed.to_ascii_uppercase();
     if (up.starts_with("CREATE TABLE") || up.starts_with("CREATE TABLE IF NOT EXISTS")) && trimmed.contains('(') {
+        tprintln!("[exec] execute_query CREATE TABLE intercept");
         crate::server::exec::exec_create::do_create_table(store, trimmed)?;
         return Ok(serde_json::json!({"status":"ok"}));
     }
+    tprintln!("[exec] execute_query parse");
     let cmd = parse(text)?;
+
+    tprintln!("[exec] execute_query cmd {:?}", cmd);
     match cmd {
         Command::Explain { sql } => {
             // Minimal EXPLAIN: annotate vector paths (ANN vs EXACT), index used, metric, ef_search, preselect W placeholder
@@ -965,6 +973,7 @@ pub async fn execute_query_safe(store: &SharedStore, text: &str) -> Result<serde
     let store_cloned = store.clone();
     let handle = tokio::spawn(async move {
         // Delegate to the regular executor; propagate its Result
+        tprintln!("[exec] execute_query_safe execute_query");
         execute_query(&store_cloned, &text_owned).await
     });
     match handle.await {

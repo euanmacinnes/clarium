@@ -4,7 +4,7 @@ use regex::Regex;
 use crate::server::query::query_common::*;
 use crate::server::query::*;
 use crate::server::query::query_parse_select_list::parse_select_list;
-
+use crate::tprintln;
 
 
 
@@ -59,11 +59,16 @@ pub fn parse_select(s: &str) -> Result<Query> {
     let mut with_ctes: Option<Vec<CTE>> = None;
     let mut query_sql = s;
     
-    let s_up = s.to_uppercase();
-    if s_up.trim_start().starts_with("WITH ") {
+    // Use uppercase shadow for keyword scanning; preserves indices and tolerates newlines
+    let s_up = upper_shadow(s);
+    // Find WITH at the beginning ignoring leading whitespace, but do not use trimmed positions for slicing
+    let mut lead_ws = 0usize;
+    while lead_ws < s_up.len() && s_up.as_bytes()[lead_ws].is_ascii_whitespace() { lead_ws += 1; }
+    if s_up[lead_ws..].starts_with("WITH ") {
         // Extract WITH clause and main SELECT
-        let with_start = s_up.trim_start().find("WITH ").unwrap();
-        let after_with = &s[with_start + 5..].trim();
+        let with_start = lead_ws;
+        // Do not trim here; keep positions aligned and trim only substrings as needed
+        let after_with = &s[with_start + 5..];
         
         // Find the main SELECT that follows the CTE definitions
         // CTEs are: name AS (query), name AS (query), ... SELECT ...
@@ -75,7 +80,7 @@ pub fn parse_select(s: &str) -> Result<Query> {
             if pos >= after_with.len() { break; }
             
             // Check if we've reached the main SELECT
-            let remaining_up = after_with[pos..].to_uppercase();
+            let remaining_up = upper_shadow(&after_with[pos..]);
             if remaining_up.starts_with("SELECT ") {
                 query_sql = &after_with[pos..];
                 break;
@@ -89,7 +94,7 @@ pub fn parse_select(s: &str) -> Result<Query> {
             
             // Skip whitespace and expect AS
             while pos < after_with.len() && after_with.as_bytes()[pos].is_ascii_whitespace() { pos += 1; }
-            let rem_up = after_with[pos..].to_uppercase();
+            let rem_up = upper_shadow(&after_with[pos..]);
             if !rem_up.starts_with("AS") {
                 anyhow::bail!("Expected AS after CTE name");
             }
@@ -375,12 +380,23 @@ pub fn parse_select(s: &str) -> Result<Query> {
         None
     }
 
-    let from_pos = find_keyword_ci_depth0(query_sql, "FROM");
+    // Use shadow for keyword search so that tokens across newlines (e.g., GROUP\nBY) are recognized as GROUP BY
+    let query_sql_up = upper_shadow(query_sql);
+    tprintln!("[query_parse] select original {}", query_sql);
+    tprintln!("[query_parse] select upper shadow {}", query_sql_up);
+    let mut from_pos = find_keyword_ci_depth0(&query_sql_up, "FROM");
+    // Fallback: if depth-aware search fails (e.g., due to unusual whitespace), use a simple word-boundary regex on the shadow
+    if from_pos.is_none() {
+        if let Ok(re) = Regex::new(r"(?i)\bFROM\b") {
+            from_pos = re.find(&query_sql_up).map(|m| m.start());
+        }
+    }
     debug!(target: "clarium::parser", "parse SELECT: FROM found?={} (sql starts with='{}...')", from_pos.is_some(), &query_sql[..query_sql.len().min(80)]);
 
     // Sourceless SELECT (e.g., SELECT 1) when no FROM clause is present
     if from_pos.is_none() {
-        let sel_fields = query_sql[7..].trim();
+        // Skip the SELECT keyword (6 chars) then trim leading whitespace
+        let sel_fields = query_sql[6..].trim_start();
         debug!(target: "clarium::parser", "sourceless SELECT detected; fields='{}'", sel_fields);
         let select = parse_select_list(sel_fields)?;
         return Ok(Query {
@@ -407,7 +423,8 @@ pub fn parse_select(s: &str) -> Result<Query> {
 
     let from_idx = from_pos.ok_or_else(|| anyhow::anyhow!("Missing FROM"))?;
     let (sel_part, rest) = query_sql.split_at(from_idx);
-    let sel_fields = sel_part[7..].trim();
+    // Skip the SELECT keyword (6 chars) then trim leading whitespace
+    let sel_fields = sel_part[6..].trim_start();
     // skip the keyword itself and following whitespace
     let mut rest = &rest[4..];
     rest = rest.trim_start();
@@ -430,7 +447,7 @@ pub fn parse_select(s: &str) -> Result<Query> {
     let mut into_mode: Option<IntoMode> = None;
 
     // Determine cut for database token
-    let up_db = database.to_uppercase();
+    let up_db = upper_shadow(database);
     let mut cut_idx = up_db.len();
     if let Some(i) = up_db.find(" GROUP BY ") { cut_idx = cut_idx.min(i); }
     if let Some(i) = up_db.find(" ROLLING BY ") { cut_idx = cut_idx.min(i); }
@@ -456,11 +473,11 @@ pub fn parse_select(s: &str) -> Result<Query> {
     let mut t = tail.trim_start();
     loop {
         if t.is_empty() { break; }
-        let t_up = t.to_uppercase();
+        let t_up = upper_shadow(t);
         if t_up.starts_with("ROLLING BY ") {
             // ROLLING BY <window>
             let after = &t[11..];
-            let after_up = after.to_uppercase();
+            let after_up = upper_shadow(after);
             let mut win_end = after.len();
             if let Some(i) = after_up.find(" WHERE ") { win_end = win_end.min(i); }
             if let Some(i) = after_up.find(" HAVING ") { win_end = win_end.min(i); }
@@ -476,7 +493,7 @@ pub fn parse_select(s: &str) -> Result<Query> {
             // window form begins with BY (note: this occurs only if no leading space)
             let after_by = &t[3..];
             let after_trim = after_by.trim_start();
-            let after_up = after_trim.to_uppercase();
+            let after_up = upper_shadow(after_trim);
             if after_up.starts_with("SLICE") {
                 // Expect SLICE( ... ) or SLICE{ ... }
                 let kw_len = 5; // len("SLICE")
@@ -493,7 +510,7 @@ pub fn parse_select(s: &str) -> Result<Query> {
             let next_tok = after_trim.split_whitespace().next().unwrap_or("");
             if next_tok.chars().next().map(|c| c.is_ascii_digit()).unwrap_or(false) {
                 let mut win_end = after_by.len();
-                let after_up2 = after_by.to_uppercase();
+                let after_up2 = upper_shadow(after_by);
                 if let Some(i) = after_up2.find(" WHERE ") { win_end = win_end.min(i); }
                 if let Some(i) = after_up2.find(" HAVING ") { win_end = win_end.min(i); }
                 if let Some(i) = after_up2.find(" GROUP BY ") { win_end = win_end.min(i); }
@@ -507,7 +524,7 @@ pub fn parse_select(s: &str) -> Result<Query> {
             }
         } else if t_up.starts_with("GROUP BY ") {
             let after = &t[9..];
-            let after_up = after.to_uppercase();
+            let after_up = upper_shadow(after);
             let mut end = after.len();
             if let Some(i) = after_up.find(" WHERE ") { end = end.min(i); }
             if let Some(i) = after_up.find(" HAVING ") { end = end.min(i); }
@@ -542,7 +559,7 @@ pub fn parse_select(s: &str) -> Result<Query> {
             let after = &t[6..];
             // WHERE may be followed by GROUP BY, HAVING, ORDER BY, or LIMIT
             // But these keywords might also appear inside nested subqueries, so we must respect parenthesis depth
-            let after_up = after.to_uppercase();
+            let after_up = upper_shadow(after);
             let mut end = after.len();
             
             // Helper to find keyword at depth 0 (not inside parentheses)
@@ -588,7 +605,7 @@ pub fn parse_select(s: &str) -> Result<Query> {
         } else if t_up.starts_with("HAVING ") {
             let after = &t[7..];
             // HAVING may be followed by ORDER BY or LIMIT; do not consume the tail
-            let after_up = after.to_uppercase();
+            let after_up = upper_shadow(after);
             let mut end = after.len();
             if let Some(i) = after_up.find(" ORDER BY ") { end = end.min(i); }
             if let Some(i) = after_up.find(" LIMIT ") { end = end.min(i); }
@@ -601,18 +618,18 @@ pub fn parse_select(s: &str) -> Result<Query> {
         } else if t_up.starts_with("ORDER BY ") {
             // ORDER BY col [ASC|DESC], col2 ...
             let after = &t[9..];
-            let after_up = after.to_uppercase();
+            let after_up = upper_shadow(after);
             let mut end = after.len();
             if let Some(i) = after_up.find(" LIMIT ") { end = end.min(i); }
             // Allow ORDER BY to be the last clause, so no further trims
             let mut inside = after[..end].trim().to_string();
             // Optional trailing USING ANN|EXACT hint
             {
-                let up_inside = inside.to_uppercase();
+                let up_inside = upper_shadow(&inside);
                 if let Some(pos) = up_inside.rfind(" USING ") {
                     // Ensure it is a trailing hint: only whitespace after ANN|EXACT
                     let hint_part = inside[pos + 7..].trim(); // after ' USING '
-                    let hint_up = hint_part.to_uppercase();
+                    let hint_up = upper_shadow(hint_part);
                     if hint_up == "ANN" || hint_up == "EXACT" {
                         order_by_hint = Some(hint_up.to_lowercase());
                         // strip the hint from inside
@@ -675,7 +692,7 @@ pub fn parse_select(s: &str) -> Result<Query> {
                         }
                     }
                     if d == 0 && !s_in && !d_in {
-                        let tail_up = p.to_uppercase();
+                        let tail_up = upper_shadow(&p);
                         // remove once; only handle simple suffix forms
                         if tail_up.ends_with(" DESC") {
                             let cut = p.len() - 5; // len(" DESC")

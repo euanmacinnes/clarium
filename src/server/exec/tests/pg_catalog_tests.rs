@@ -546,3 +546,44 @@ fn test_pg_type_with_to_regtype() {
     let name_series = df.get_columns()[name_col_idx].as_materialized_series();
     let oid_series = df.get_columns()[oid_col_idx].as_materialized_series();
 }
+
+#[test]
+fn test_pg_type_case_sensitive_with_to_regtype() {
+    // Test query that uses TO_REGTYPE function to filter pg_type
+    // This query checks for hstore type existence and retrieves type metadata
+    super::udf_common::init_all_test_udfs();
+    let tmp = tempfile::tempdir().unwrap();
+    let _store = Store::new(tmp.path()).unwrap();
+    let shared = SharedStore::new(tmp.path()).unwrap();
+
+    let q = match query::parse(
+        "SELECT \
+    typname AS name, oid, typarray AS array_oid,\
+    oid::regtype::text AS regtype, typdelim AS delimiter \
+FROM pg_type t \
+WHERE t.oid = to_regtype('hstore')\
+ORDER BY t.oid"
+    ).unwrap() {
+        Command::Select(q) => q,
+        _ => unreachable!()
+    };
+
+    let df = run_select(&shared, &q).unwrap();
+
+
+    // Verify the columns exist
+    let cols = df.get_column_names();
+    assert!(cols.iter().any(|c| c.as_str() == "name" || c.as_str() == "NAME"), "Should have NAME column");
+    assert!(cols.iter().any(|c| c.as_str() == "oid" || c.as_str() == "OID"), "Should have OID column");
+    assert!(cols.iter().any(|c| c.as_str() == "array_oid" || c.as_str() == "ARRAY_OID"), "Should have ARRAY_OID column");
+    assert!(cols.iter().any(|c| c.as_str() == "regtype" || c.as_str() == "REGTYPE"), "Should have REGTYPE column");
+    assert!(cols.iter().any(|c| c.as_str() == "delimiter" || c.as_str() == "DELIMITER"), "Should have DELIMITER column");
+
+    // Verify hstore type data
+    let name_col_idx = cols.iter().position(|c| c.as_str().to_lowercase() == "name").unwrap();
+    let oid_col_idx = cols.iter().position(|c| c.as_str().to_lowercase() == "oid").unwrap();
+
+    let name_series = df.get_columns()[name_col_idx].as_materialized_series();
+    let oid_series = df.get_columns()[oid_col_idx].as_materialized_series();
+}
+

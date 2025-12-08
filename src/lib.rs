@@ -11,7 +11,7 @@ pub mod pgwire_server;
 
 // Test-only printing helper: expands to tprintln! during tests and is absent otherwise.
 // Usage in tests: tprintln!("debug: {}", value);
-#[cfg(test)]
+#[cfg(any(test, debug_assertions))]
 #[macro_export]
 macro_rules! tprintln {
     ($($arg:tt)*) => {
@@ -20,7 +20,7 @@ macro_rules! tprintln {
 }
 
 // In non-test builds, provide a no-op tprintln! so calls compile without effect.
-#[cfg(not(test))]
+#[cfg(not(any(test, debug_assertions)))]
 #[macro_export]
 macro_rules! tprintln {
     ($($arg:tt)*) => {
