@@ -148,6 +148,7 @@ mod stress_concurrency;
 mod stress_concurrency_no_udf;
 mod string_slice_tests;
 mod system_table_tests;
+mod calculation_tests;
 mod test_views;
 mod tests_udf;
 mod time_table_by_tests;
