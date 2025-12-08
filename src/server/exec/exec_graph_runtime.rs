@@ -148,6 +148,10 @@ pub fn graph_neighbors_df(
     time_start: Option<&str>,
     time_end: Option<&str>,
 ) -> Result<DataFrame> {
+    crate::tprintln!(
+        "[graph.neighbors] enter graph='{}' start='{}' etype={:?} max_hops={} time=({:?},{:?})",
+        graph, start, etype, max_hops, time_start, time_end
+    );
     let qname = qualify_graph_name(graph);
     // If a GraphStore manifest exists for this graph, delegate directly to GraphStore runtime
     let mpath = path_for_graph_manifest(store, &qname);
@@ -171,6 +175,17 @@ pub fn graph_neighbors_df(
     // Fallback to table-backed traversal using the .graph catalog
     let gf = read_graph_file(store, &qname)?;
     let (mut edges_df, src_col, dst_col, _cost, time_col_opt) = load_edges_df(store, &gf, etype)?;
+    crate::tprintln!(
+        "[graph.neighbors] edges loaded: rows={} src_col='{}' dst_col='{}' time_col={:?} cols={:?}",
+        edges_df.height(), src_col, dst_col, time_col_opt, edges_df.get_column_names()
+    );
+    if cfg!(debug_assertions) {
+        let mut dts: Vec<String> = Vec::new();
+        for cname in edges_df.get_column_names() {
+            if let Ok(c) = edges_df.column(cname.as_str()) { dts.push(format!("{}:{:?}", cname, c.dtype())); }
+        }
+        crate::tprintln!("[graph.neighbors] edges dtypes: [{}]", dts.join(", "));
+    }
     // Optional temporal filter: apply if at least one bound is supplied and time column exists
     if let Some(time_col) = time_col_opt.clone() {
         if time_start.is_some() || time_end.is_some() {
@@ -225,6 +240,10 @@ pub fn graph_neighbors_df(
         src.push(s);
         dst.push(d);
     }
+    if !src.is_empty() {
+        let preview = src.iter().zip(dst.iter()).take(3).map(|(a,b)| format!("{}->{}", a, b)).collect::<Vec<_>>().join(", ");
+        crate::tprintln!("[graph.neighbors] preview edges: {}", preview);
+    }
     // Build adjacency list
     let mut adj: HashMap<String, Vec<String>> = HashMap::new();
     for (s, d) in src.iter().zip(dst.iter()) {
@@ -258,7 +277,9 @@ pub fn graph_neighbors_df(
     let node_s = Series::new("node_id".into(), out_node);
     let prev_s = Series::new("prev_id".into(), out_prev);
     let hop_s = Series::new("hop".into(), out_hop);
-    Ok(DataFrame::new(vec![node_s.into(), prev_s.into(), hop_s.into()])?)
+    let out = DataFrame::new(vec![node_s.into(), prev_s.into(), hop_s.into()])?;
+    crate::tprintln!("[graph.neighbors] out rows={} cols={:?}", out.height(), out.get_column_names());
+    Ok(out)
 }
 
 /// Materialize graph_paths(graph, src, dst, max_hops[, etype[, time_start, time_end]]) –

@@ -343,6 +343,7 @@ pub fn reindex_vector_index(store: &SharedStore, v: &mut VIndexFile) -> Result<s
 }
 
 pub fn show_vector_index_status(store: &SharedStore, name: Option<&str>) -> Result<serde_json::Value> {
+    crate::tprintln!("[VINDEX.STATUS] enter name={:?}", name);
     // Build normalized rows per index with agreed fields
     fn normalize_row(name: &str, v: &VIndexFile) -> serde_json::Value {
         let st = v.status.as_ref();
@@ -381,7 +382,9 @@ pub fn show_vector_index_status(store: &SharedStore, name: Option<&str>) -> Resu
     if let Some(n) = name {
         let qualified = crate::ident::qualify_regular_ident(n, &crate::system::current_query_defaults());
         if let Some(vf) = super::exec_vector_index::read_vindex_file(store, &qualified)? {
-            return Ok(json!([normalize_row(&vf.name, &vf)]));
+            let row = normalize_row(&vf.name, &vf);
+            crate::tprintln!("[VINDEX.STATUS] single: name='{}' mode={:?} state={:?}", vf.name, vf.mode, vf.status.as_ref().and_then(|m| m.get("state")));
+            return Ok(json!([row]));
         }
         return Ok(json!([]));
     }
@@ -409,6 +412,8 @@ pub fn show_vector_index_status(store: &SharedStore, name: Option<&str>) -> Resu
             }
         }
     }
+    let count = out_rows.len();
+    crate::tprintln!("[VINDEX.STATUS] total rows={}", count);
     Ok(json!(out_rows))
 }
 

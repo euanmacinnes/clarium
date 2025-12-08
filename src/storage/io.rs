@@ -60,15 +60,38 @@ impl Store {
             }
         }
         if dfs.is_empty() {
-            // Empty with requested columns
+            // No parquet chunks yet: synthesize an empty DataFrame using the saved schema dtypes
+            let schema = self.load_schema(table).unwrap_or_default();
             let mut cols_out: Vec<Column> = Vec::new();
             for c in wanted {
                 if c == "_time" {
                     cols_out.push(Series::new("_time".into(), Vec::<i64>::new()).into());
+                    continue;
+                }
+                if let Some(dt) = schema.get(&c) {
+                    // Create a 0-length column with the correct dtype
+                    let s: Series = match dt {
+                        DataType::Int64 => Series::new(c.as_str().into(), Vec::<i64>::new()),
+                        DataType::Float64 => Series::new(c.as_str().into(), Vec::<f64>::new()),
+                        DataType::String => Series::new(c.as_str().into(), Vec::<String>::new()),
+                        DataType::List(inner) if matches!(**inner, DataType::Float64) => {
+                            Series::full_null(c.as_str().into(), 0, &DataType::List(Box::new(DataType::Float64)))
+                        }
+                        DataType::List(inner) if matches!(**inner, DataType::Int64) => {
+                            Series::full_null(c.as_str().into(), 0, &DataType::List(Box::new(DataType::Int64)))
+                        }
+                        other => {
+                            // Fallback: create 0-length null series with declared dtype
+                            Series::full_null(c.as_str().into(), 0, other)
+                        }
+                    };
+                    cols_out.push(s.into());
                 } else {
-                    cols_out.push(Series::new(c.into(), Vec::<Option<f64>>::new()).into());
+                    // Column not in schema: default to Float64 0-length
+                    cols_out.push(Series::new(c.as_str().into(), Vec::<f64>::new()).into());
                 }
             }
+            crate::tprintln!("[storage.filter_df] synthesized empty DF for '{}' with cols={:?}", table, cols_out.iter().map(|cl| cl.name().to_string()).collect::<Vec<_>>());
             return Ok(DataFrame::new(cols_out)?);
         }
         let mut out = dfs.remove(0);

@@ -136,6 +136,7 @@ pub fn execute_vector_index(store: &SharedStore, cmd: query::Command) -> Result<
         query::Command::CreateVectorIndex { name, table, column, algo, options } => {
             if algo.to_lowercase() != "hnsw" { return Err(AppError::Ddl { code: "vector_algo".into(), message: format!("Only HNSW is supported for now, got '{}'.", algo) }.into()); }
             let qualified = qualify_name(&name);
+            crate::tprintln!("[VINDEX] CREATE name='{}' table='{}' column='{}' algo='{}' opts={:?}", qualified, table, column, algo, options);
             if read_vindex_file(store, &qualified)?.is_some() {
                 return Err(AppError::Conflict { code: "name_conflict".into(), message: format!("Vector index already exists: {}", qualified) }.into());
             }
@@ -182,6 +183,7 @@ pub fn execute_vector_index(store: &SharedStore, cmd: query::Command) -> Result<
                 updated_at: None,
             };
             write_vindex_file(store, &qualified, &vf)?;
+            crate::tprintln!("[VINDEX] CREATE saved name='{}' mode={:?} metric={:?} dim={:?}", vf.name, vf.mode, vf.metric, vf.dim);
             info!(target: "clarium::ddl", "CREATE VECTOR INDEX saved '{}.vindex'", qualified);
             Ok(serde_json::json!({"status":"ok"}))
         }
@@ -195,7 +197,9 @@ pub fn execute_vector_index(store: &SharedStore, cmd: query::Command) -> Result<
         }
         query::Command::ShowVectorIndex { name } => {
             let qualified = qualify_name(&name);
+            crate::tprintln!("[VINDEX] SHOW name='{}'", qualified);
             if let Some(vf) = read_vindex_file(store, &qualified)? {
+                crate::tprintln!("[VINDEX] SHOW found: table='{}' column='{}' mode={:?}", vf.table, vf.column, vf.mode);
                 let row = serde_json::json!({
                     "name": vf.name,
                     "table": vf.table,
@@ -212,7 +216,11 @@ pub fn execute_vector_index(store: &SharedStore, cmd: query::Command) -> Result<
             return Err(AppError::NotFound { code: "not_found".into(), message: format!("Vector index not found: {}", qualified) }.into());
         }
         query::Command::ShowVectorIndexes => {
-            list_vector_indexes(store)
+            let out = list_vector_indexes(store)?;
+            if let Some(arr) = out.as_array() {
+                crate::tprintln!("[VINDEX] SHOW INDEXES count={}", arr.len());
+            }
+            Ok(out)
         }
         query::Command::AlterVectorIndexSetMode { name, mode } => {
             let qualified = qualify_name(&name);
@@ -222,9 +230,11 @@ pub fn execute_vector_index(store: &SharedStore, cmd: query::Command) -> Result<
                 if !allowed.contains(&up.as_str()) {
                     return Err(AppError::Ddl { code: "vector_mode".into(), message: format!("Invalid vector index mode '{}'; expected one of IMMEDIATE|BATCHED|ASYNC|REBUILD_ONLY", mode) }.into());
                 }
+                let old_mode = vf.mode.clone();
                 vf.mode = Some(up);
                 vf.updated_at = Some(now_iso());
                 write_vindex_file(store, &qualified, &vf)?;
+                crate::tprintln!("[VINDEX] ALTER SET MODE name='{}' old={:?} new={:?}", qualified, old_mode, vf.mode);
                 Ok(serde_json::json!({"status":"ok"}))
             } else {
                 Err(AppError::NotFound { code: "not_found".into(), message: format!("Vector index not found: {}", qualified) }.into())
@@ -232,10 +242,12 @@ pub fn execute_vector_index(store: &SharedStore, cmd: query::Command) -> Result<
         }
         query::Command::BuildVectorIndex { name, options } => {
             let qualified = qualify_name(&name);
+            crate::tprintln!("[VINDEX] BUILD name='{}' options={:?}", qualified, options);
             if let Some(mut vf) = read_vindex_file(store, &qualified)? {
                 let out = crate::server::exec::exec_vector_runtime::build_vector_index(store, &mut vf, &options)?;
                 // persist updated status into .vindex
                 write_vindex_file(store, &qualified, &vf)?;
+                crate::tprintln!("[VINDEX] BUILD completed: status state={:?} rows_indexed={:?}", vf.status.as_ref().and_then(|m| m.get("state")), vf.status.as_ref().and_then(|m| m.get("rows_indexed")));
                 Ok(out)
             } else {
                 Err(AppError::NotFound { code: "not_found".into(), message: format!("Vector index not found: {}", qualified) }.into())
@@ -246,13 +258,16 @@ pub fn execute_vector_index(store: &SharedStore, cmd: query::Command) -> Result<
             if let Some(mut vf) = read_vindex_file(store, &qualified)? {
                 let out = crate::server::exec::exec_vector_runtime::reindex_vector_index(store, &mut vf)?;
                 write_vindex_file(store, &qualified, &vf)?;
+                crate::tprintln!("[VINDEX] REINDEX name='{}' state={:?}", qualified, vf.status.as_ref().and_then(|m| m.get("state")));
                 Ok(out)
             } else {
                 Err(AppError::NotFound { code: "not_found".into(), message: format!("Vector index not found: {}", qualified) }.into())
             }
         }
         query::Command::ShowVectorIndexStatus { name } => {
+            crate::tprintln!("[VINDEX] SHOW STATUS name={:?}", name);
             let out = crate::server::exec::exec_vector_runtime::show_vector_index_status(store, name.as_deref())?;
+            if let Some(arr) = out.as_array() { crate::tprintln!("[VINDEX] STATUS rows={} first_row={:?}", arr.len(), arr.get(0)); }
             Ok(out)
         }
         _ => Err(AppError::Ddl { code: "unsupported_vector_index".into(), message: "unsupported vector index command".into() }.into()),

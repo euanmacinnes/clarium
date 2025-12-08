@@ -487,6 +487,8 @@ pub fn by_or_groupby(store: &SharedStore, mut df: DataFrame, q: &Query, ctx: &mu
         struct UdfAggPlan { base_name: String, func_name: String, ret_types: Vec<DataType>, args: Vec<ArithExpr> }
         let mut udf_plans: Vec<UdfAggPlan> = Vec::new();
         let time_col = ctx.resolve_column_at_stage(&df, "_time", SelectStage::ByOrGroupBy).unwrap_or_else(|_| "_time".to_string());
+        let has_time_col = df.get_column_names().iter().any(|c| c.as_str() == time_col.as_str());
+        crate::tprintln!("[GROUPBY] time_col resolved='{}' present={}", time_col, has_time_col);
         // Helper: qualify arithmetic expressions against this stage
         fn qualify_arith_ctx(df: &DataFrame, ctx: &DataContext, a: &ArithExpr, clause: &str) -> anyhow::Result<ArithExpr> {            
             Ok(match a {
@@ -635,10 +637,12 @@ pub fn by_or_groupby(store: &SharedStore, mut df: DataFrame, q: &Query, ctx: &mu
                 }
             }
         }
-        // Always include group time bounds
+        // Always include group time bounds (instrumented)
+        crate::tprintln!("[GROUPBY] injecting time bounds: using='{}'", time_col);
         agg_cols.push(col(&time_col).min().alias("_start_time"));
         agg_cols.push(col(&time_col).max().alias("_end_time"));
         tracing::debug!(target: "clarium::groupby", "GROUPBY executing: gb_keys={:?}", resolved_group_cols);
+        crate::tprintln!("[GROUPBY] gb_keys={:?} agg_cols_pre={} notnull={}", resolved_group_cols, agg_cols.len(), !notnull_set.is_empty());
         let mut out = lf.group_by(gb_exprs).agg(agg_cols).collect()?;
         tracing::debug!(target: "clarium::groupby", "GROUPBY raw out: rows={} cols={:?}", out.height(), out.get_column_names());
         println!("[GROUPBY] After aggregation: rows={}, cols={:?}", out.height(), out.get_column_names());

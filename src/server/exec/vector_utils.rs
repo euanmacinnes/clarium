@@ -26,7 +26,11 @@ pub fn parse_vec_literal(s: &str) -> Option<Vec<f32>> {
             Err(_) => return None,
         }
     }
-    if out.is_empty() { None } else { Some(out) }
+    let res = if out.is_empty() { None } else { Some(out) };
+    if cfg!(debug_assertions) {
+        crate::tprintln!("[vector_utils] parse_vec_literal len_in={} -> len_out={:?}", s.len(), res.as_ref().map(|v| v.len()));
+    }
+    res
 }
 
 /// Extract a row value from a Series as a vector of f32, supporting:
@@ -52,11 +56,13 @@ pub fn extract_vec_f32(series: &Series, i: usize) -> Option<Vec<f32>> {
                     _ => return None,
                 }
             }
-            if out.is_empty() { None } else { Some(out) }
+            let r = if out.is_empty() { None } else { Some(out) };
+            if cfg!(debug_assertions) { crate::tprintln!("[vector_utils] extract_vec_f32[List] len_out={:?}", r.as_ref().map(|v| v.len())); }
+            r
         }
-        Ok(AnyValue::String(s)) => parse_vec_literal(s),
-        Ok(AnyValue::StringOwned(s)) => parse_vec_literal(s.as_str()),
-        Ok(other) => parse_vec_literal(&other.to_string()),
+        Ok(AnyValue::String(s)) => { let r = parse_vec_literal(s); if cfg!(debug_assertions) { crate::tprintln!("[vector_utils] extract_vec_f32[String] parsed={:?}", r.as_ref().map(|v| v.len())); } r },
+        Ok(AnyValue::StringOwned(s)) => { let r = parse_vec_literal(s.as_str()); if cfg!(debug_assertions) { crate::tprintln!("[vector_utils] extract_vec_f32[StringOwned] parsed={:?}", r.as_ref().map(|v| v.len())); } r },
+        Ok(other) => { let r = parse_vec_literal(&other.to_string()); if cfg!(debug_assertions) { crate::tprintln!("[vector_utils] extract_vec_f32[Other] parsed={:?}", r.as_ref().map(|v| v.len())); } r },
         Err(_) => None,
     }
 }
@@ -76,11 +82,13 @@ pub fn extract_vec_f32_col(series: &Column, i: usize) -> Option<Vec<f32>> {
                     _ => return None,
                 }
             }
-            if out.is_empty() { None } else { Some(out) }
+            let r = if out.is_empty() { None } else { Some(out) };
+            if cfg!(debug_assertions) { crate::tprintln!("[vector_utils] extract_vec_f32_col[List] len_out={:?}", r.as_ref().map(|v| v.len())); }
+            r
         }
-        Ok(AnyValue::String(s)) => parse_vec_literal(s),
-        Ok(AnyValue::StringOwned(s)) => parse_vec_literal(s.as_str()),
-        Ok(other) => parse_vec_literal(&other.to_string()),
+        Ok(AnyValue::String(s)) => { let r = parse_vec_literal(s); if cfg!(debug_assertions) { crate::tprintln!("[vector_utils] extract_vec_f32_col[String] parsed={:?}", r.as_ref().map(|v| v.len())); } r },
+        Ok(AnyValue::StringOwned(s)) => { let r = parse_vec_literal(s.as_str()); if cfg!(debug_assertions) { crate::tprintln!("[vector_utils] extract_vec_f32_col[StringOwned] parsed={:?}", r.as_ref().map(|v| v.len())); } r },
+        Ok(other) => { let r = parse_vec_literal(&other.to_string()); if cfg!(debug_assertions) { crate::tprintln!("[vector_utils] extract_vec_f32_col[Other] parsed={:?}", r.as_ref().map(|v| v.len())); } r },
         Err(_) => None,
     }
 }

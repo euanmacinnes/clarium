@@ -621,22 +621,78 @@ pub async fn execute_query(store: &SharedStore, text: &str) -> Result<serde_json
         }
         // script commands are delegated earlier to exec_scripts
         Command::SchemaShow { database } => {
-            let guard = store.0.lock();
-            // access private load function via public? Not available; so rebuild via filter_df expected? We'll implement via reading schema.json
-            let (schema, locks) = guard.load_schema_with_locks(&database)?;
-            let mut rows: Vec<serde_json::Value> = Vec::new();
-            let mut names: Vec<String> = schema.keys().cloned().collect();
-            names.sort();
-            for name in names {
-                if let Some(dt) = schema.get(&name) {
-                    let ty = crate::storage::Store::dtype_to_str(dt);
-                    rows.push(serde_json::json!({"name": name, "type": ty, "locked": locks.contains(&name)}));
-                } else {
-                    // If schema entry is unexpectedly missing, skip gracefully
-                    continue;
+            use std::fs;
+            use serde_json::Value;
+            crate::tprintln!("[SCHEMA_SHOW] input='{}'", database);
+            // Interpret the input as a schema identifier. It can be:
+            //  - bare schema name (e.g., "demo")
+            //  - db/schema
+            //  - fully qualified db/schema/table (we will ignore trailing table if present)
+            let d = crate::system::current_query_defaults();
+            let norm = database.replace('\\', "/");
+            let parts: Vec<&str> = norm.split('/').filter(|p| !p.is_empty()).collect();
+            let (db, schema) = match parts.len() {
+                0 => (d.current_database, d.current_schema),
+                1 => (d.current_database, crate::ident::normalize_identifier(parts[0])),
+                _ => (crate::ident::normalize_identifier(parts[0]), crate::ident::normalize_identifier(parts[1])),
+            };
+            // Build filesystem path: <root>/<db>/<schema>
+            let root = store.0.lock().root_path().clone();
+            let schema_dir = root.join(db.clone()).join(schema.clone());
+            crate::tprintln!(
+                "[SCHEMA_SHOW] resolved db='{}' schema='{}' path='{}' exists={}",
+                db,
+                schema,
+                schema_dir.display(),
+                schema_dir.is_dir()
+            );
+            let mut out: Vec<Value> = Vec::new();
+            if schema_dir.is_dir() {
+                if let Ok(entries) = fs::read_dir(&schema_dir) {
+                    let mut table_count = 0usize;
+                    for e in entries.flatten() {
+                        let p = e.path();
+                        if !p.is_dir() { continue; }
+                        let sj = p.join("schema.json");
+                        if !sj.exists() { continue; }
+                        // Derive table name (strip optional .time suffix)
+                        let mut tname = e.file_name().to_string_lossy().to_string();
+                        if let Some(stripped) = tname.strip_suffix(".time") { tname = stripped.to_string(); }
+                        // Load schema for this table via Store to reuse dtype mapping and locks
+                        let qualified = format!("{}/{}/{}", db, schema, tname);
+                        let (schema_map, locks) = {
+                            let g = store.0.lock();
+                            g.load_schema_with_locks(&qualified).unwrap_or((std::collections::HashMap::new(), std::collections::HashSet::new()))
+                        };
+                        let mut cols: Vec<Value> = Vec::new();
+                        let mut names: Vec<String> = schema_map.keys().cloned().collect();
+                        names.sort();
+                        for name in names {
+                            if let Some(dt) = schema_map.get(&name) {
+                                let ty = crate::storage::Store::dtype_to_str(dt);
+                                cols.push(serde_json::json!({
+                                    "name": name,
+                                    "dtype": ty,
+                                    "locked": locks.contains(&name)
+                                }));
+                            }
+                        }
+                        crate::tprintln!(
+                            "[SCHEMA_SHOW] table='{}' columns_count={}",
+                            tname,
+                            cols.len()
+                        );
+                        out.push(serde_json::json!({
+                            "table": tname,
+                            "columns": cols
+                        }));
+                        table_count += 1;
+                    }
+                    crate::tprintln!("[SCHEMA_SHOW] tables_enumerated={}", table_count);
                 }
             }
-            Ok(serde_json::json!({"schema": rows}))
+            crate::tprintln!("[SCHEMA_SHOW] output_rows={}", out.len());
+            Ok(Value::Array(out))
         }
         Command::SchemaAdd { database, entries, primary_key, partitions } => {
             // Map type words to DataType

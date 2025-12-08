@@ -229,7 +229,11 @@ pub fn order_limit(mut df: DataFrame, q: &Query, ctx: &mut DataContext) -> Resul
                 }
                 if !exprs.is_empty() {
                     let nulls_last: Vec<bool> = vec![true; exprs.len()];
-                    let opts = polars::prelude::SortMultipleOptions { descending, nulls_last, maintain_order: true, multithreaded: true, limit: None };
+                    let opts = polars::prelude::SortMultipleOptions { descending: descending.clone(), nulls_last: nulls_last.clone(), maintain_order: true, multithreaded: true, limit: None };
+                    crate::tprintln!(
+                        "[ORDER_LIMIT] exact sort: exprs={} descending={:?} nulls_last={:?}",
+                        exprs.len(), descending, nulls_last
+                    );
                     df = df.lazy().sort_by_exprs(exprs, opts).collect()?;
                 }
             }
@@ -248,6 +252,7 @@ pub fn order_limit(mut df: DataFrame, q: &Query, ctx: &mut DataContext) -> Resul
     }
     // Apply LIMIT locally (mirror df_utils::apply_order_and_limit)
     if let Some(n) = q.limit {
+        crate::tprintln!("[ORDER_LIMIT] applying LIMIT n={}", n);
         let h = df.height();
         if n > 0 {
             let m = n as usize;
