@@ -905,8 +905,8 @@ pub fn project_select(df: DataFrame, q: &Query, ctx: &mut DataContext) -> Result
 
             // Special handling: if ORDER BY has an ANN expression (vec_l2/cosine_sim) and the vector source column
             // is not in projection, append it so ANN/order stage can compute scores. Use order_by_raw[0].
-            if q.order_by_hint.as_deref() == Some("ann") {
-                if let Some(raw0) = q.order_by_raw.as_ref().and_then(|v| v.get(0)).map(|(s, _)| s.clone()) {
+            // Apply this both for explicit USING ANN and opportunistically when expression is present.
+            if let Some(raw0) = q.order_by_raw.as_ref().and_then(|v| v.get(0)).map(|(s, _)| s.clone()) {
                     // Local parser for ANN ORDER BY expression: func(lhs, rhs) where lhs is table/col
                     fn parse_ann_lhs(expr: &str) -> Option<String> {
                         let txt = expr.trim();
@@ -949,12 +949,12 @@ pub fn project_select(df: DataFrame, q: &Query, ctx: &mut DataContext) -> Result
                                         existing.insert(target.clone());
                                         out_cols.push(s);
                                         ctx.temp_order_by_columns.insert(target);
+                                        crate::tprintln!("[PROJECT_SELECT] Added ANN source column '{}' for ORDER BY expression '{}'", lhs_col, raw0);
                                     }
                                 }
                             }
                         }
                     }
-                }
             }
         }
     }

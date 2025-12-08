@@ -385,12 +385,13 @@ fn parse_ann_order_expr(expr: &str) -> Option<ParsedAnnOrder> {
     let (lhs, rhs) = if let Some(cpos) = comma_at { (&body[..cpos], &body[cpos+1..]) } else { return None; };
     let lhs = lhs.trim();
     let rhs = rhs.trim();
-    // LHS expected as table.col (optionally qualified); extract last two segments
+    // LHS may be a bare column or qualified path like a.table.col or db/schema/table.col
     let lhs_norm = lhs.trim_matches('"').trim_matches('`');
     let parts: Vec<&str> = lhs_norm.split(|c| c == '.' || c == '/').collect();
-    if parts.len() < 2 { return None; }
+    if parts.is_empty() { return None; }
     let column = parts.last().unwrap().to_string();
-    let table = parts[parts.len()-2].to_string();
+    // If no explicit table path provided, leave table empty (exact path will resolve column in context)
+    let table = if parts.len() >= 2 { parts[parts.len()-2].to_string() } else { String::new() };
     Some(ParsedAnnOrder { func: func.to_string(), table, column, rhs_expr: rhs.to_string() })
 }
 
