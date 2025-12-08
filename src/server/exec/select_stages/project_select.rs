@@ -946,10 +946,11 @@ pub fn project_select(df: DataFrame, q: &Query, ctx: &mut DataContext) -> Result
                                     let target = base.clone();
                                     s.rename(target.clone().into());
                                     if !out_cols.iter().any(|c| c.name().as_str() == target.as_str()) {
+                                        let dt_dbg = s.dtype().clone();
                                         existing.insert(target.clone());
                                         out_cols.push(s);
                                         ctx.temp_order_by_columns.insert(target);
-                                        crate::tprintln!("[PROJECT_SELECT] Added ANN source column '{}' for ORDER BY expression '{}'", lhs_col, raw0);
+                                        crate::tprintln!("[PROJECT_SELECT] Added ANN source column '{}' for ORDER BY expression '{}' dtype={:?}", lhs_col, raw0, dt_dbg);
                                     }
                                 }
                             }

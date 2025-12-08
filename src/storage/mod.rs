@@ -187,10 +187,18 @@ impl Store {
         for name in names {
             let mut any_string_label = false;
             let mut any_float = false;
+            let mut any_list = false;
             let mut saw_value = false;
             for r in records {
                 if let Some(val) = r.sensors.get(name) {
                     match val {
+                        serde_json::Value::Array(arr) => {
+                            // Treat any array as a vector (List(Float64)) if elements are numeric or string-encoded numbers
+                            if !arr.is_empty() {
+                                any_list = true;
+                                saw_value = true;
+                            }
+                        }
                         serde_json::Value::String(s) => {
                             if s.parse::<i64>().is_ok() { saw_value = true; }
                             else if s.parse::<f64>().is_ok() { any_float = true; saw_value = true; }
@@ -203,7 +211,14 @@ impl Store {
                     }
                 }
             }
-            let dt = if any_string_label { DataType::String } else if any_float { DataType::Float64 } else if saw_value { DataType::Int64 } else { DataType::Float64 };
+            let dt = if any_list { DataType::List(Box::new(DataType::Float64)) }
+                else if any_string_label { DataType::String }
+                else if any_float { DataType::Float64 }
+                else if saw_value { DataType::Int64 }
+                else { DataType::Float64 };
+            if cfg!(debug_assertions) {
+                crate::tprintln!("[storage.infer_dtypes] name='{}' any_list={} any_float={} any_string_label={} -> {:?}", name, any_list, any_float, any_string_label, dt);
+            }
             map.insert(name.clone(), dt);
         }
         map
