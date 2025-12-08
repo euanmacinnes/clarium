@@ -16,13 +16,27 @@ pub fn parse_vector_ddl(s: &str) -> Option<Result<Command>> {
         let after = tail[set_pos + 5..].trim(); // past " SET "
         let after_up = after.to_uppercase();
         if !after_up.starts_with("MODE") { return Some(Err(anyhow::anyhow!("ALTER VECTOR INDEX: only SET MODE is supported"))); }
-        // Accept forms: MODE = <value> | MODE=<value>
+        // Accept forms:
+        //  - MODE = <value>
+        //  - MODE=<value>
+        //  - MODE <value>
         let mut mode_val = String::new();
-        if let Some(eq) = after.find('=') {
-            mode_val = after[eq+1..].trim().trim_matches('\'').trim_matches('"').to_string();
-        } else {
-            return Some(Err(anyhow::anyhow!("ALTER VECTOR INDEX: expected MODE = <value>")));
+        // Strip leading MODE token
+        let tail = after["MODE".len()..].trim();
+        if tail.is_empty() {
+            return Some(Err(anyhow::anyhow!("ALTER VECTOR INDEX: expected MODE <value>")));
         }
+        let tv = if tail.starts_with('=') { tail[1..].trim() } else { tail };
+        // Extract first non-whitespace token (optionally quoted)
+        if tv.starts_with('\'') || tv.starts_with('"') {
+            mode_val = tv.trim().trim_matches('\'').trim_matches('"').to_string();
+        } else {
+            // take up to first whitespace
+            let parts: Vec<&str> = tv.split_whitespace().collect();
+            if parts.is_empty() { return Some(Err(anyhow::anyhow!("ALTER VECTOR INDEX: expected MODE <value>"))); }
+            mode_val = parts[0].to_string();
+        }
+        crate::tprintln!("[PARSE] ALTER VECTOR INDEX SET MODE parsed name='{}' mode='{}'", name, mode_val);
         if name.is_empty() { return Some(Err(anyhow::anyhow!("ALTER VECTOR INDEX: missing index name"))); }
         let normalized = crate::ident::normalize_identifier(name);
         return Some(Ok(Command::AlterVectorIndexSetMode { name: normalized, mode: mode_val }));
