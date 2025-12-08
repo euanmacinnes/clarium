@@ -385,12 +385,13 @@ fn parse_ann_order_expr(expr: &str) -> Option<ParsedAnnOrder> {
     let (lhs, rhs) = if let Some(cpos) = comma_at { (&body[..cpos], &body[cpos+1..]) } else { return None; };
     let lhs = lhs.trim();
     let rhs = rhs.trim();
-    // LHS expected as table.col (optionally qualified); extract last two segments
+    // LHS may be a bare column or qualified path like a.table.col or db/schema/table.col
     let lhs_norm = lhs.trim_matches('"').trim_matches('`');
     let parts: Vec<&str> = lhs_norm.split(|c| c == '.' || c == '/').collect();
-    if parts.len() < 2 { return None; }
+    if parts.is_empty() { return None; }
     let column = parts.last().unwrap().to_string();
-    let table = parts[parts.len()-2].to_string();
+    // If no explicit table path provided, leave table empty (exact path will resolve column in context)
+    let table = if parts.len() >= 2 { parts[parts.len()-2].to_string() } else { String::new() };
     Some(ParsedAnnOrder { func: func.to_string(), table, column, rhs_expr: rhs.to_string() })
 }
 
@@ -446,6 +447,10 @@ fn ann_order_dataframe(
 ) -> Result<DataFrame> {
     // Parse query vector once. If parsing fails, bail so caller can fallback to exact ORDER BY path.
     let qvec = parse_vec_literal_f64(rhs_scalar).ok_or_else(|| anyhow::anyhow!("invalid query vector for ANN"))?;
+    crate::tprintln!(
+        "[ANN] enter col='{}' func='{}' asc_hint={} final_desc={} qvec_len={} topk={:?} index_metric={:?} index_dim={:?}",
+        col_name, func, asc_hint, !asc_hint, qvec.len(), topk, index_metric, index_dim
+    );
     // Do NOT hard fail on index metric/dimension mismatch; treat index hints as advisory.
     // This enables graceful fallback to exact scoring even when index metadata doesn't align with the request.
     // Ensure the column exists and is String-like
@@ -456,6 +461,7 @@ fn ann_order_dataframe(
         .map(|c| c.to_string())
         .unwrap_or_else(|| col_name.to_string());
     let col_series = df.column(&cname)?;
+    crate::tprintln!("[ANN] using column '{}' dtype={:?} df_rows={}", cname, col_series.dtype(), df.height());
     // Identify a stable row-id column if present
     // Accepted forms:
     // - alias.__row_id (preferred when an alias is used)
@@ -656,6 +662,11 @@ fn ann_order_dataframe(
                     f if f.eq_ignore_ascii_case("cosine_sim") => cosine_similarity(&v, &qvec),
                     _ => l2_distance(&v, &qvec),
                 };
+                if i < 4 {
+                    // best-effort id fetch for diagnostics
+                    let id_dbg = df.column("id").ok().and_then(|c| c.get(i).ok()).map(|av| av.to_string()).unwrap_or("?".to_string());
+                    crate::tprintln!("[ANN] sample row i={} id={} score={}", i, id_dbg, score);
+                }
                 heap.push(Reverse((f64_key(score), i as u32)));
                 if heap.len() > k { heap.pop(); }
             }
@@ -683,6 +694,11 @@ fn ann_order_dataframe(
                 scores2.push(s);
             }
             out.with_column(Series::new("__ann_score".into(), scores2))?;
+            if out.height() > 0 {
+                let id0 = out.column("id").ok().and_then(|c| c.get(0).ok()).map(|av| av.to_string()).unwrap_or("?".to_string());
+                let s0 = out.column("__ann_score").ok().and_then(|c| c.get(0).ok()).map(|av| av.to_string()).unwrap_or("?".to_string());
+                crate::tprintln!("[ANN] topk pre-sort preview: first_id={} first_score={}", id0, s0);
+            }
             let (exprs, desc) = build_sort_keys(&out, rid_col_name.as_deref(), final_desc);
             let opts = polars::prelude::SortMultipleOptions { descending: desc, nulls_last: vec![true; exprs.len()], maintain_order: true, multithreaded: true, limit: Some(out.height() as polars::prelude::IdxSize) };
             let orig_cols: Vec<_> = df.get_column_names().iter().map(|s| col(s.as_str())).collect();
@@ -791,6 +807,10 @@ fn ann_order_dataframe(
             f if f.eq_ignore_ascii_case("cosine_sim") => cosine_similarity(&v, &qvec),
             _ => l2_distance(&v, &qvec),
         };
+        if i < 4 {
+            let id_dbg = df.column("id").ok().and_then(|c| c.get(i).ok()).map(|av| av.to_string()).unwrap_or("?".to_string());
+            crate::tprintln!("[ANN] sample row i={} id={} score={}", i, id_dbg, score);
+        }
         scores.push(score);
     }
     let final_desc = !asc_hint;
@@ -808,6 +828,10 @@ fn ann_order_dataframe(
     };
     let orig_cols: Vec<_> = df.get_column_names().iter().map(|s| col(s.as_str())).collect();
     let df_sorted = df2.lazy().sort_by_exprs(sort_exprs, opts).select(&orig_cols).collect()?;
+    if df_sorted.height() > 0 {
+        let id0 = df_sorted.column("id").ok().and_then(|c| c.get(0).ok()).map(|av| av.to_string()).unwrap_or("?".to_string());
+        crate::tprintln!("[ANN] sorted top id={}", id0);
+    }
     Ok(df_sorted)
 }
 
