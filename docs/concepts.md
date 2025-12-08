@@ -17,16 +17,15 @@ Objects
 
 Qualification and naming
 ------------------------
-- Canonical table identifier: `database/schema/name` (slashes).
-- Dotted form `db.schema.name` and bare names are accepted by many SQL commands.
-- Time tables must end with `.time` in their last segment.
+- Canonical table identifier: `database/schema/name` (slashes). Dotted qualification (`db.schema.name`) is not supported.
+- Time tables must end with `.time` in their last segment, and the `.time` suffix is mandatory whenever you reference a time table (DDL and SELECT).
 - Views are referenced by name without extension; on disk they are saved as `.view`.
 - Session defaults: `USE DATABASE <db>` and `USE SCHEMA <schema>` set defaults for
   unqualified object names in DDL and SELECT. Example:
   ```
   USE DATABASE analytics;
   USE SCHEMA raw;
-  SELECT * FROM events.time LIMIT 1; -- resolves to analytics/raw/events.time
+  SELECT * FROM events.time LIMIT 1; -- resolves to analytics/raw/events.time (note the required .time suffix)
   CREATE VIEW hourly AS SELECT COUNT(*) AS n FROM events.time BY 1h; -- saved under analytics/raw/hourly.view
   ```
 

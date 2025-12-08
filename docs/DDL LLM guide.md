@@ -4,15 +4,15 @@ This guide describes the full set of Data Definition Language (DDL) statements s
 
 Notes
 - Keywords are case-insensitive. Identifiers and string literals are case-sensitive unless quoted/explicitly specified.
-- Paths can be provided with either `/` separators (`db/schema/table`) or dots (`db.schema.table`) where noted. Internally Clarium normalizes to `/`.
+- Paths must use `/` separators only (`db/schema/table`). Dotted qualification (`db.schema.table`) is not supported.
 - Session defaults: Unqualified names are resolved using the current session’s default `database` and `schema` (see system/session configuration). The engine applies `crate::ident::normalize_identifier` and qualification helpers at execution time.
-- “Regular tables” vs “time tables”: time tables must end with `.time` and have dedicated DDL.
+- “Regular tables” vs “time tables”: time tables must end with `.time` and have dedicated DDL. The `.time` suffix is mandatory wherever a time table is referenced (DDL and SELECT).
 - Error handling: DDL commands validate inputs and return structured errors; they do not panic. Use `IF EXISTS`/`IF NOT EXISTS` where supported to avoid errors when absent/present.
 
 Identifier and path rules
-- Qualified names: `database/schema/object` is preferred. Dotted form `database.schema.object` is accepted for some commands and normalized.
+- Qualified names: `database/schema/object` (slashes) is required. Dotted form `database.schema.object` is not supported.
 - View name uniqueness: A regular table cannot be created if a view with the same base name exists in the same path.
-- `.time` suffix is mandatory for time tables in CREATE/DROP/RENAME TIME TABLE.
+- `.time` suffix is mandatory for time tables in CREATE/DROP/RENAME TIME TABLE and when referencing time tables in queries.
 
 ---
 
@@ -327,7 +327,7 @@ RENAME SCRIPT <old_path> TO <new_path>
 
 ### Qualification, normalization, and defaults
 
-- Normalization: Unquoted identifiers may be case-normalized by `normalize_identifier`; dotted paths may be converted to slashes.
+- Normalization: Unquoted identifiers may be case-normalized by `normalize_identifier`. Only slash-separated paths are accepted; dotted qualification is not accepted.
 - Qualification: When a table name is not fully qualified, the engine qualifies it using the session’s current database and schema.
 - Filesystem mapping: Qualified paths map to directories under the configured root. For example, `clarium/public/metrics` → `<root>/clarium/public/metrics/`.
 
@@ -335,7 +335,7 @@ RENAME SCRIPT <old_path> TO <new_path>
 
 ### Constraints and validations (summary)
 
-- `.time` suffix: required in TIME TABLE DDL; disallowed in regular TABLE DDL and RENAME TABLE.
+- `.time` suffix: required in TIME TABLE DDL and when referencing time tables in queries; disallowed in regular TABLE DDL and RENAME TABLE.
 - View/table name conflict: CREATE TABLE fails if a `.view` with the same base path exists.
 - DROP TABLE `IF EXISTS`: supported; silently succeeds when missing. `IF NOT EXISTS` is supported only in the pgwire column-definition variant of CREATE TABLE.
 - Vector index: requires `USING <algo>`; options parsed from `WITH (k=v, ...)`.
@@ -410,7 +410,7 @@ DROP TABLE IF EXISTS clarium/public/unused;
 ### LLM prompting tips
 
 - Always emit fully qualified paths for reliability: `database/schema/name`.
-- Use `.time` suffix only with TIME TABLE DDL.
+- Use the `.time` suffix whenever you reference a time table (both in DDL and in SELECT). Do not append `.time` to regular tables.
 - Prefer `IF EXISTS`/`IF NOT EXISTS` where available to make operations idempotent for scripts.
 - For vector indexes, include `USING <algo>` and consider common `WITH` options like `m`, `ef_construction`, and `distance`.
 - For CREATE TABLE via pgwire, supply a reasonable SQL type per column; Clarium will map to internal storage types.
@@ -479,10 +479,10 @@ FROM <table_or_subquery> [<alias> | AS <alias>]
   | <cte_name>
 ```
 Notes
-- `<table_path>` prefers `db/schema/table`; dotted is normalized where supported.
+- `<table_path>` must be `db/schema/table` (slash-separated). Dotted form (`db.schema.table`) is not supported.
 - Subqueries in parentheses are supported as FROM sources and can be aliased.
 - CTEs defined in WITH can be referenced as tables.
-- Time tables (`.time`) can be used where applicable; windowing (BY/ROLLING/BY SLICE) operates on `_time` semantics where required.
+- Time table references must include the `.time` suffix; windowing (BY/ROLLING/BY SLICE) operates on `_time` semantics where required.
 
 JOINs
 Syntax
