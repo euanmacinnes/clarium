@@ -363,7 +363,7 @@ pub async fn execute_query(store: &SharedStore, text: &str) -> Result<serde_json
             }
             let tx = GraphTxn::begin(&handle.root, 0)?;
             let seed = handle.manifest.partitioning.as_ref().and_then(|p| p.hash_seed).unwrap_or(0);
-            let ctx = crate::system::GraphTxnCtx { graph: gname.clone(), root: handle.root.clone(), partitions: handle.manifest.partitions, hash_seed: seed };
+            let ctx = crate::system_catalog::shared::GraphTxnCtx { graph: gname.clone(), root: handle.root.clone(), partitions: handle.manifest.partitions, hash_seed: seed };
             crate::system::set_graph_txn(tx, ctx);
             Ok(serde_json::json!({"status":"ok","graph": gname}))
         }

@@ -561,7 +561,7 @@ fn test_pg_type_case_sensitive_with_to_regtype() {
     typname AS name, oid, typarray AS array_oid,\
     oid::regtype::text AS regtype, typdelim AS delimiter \
 FROM pg_type t \
-WHERE t.oid = to_regtype('hstore')\
+WHERE t.oid = to_regtype('hstore') \
 ORDER BY t.oid"
     ).unwrap() {
         Command::Select(q) => q,

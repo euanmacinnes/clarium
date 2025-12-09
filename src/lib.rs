@@ -3,6 +3,7 @@ pub mod storage;
 pub mod security;
 pub mod scripts;
 pub mod system;
+pub mod system_catalog;
 pub mod ident;
 pub mod error;
 pub mod lua_bc;

@@ -428,7 +428,7 @@ pub fn build_arith_expr(a: &ArithExpr, ctx: &crate::server::data_context::DataCo
                             let oid_opt = ca.get(i);
                             if let Some(oid) = oid_opt {
                                 if let Some(ref st) = store_opt {
-                                    let def = crate::system::lookup_view_definition_by_oid(st, oid as i32);
+                                    let def = crate::system_catalog::shared::lookup_view_definition_by_oid(st, oid as i32);
                                     out.push(def);
                                 } else {
                                     out.push(None);

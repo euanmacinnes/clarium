@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 use polars::prelude::*;
 use crate::tprintln;
 use super::Store;
+use crate::system_catalog::registry as sysreg;
 
 pub(crate) fn get_primary_key(store: &Store, table: &str) -> Option<Vec<String>> {
     let p = store.schema_path(table);
@@ -33,6 +34,14 @@ pub(crate) fn get_partitions(store: &Store, table: &str) -> Vec<String> {
 pub(crate) fn load_schema_with_locks(store: &Store, table: &str) -> anyhow::Result<(HashMap<String, DataType>, HashSet<String>)> {
     let mut map: HashMap<String, DataType> = HashMap::new();
     let mut locks: HashSet<String> = HashSet::new();
+    // First, check system catalog registry for a matching table. If present,
+    // return schema derived from ColumnDef instead of reading JSON files.
+    if let Some(sys) = sysreg::lookup_from_str(table) {
+        tprintln!("[SCHEMA] load_schema_with_locks: using system registry for '{}.{}' (input='{}')", sys.schema(), sys.name(), table);
+        let m = sysreg::schema_map_for(sys.as_ref());
+        tprintln!("[SCHEMA] load_schema_with_locks: system map_keys={:?}", m.keys().collect::<Vec<_>>());
+        return Ok((m, locks));
+    }
     let p = store.schema_path(table);
     tprintln!("[SCHEMA] load_schema_with_locks: table='{}' path='{}' exists={}", table, p.display(), p.exists());
     if p.exists() {
