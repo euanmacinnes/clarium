@@ -476,6 +476,69 @@ fn test_pg_class_namespace_join_with_oid() {
 }
 
 #[test]
+fn test_all_system_tables_return_df() {
+    use crate::system_catalog::registry;
+    let tmp = tempfile::tempdir().unwrap();
+    let _store = crate::storage::Store::new(tmp.path()).unwrap();
+    let shared = SharedStore::new(tmp.path()).unwrap();
+    let mut total = 0usize;
+    let mut non_empty = 0usize;
+    for t in registry::all() {
+        total += 1;
+        let full = format!("{}.{}", t.schema(), t.name());
+        let df_opt = crate::system::system_table_df(&full, &shared);
+        assert!(df_opt.is_some(), "System table '{}' should return a DataFrame", full);
+        if let Some(df) = df_opt { if df.height() > 0 { non_empty += 1; } }
+    }
+    assert!(total > 0, "There should be registered system tables");
+    // At least one system table should have rows (e.g., pg_namespace or information_schema.tables)
+    assert!(non_empty >= 1, "At least one system table should return rows");
+}
+
+#[test]
+fn test_system_view_sql_files_execute_limit_1() {
+    use std::fs;
+    use std::path::PathBuf;
+    use crate::server::query::{self, Command};
+    let tmp = tempfile::tempdir().unwrap();
+    let _store = Store::new(tmp.path()).unwrap();
+    let shared = SharedStore::new(tmp.path()).unwrap();
+
+    // Locate system view SQL directory relative to project root
+    let mut root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    root.push("scripts");
+    root.push("system_views");
+    if !root.exists() { return; }
+
+    fn gather_sql_files(dir: &PathBuf, out: &mut Vec<PathBuf>) {
+        if let Ok(rd) = fs::read_dir(dir) {
+            for e in rd.flatten() {
+                let p = e.path();
+                if p.is_dir() { gather_sql_files(&p, out); }
+                else if p.extension().and_then(|s| s.to_str()).map(|x| x.eq_ignore_ascii_case("sql")).unwrap_or(false) {
+                    out.push(p);
+                }
+            }
+        }
+    }
+
+    let mut files: Vec<PathBuf> = Vec::new();
+    gather_sql_files(&root, &mut files);
+    for f in files {
+        let sql = fs::read_to_string(&f).unwrap_or_default();
+        if sql.trim().is_empty() { continue; }
+        // If the SQL already contains a LIMIT, use as-is; else append LIMIT 1
+        let needs_limit = !sql.to_ascii_lowercase().contains(" limit ");
+        let run_sql = if needs_limit { format!("{} LIMIT 1", sql.trim_end_matches(';')) } else { sql.clone() };
+        if let Ok(Command::Select(sel)) = query::parse(&run_sql) {
+            let _ = run_select(&shared, &sel).expect(&format!("System view SQL failed to execute: {}", f.display()));
+        } else {
+            panic!("Failed to parse system view SQL: {}", f.display());
+        }
+    }
+}
+
+#[test]
 fn test_pg_catalog_pg_get_viewdef() {
     // Test pg_catalog.pg_get_viewdef(oid) function
     // SQLAlchemy calls this to get view definitions

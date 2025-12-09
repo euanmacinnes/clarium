@@ -182,7 +182,7 @@ pub fn do_create_table(store: &SharedStore, q: &str) -> Result<()> {
         schema_entries.push((n, key));
     }
     tprintln!("[CREATE] do_create_table: final schema_entries count={}", schema_entries.len());
-    // Create directory and schema.json
+    // Create directory and schema.json (nested) via centralized schema save
     let ident_norm = ident.trim().trim_matches('"');
     // Qualify with current session defaults only if not already fully qualified (3+ parts)
     let normalized = ident_norm.replace('\\', "/");
@@ -200,17 +200,24 @@ pub fn do_create_table(store: &SharedStore, q: &str) -> Result<()> {
     let dir = std::path::Path::new(&root).join(db_path.replace('/', std::path::MAIN_SEPARATOR.to_string().as_str()));
     debug!(target: "clarium::exec", "do_create_table: dir='{}' (db_path='{}')", dir.display(), db_path);
     std::fs::create_dir_all(&dir).with_context(|| format!("create table dir {}", dir.display()))?;
-    let mut map = serde_json::Map::new();
-    for (k, t) in schema_entries.into_iter() { 
-        tprintln!("[CREATE] do_create_table: inserting into map key='{}' value='{}'", k, t);
-        map.insert(k, serde_json::Value::String(t)); 
+    // Build nested schema map using centralized dtype mapping
+    use std::collections::{HashMap, HashSet};
+    let mut schema_map: HashMap<String, polars::prelude::DataType> = HashMap::new();
+    for (k, t) in schema_entries.into_iter() {
+        let dt = crate::storage::schema::str_to_dtype(&t);
+        tprintln!("[CREATE] do_create_table: adding to schema_map key='{}' dtype='{}'", k, crate::storage::schema::dtype_to_str(&dt));
+        schema_map.insert(k, dt);
     }
-    if has_primary_key { map.insert("PRIMARY".to_string(), serde_json::Value::String("marker".to_string())); }
-    let sj = dir.join("schema.json");
-    let json_str = serde_json::to_string_pretty(&serde_json::Value::Object(map.clone()))?;
-    tprintln!("[CREATE] do_create_table: writing schema.json to '{}' content='{}'", sj.display(), json_str);
-    std::fs::write(&sj, &json_str)?;
-    debug!(target: "clarium::exec", "do_create_table: wrote schema.json at '{}'", sj.display());
+    // Locks: if PRIMARY KEY detected, lock those columns if specified explicitly in column list later; for now, we just set PRIMARY marker separately
+    let locks: HashSet<String> = HashSet::new();
+    // Persist via centralized writer; this also ensures { columns: {...}, locks: [], tableType }
+    crate::storage::schema::save_schema_with_locks(&store.0.lock(), &db_path, &schema_map, &locks)?;
+    // If PRIMARY KEY was present at DDL time, set metadata markers without disturbing nested columns
+    if has_primary_key {
+        // We don't parse explicit PK column list yet; pass empty list to trigger PRIMARY marker
+        let _ = store.0.lock().set_table_metadata(&db_path, Some(Vec::<String>::new()), None);
+    }
+    debug!(target: "clarium::exec", "do_create_table: wrote nested schema via centralized save at '{}'", dir.display());
     Ok(())
 }
 

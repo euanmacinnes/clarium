@@ -27,7 +27,7 @@ use tracing::debug;
 
 mod paths;
 pub mod kv;
-mod schema;
+pub mod schema;
 mod io;
 
 /// Core on-disk storage handle for a clarium table directory tree.

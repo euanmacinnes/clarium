@@ -440,6 +440,8 @@ impl SharedStore {
         // One-time schema migration on startup for this root: upgrade legacy schema.json files
         // to nested { columns: {...}, locks: [...] } and ensure explicit tableType.
         let _ = crate::storage::schema::migrate_all_schemas_for_root(&root_path);
+        // Load system view SQLs into in-memory registry and persist manifest
+        crate::system_views::load_system_views_for_root(&root_path);
         // Ensure a registry exists for this root (idempotent)
         let _ = kv_registry_for_root(&root_path);
         Ok(s)

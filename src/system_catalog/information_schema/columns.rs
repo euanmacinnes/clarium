@@ -82,12 +82,14 @@ impl SystemTable for IColumns {
                                         for (cname, ctype) in cols {
                                             schema_col.push(schema_name.clone());
                                             table_col.push(tname.clone());
+                                            let is_time_col = is_time_table && cname == "_time";
                                             col_name.push(cname);
                                             ord_pos.push(ord);
                                             let (dt, udt) = map_dtype(&ctype);
                                             data_type.push(dt.to_string());
                                             udt_name.push(udt.to_string());
-                                            is_null.push("YES".to_string());
+                                            // Expose _time as NOT NULL for time tables
+                                            is_null.push(if is_time_col { "NO".to_string() } else { "YES".to_string() });
                                             ord += 1;
                                         }
                                     }

@@ -2,6 +2,7 @@ use polars::prelude::{DataFrame, Series, NamedFrom};
 use crate::system_catalog::registry::{SystemTable, ColumnDef, ColType};
 use crate::system_catalog::registry;
 use crate::storage::SharedStore;
+use crate::tprintln;
 use std::path::{Path, PathBuf};
 use serde_json::Value as JsonValue;
 
@@ -18,10 +19,12 @@ impl SystemTable for IViews {
     fn name(&self) -> &'static str { "views" }
     fn columns(&self) -> &'static [ColumnDef] { COLS }
     fn build(&self, store: &SharedStore) -> Option<DataFrame> {
+        // Build by merging legacy .view files and in-memory registry of system views
         let mut schemas: Vec<String> = Vec::new();
         let mut names: Vec<String> = Vec::new();
         let mut defs: Vec<String> = Vec::new();
 
+        // 1) Legacy user-created views: scan <db>/<schema>/*.view JSON files
         let root = store.root_path();
         if let Ok(dbs) = std::fs::read_dir(&root) {
             for db_ent in dbs.flatten() {
@@ -59,6 +62,15 @@ impl SystemTable for IViews {
             }
         }
 
+        // 2) System views loaded from .system folder
+        for v in crate::system_views::list_views().into_iter() {
+            if v.schema.as_str() != "information_schema" { continue; }
+            schemas.push(v.schema);
+            names.push(v.name);
+            defs.push(v.sql);
+        }
+
+        tprintln!("[loader] information_schema.views built: rows={}", schemas.len());
         DataFrame::new(vec![
             Series::new("table_schema".into(), schemas).into(),
             Series::new("table_name".into(), names).into(),
