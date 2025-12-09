@@ -77,6 +77,16 @@ impl SystemTable for ITables {
             }
         }
 
+        // 3) System views from registry: add as VIEW rows
+        for v in crate::system_views::list_views().into_iter() {
+            let key = (v.schema.clone(), v.name.clone());
+            if seen.insert(key.clone()) {
+                schema_col.push(key.0);
+                table_col.push(key.1);
+                type_col.push("VIEW".to_string());
+            }
+        }
+
         DataFrame::new(vec![
             Series::new("table_schema".into(), schema_col).into(),
             Series::new("table_name".into(), table_col).into(),

@@ -296,6 +296,13 @@ fn main() -> Result<()> {
     let mut connect_db: Option<String> = None;
     let mut connect_schema: Option<String> = None;
 
+    // System view generator flags
+    let mut gen_system_views: bool = false;
+    let mut gen_plans_dir: Option<String> = None;
+    let mut gen_out_dir: Option<String> = None;
+    let mut gen_overwrite: bool = false;
+    let mut gen_dry_run: bool = false;
+
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
@@ -335,6 +342,18 @@ fn main() -> Result<()> {
                 i += 2; continue;
             }
             "--repl" => { repl = true; i += 1; continue; }
+            // --- System .view generator flags ---
+            "--gen-system-views" => { gen_system_views = true; i += 1; continue; }
+            "--plans-dir" => {
+                if i + 1 >= args.len() { eprintln!("--plans-dir requires a value"); print_usage(&program); std::process::exit(2); }
+                gen_plans_dir = Some(args[i+1].clone()); i += 2; continue;
+            }
+            "--out-dir" => {
+                if i + 1 >= args.len() { eprintln!("--out-dir requires a value"); print_usage(&program); std::process::exit(2); }
+                gen_out_dir = Some(args[i+1].clone()); i += 2; continue;
+            }
+            "--overwrite" => { gen_overwrite = true; i += 1; continue; }
+            "--dry-run" => { gen_dry_run = true; i += 1; continue; }
             "-h" | "--help" => {
                 print_usage(&program);
                 return Ok(());
@@ -357,6 +376,38 @@ fn main() -> Result<()> {
 
     // Ensure root directory exists (create if missing for local mode)
     if let Err(e) = fs::create_dir_all(&root_path) { eprintln!("Failed to ensure root directory '{}': {}", root_path, e); }
+
+    // Command-argument-gated: generate system .view files from plans markdown and exit
+    if gen_system_views {
+        let plans_dir = gen_plans_dir.unwrap_or_else(|| {
+            // default to ./plans (scan recursively) to cover "plans/postgres system objects"
+            "plans".to_string()
+        });
+        let out_dir = gen_out_dir.unwrap_or_else(|| {
+            // default to repo scripts/system_views
+            if cfg!(windows) { "scripts\\system_views".to_string() } else { "scripts/system_views".to_string() }
+        });
+        let opts = clarium::tools::viewgen::GenOptions {
+            plans_dir: std::path::PathBuf::from(&plans_dir),
+            out_dir: std::path::PathBuf::from(&out_dir),
+            overwrite: gen_overwrite,
+            dry_run: gen_dry_run,
+        };
+        match clarium::tools::viewgen::generate_system_views(&opts) {
+            Ok(n) => {
+                eprintln!("[viewgen] generated {} .view file(s) from '{}', output to '{}'{}{}",
+                    n, plans_dir, out_dir,
+                    if gen_overwrite { " (overwrite)" } else { "" },
+                    if gen_dry_run { " [dry-run]" } else { "" }
+                );
+                return Ok(());
+            }
+            Err(e) => {
+                eprintln!("[viewgen] error: {}", e);
+                std::process::exit(1);
+            }
+        }
+    }
 
     // Build store for local mode
     let store = SharedStore::new(&root_path).with_context(|| format!("Failed to open store at {}", root_path))?;

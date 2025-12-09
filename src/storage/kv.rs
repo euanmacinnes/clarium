@@ -444,13 +444,22 @@ impl SharedStore {
         crate::system_views::load_system_views_for_root(&root_path);
         // Seed UDF scripts into <root>/.system/udf from repo scripts if missing
         crate::system_views::seed_udf_into_root(&root_path);
-        // Initialize global ScriptRegistry once and load seeded UDFs so they are available for queries
+        // Initialize and populate a ScriptRegistry, ensuring the GLOBAL_REG is updated.
+        // If the global registry is not yet set, we set it and then load scripts into the same instance.
+        // If it's already set by another thread/instance, we still load into our local registry and then merge
+        // into the global one to make scripts visible process-wide.
         if let Ok(reg) = crate::scripts::ScriptRegistry::new() {
-            crate::scripts::init_script_registry_once(reg.clone());
+            let was_set = crate::scripts::init_script_registry_once(reg.clone());
             let udf_root = crate::system_paths::udf_root(&root_path);
+            // Make this UDF root visible to auto-loader resolution paths
+            crate::scripts::register_udf_root(&udf_root);
             let _ = crate::scripts::load_all_scripts_for_schema(&reg, &udf_root);
             // Also load global defaults from repo scripts to keep compatibility
             let _ = crate::scripts::load_global_default_scripts(&reg);
+            if !was_set {
+                // Merge newly loaded scripts/metadata into the existing global registry
+                crate::scripts::init_script_registry(reg.clone());
+            }
         }
         // Ensure a registry exists for this root (idempotent)
         let _ = kv_registry_for_root(&root_path);

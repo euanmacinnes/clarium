@@ -122,6 +122,29 @@ impl SystemTable for IColumns {
             }
         }
 
+        // 3) System views from registry: include their columns too
+        let views = crate::system_views::list_views();
+        for v in views.iter() {
+            let mut ord = 1i32;
+            for c in v.columns.iter() {
+                schema_col.push(v.schema.clone());
+                table_col.push(v.name.clone());
+                col_name.push(c.name.clone());
+                ord_pos.push(ord);
+                // Prefer explicit udt_name if present in .view; otherwise map from data_type
+                let (dt, udt) = if let Some(udt) = &c.udt_name {
+                    (c.data_type.as_str(), udt.as_str())
+                } else {
+                    map_dtype(&c.data_type)
+                };
+                data_type.push(dt.to_string());
+                // View columns are nullable by default
+                is_null.push("YES".to_string());
+                udt_name.push(udt.to_string());
+                ord += 1;
+            }
+        }
+
         DataFrame::new(vec![
             Series::new("table_schema".into(), schema_col).into(),
             Series::new("table_name".into(), table_col).into(),

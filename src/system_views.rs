@@ -161,9 +161,9 @@ pub fn seed_udf_into_root(root: &Path) {
                 let fname = p.file_name().unwrap();
                 let tgt = dst.join(fname);
                 if !tgt.exists() {
-                    if fs::copy(&p, &tgt).is_ok() {
-                        tprintln!("[udf] seeded '{}' -> '{}'", p.display(), tgt.display());
-                    }
+//                     if fs::copy(&p, &tgt).is_ok() {
+//                         tprintln!("[udf] seeded '{}' -> '{}'", p.display(), tgt.display());
+//                     }
                 }
             }
         }

@@ -736,6 +736,24 @@ impl ScriptRegistry {
                     let snap = self.debug_snapshot();
                     tracing::debug!(target: "clarium::udf", "UDF lookup miss: '{}' registry-snapshot: {}", name, snap);
                 }
+                // First attempt: the registry may contain the function source but the current
+                // prepared Lua VM was created before it was added. Try to inject from registry.
+                if let Some(code) = { self.inner.lock().get(&lname).cloned() } {
+                    if let Err(e) = lua.load(code.as_str()).exec() {
+                        tracing::debug!(target: "clarium::udf", "UDF '{}' inject-from-registry failed: {}", name, e);
+                    } else {
+                        // Retry lookup after injecting
+                        let value2: mlua::Value = globals.get(lname.as_str())
+                            .map_err(|e| anyhow!("UDF '{}' error: {}", name, e))?;
+                        if !value2.is_nil() {
+                            let func: mlua::Function = match value2 {
+                                mlua::Value::Function(f) => f,
+                                _ => return Err(anyhow!("UDF '{}' is not a function", name)),
+                            };
+                            return f(lua, func).map_err(|e| anyhow!("UDF '{}' error: {}", name, e));
+                        }
+                    }
+                }
                 // Attempt to auto-load from disk if present in any global scripts folder.
                 if let Some(code) = self.try_load_script_from_global_scripts(name)? {
                     // Load into the current Lua VM for immediate availability
@@ -952,6 +970,9 @@ pub fn global_scripts_roots() -> Vec<PathBuf> {
     if let Ok(cwd) = std::env::current_dir() {
         v.push(cwd.join("scripts"));
     }
+    // Include any extra roots registered by active stores, typically `<db_root>/.system/udf`.
+    // These already contain subfolders like `scalars/`, `aggregates/`, etc.
+    for r in extra_script_roots() { v.push(r); }
     v
 }
 
@@ -1138,6 +1159,18 @@ pub fn init_script_registry_once(reg: ScriptRegistry) -> bool {
         GLOBAL_REG_GEN.fetch_add(1, Ordering::Relaxed);
         true
     } else {
+        // Already initialized: merge new scripts/meta into the existing registry
+        if let Some(existing) = w.as_ref() {
+            let scripts = reg.inner.lock();
+            for (name, code) in scripts.iter() {
+                let _ = existing.load_script_text(name, code);
+            }
+            let metas = reg.meta.lock();
+            for (name, meta) in metas.iter() {
+                existing.set_meta(name, meta.clone());
+            }
+            GLOBAL_REG_GEN.fetch_add(1, Ordering::Relaxed);
+        }
         false
     }
 }
@@ -1166,4 +1199,26 @@ static GLOBAL_REG_GEN: once_cell::sync::Lazy<AtomicU64> = once_cell::sync::Lazy:
 
 /// Return the current global registry generation (monotonic counter).
 pub fn script_registry_generation() -> u64 { GLOBAL_REG_GEN.load(Ordering::Relaxed) }
+
+// --- Additional script roots (database-root based) ---
+// Some tests and runtime code seed UDFs into per-database roots under `<db_root>/.system/udf`.
+// To allow late auto-loading when a function is first referenced, we keep a list of extra
+// script roots contributed by active stores. These are probed alongside the standard
+// global candidates (exe_dir/scripts, cwd/scripts).
+static EXTRA_SCRIPT_ROOTS: once_cell::sync::Lazy<parking_lot::RwLock<Vec<PathBuf>>> =
+    once_cell::sync::Lazy::new(|| parking_lot::RwLock::new(Vec::new()));
+
+/// Register an additional scripts root (typically `<db_root>/.system/udf`).
+/// Idempotent: duplicate registrations are ignored.
+pub fn register_udf_root(dir: &Path) {
+    if dir.as_os_str().is_empty() { return; }
+    let mut w = EXTRA_SCRIPT_ROOTS.write();
+    if !w.iter().any(|p| p == dir) {
+        w.push(dir.to_path_buf());
+        debug!("[UDF LOAD] registered extra UDF root: {}", dir.display());
+    }
+}
+
+/// Snapshot the currently registered extra script roots.
+fn extra_script_roots() -> Vec<PathBuf> { EXTRA_SCRIPT_ROOTS.read().clone() }
 

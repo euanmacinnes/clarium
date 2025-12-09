@@ -11,6 +11,7 @@ pub mod lua_bc;
 #[cfg(feature = "pgwire")]
 pub mod pgwire_server;
 pub mod system_views;
+pub mod tools;
 
 // Test-only printing helper: expands to tprintln! during tests and is absent otherwise.
 // Usage in tests: tprintln!("debug: {}", value);
