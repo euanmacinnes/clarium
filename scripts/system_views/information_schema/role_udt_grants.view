@@ -1,0 +1,42 @@
+{
+  "columns": [
+    {
+      "data_type": "text",
+      "name": "grantor",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "grantee",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "udt_catalog",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "udt_schema",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "udt_name",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "privilege_type",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "is_grantable",
+      "udt_name": "text"
+    }
+  ],
+  "definition_sql": "SELECT udt_privileges.grantor,\n    udt_privileges.grantee,\n    udt_privileges.udt_catalog,\n    udt_privileges.udt_schema,\n    udt_privileges.udt_name,\n    udt_privileges.privilege_type,\n    udt_privileges.is_grantable\n   FROM information_schema.udt_privileges\n  WHERE (udt_privileges.grantor::name IN ( SELECT enabled_roles.role_name\n           FROM information_schema.enabled_roles)) OR (udt_privileges.grantee::name IN ( SELECT enabled_roles.role_name\n           FROM information_schema.enabled_roles))",
+  "name": "role_udt_grants",
+  "schema": "information_schema"
+}

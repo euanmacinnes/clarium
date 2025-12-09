@@ -1,0 +1,42 @@
+{
+  "columns": [
+    {
+      "data_type": "text",
+      "name": "sourcefile",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "sourceline",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "seqno",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "name",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "setting",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "applied",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "error",
+      "udt_name": "text"
+    }
+  ],
+  "definition_sql": "SELECT a.sourcefile,\n    a.sourceline,\n    a.seqno,\n    a.name,\n    a.setting,\n    a.applied,\n    a.error\n   FROM pg_show_all_file_settings() a(sourcefile, sourceline, seqno, name, setting, applied, error)",
+  "name": "pg_file_settings",
+  "schema": "pg_catalog"
+}

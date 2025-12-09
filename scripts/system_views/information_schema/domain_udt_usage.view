@@ -1,0 +1,37 @@
+{
+  "columns": [
+    {
+      "data_type": "text",
+      "name": "UDT_CATALOG",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "UDT_SCHEMA",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "UDT_NAME",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "DOMAIN_CATALOG",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "DOMAIN_SCHEMA",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "DOMAIN_NAME",
+      "udt_name": "text"
+    }
+  ],
+  "definition_sql": "SELECT current_database()::information_schema.sql_identifier AS udt_catalog,\n    nbt.nspname::information_schema.sql_identifier AS udt_schema,\n    bt.typname::information_schema.sql_identifier AS udt_name,\n    current_database()::information_schema.sql_identifier AS domain_catalog,\n    nt.nspname::information_schema.sql_identifier AS domain_schema,\n    t.typname::information_schema.sql_identifier AS domain_name\n   FROM pg_type t,\n    pg_namespace nt,\n    pg_type bt,\n    pg_namespace nbt\n  WHERE t.typnamespace = nt.oid AND t.typbasetype = bt.oid AND bt.typnamespace = nbt.oid AND t.typtype = 'd'::\"char\" AND pg_has_role(bt.typowner, 'USAGE'::text)",
+  "name": "domain_udt_usage",
+  "schema": "information_schema"
+}

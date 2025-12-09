@@ -1,0 +1,37 @@
+{
+  "columns": [
+    {
+      "data_type": "text",
+      "name": "TABLE_CATALOG",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "TABLE_SCHEMA",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "TABLE_NAME",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "CONSTRAINT_CATALOG",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "CONSTRAINT_SCHEMA",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "CONSTRAINT_NAME",
+      "udt_name": "text"
+    }
+  ],
+  "definition_sql": "SELECT current_database()::information_schema.sql_identifier AS table_catalog,\n    nr.nspname::information_schema.sql_identifier AS table_schema,\n    r.relname::information_schema.sql_identifier AS table_name,\n    current_database()::information_schema.sql_identifier AS constraint_catalog,\n    nc.nspname::information_schema.sql_identifier AS constraint_schema,\n    c.conname::information_schema.sql_identifier AS constraint_name\n   FROM pg_constraint c,\n    pg_namespace nc,\n    pg_class r,\n    pg_namespace nr\n  WHERE c.connamespace = nc.oid AND r.relnamespace = nr.oid AND (c.contype = 'f'::\"char\" AND c.confrelid = r.oid OR (c.contype = ANY (ARRAY['p'::\"char\", 'u'::\"char\"])) AND c.conrelid = r.oid) AND (r.relkind = ANY (ARRAY['r'::\"char\", 'p'::\"char\"])) AND pg_has_role(r.relowner, 'USAGE'::text)",
+  "name": "constraint_table_usage",
+  "schema": "information_schema"
+}

@@ -1,0 +1,42 @@
+{
+  "columns": [
+    {
+      "data_type": "text",
+      "name": "name",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "statement",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "prepare_time",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "parameter_types",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "from_sql",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "generic_plans",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "custom_plans",
+      "udt_name": "text"
+    }
+  ],
+  "definition_sql": "SELECT p.name,\n    p.statement,\n    p.prepare_time,\n    p.parameter_types,\n    p.from_sql,\n    p.generic_plans,\n    p.custom_plans\n   FROM pg_prepared_statement() p(name, statement, prepare_time, parameter_types, from_sql, generic_plans, custom_plans)",
+  "name": "pg_prepared_statements",
+  "schema": "pg_catalog"
+}

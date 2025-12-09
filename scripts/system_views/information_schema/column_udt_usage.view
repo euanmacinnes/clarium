@@ -1,0 +1,52 @@
+{
+  "columns": [
+    {
+      "data_type": "text",
+      "name": "UDT_CATALOG",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "nspname",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "UDT_SCHEMA",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "typname",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "UDT_NAME",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "TABLE_CATALOG",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "TABLE_SCHEMA",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "TABLE_NAME",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "COLUMN_NAME",
+      "udt_name": "text"
+    }
+  ],
+  "definition_sql": "SELECT current_database()::information_schema.sql_identifier AS udt_catalog,\n    COALESCE(nbt.nspname, nt.nspname)::information_schema.sql_identifier AS udt_schema,\n    COALESCE(bt.typname, t.typname)::information_schema.sql_identifier AS udt_name,\n    current_database()::information_schema.sql_identifier AS table_catalog,\n    nc.nspname::information_schema.sql_identifier AS table_schema,\n    c.relname::information_schema.sql_identifier AS table_name,\n    a.attname::information_schema.sql_identifier AS column_name\n   FROM pg_attribute a,\n    pg_class c,\n    pg_namespace nc,\n    pg_type t\n     JOIN pg_namespace nt ON t.typnamespace = nt.oid\n     LEFT JOIN (pg_type bt\n     JOIN pg_namespace nbt ON bt.typnamespace = nbt.oid) ON t.typtype = 'd'::\"char\" AND t.typbasetype = bt.oid\n  WHERE a.attrelid = c.oid AND a.atttypid = t.oid AND nc.oid = c.relnamespace AND a.attnum > 0 AND NOT a.attisdropped AND (c.relkind = ANY (ARRAY['r'::\"char\", 'v'::\"char\", 'f'::\"char\", 'p'::\"char\"])) AND pg_has_role(COALESCE(bt.typowner, t.typowner), 'USAGE'::text)",
+  "name": "column_udt_usage",
+  "schema": "information_schema"
+}

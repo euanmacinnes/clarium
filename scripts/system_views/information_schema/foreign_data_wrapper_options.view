@@ -1,0 +1,27 @@
+{
+  "columns": [
+    {
+      "data_type": "text",
+      "name": "foreign_data_wrapper_catalog",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "foreign_data_wrapper_name",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "OPTION_NAME",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "OPTION_VALUE",
+      "udt_name": "text"
+    }
+  ],
+  "definition_sql": "SELECT w.foreign_data_wrapper_catalog,\n    w.foreign_data_wrapper_name,\n    (pg_options_to_table(w.fdwoptions)).option_name::information_schema.sql_identifier AS option_name,\n    (pg_options_to_table(w.fdwoptions)).option_value::information_schema.character_data AS option_value\n   FROM information_schema._pg_foreign_data_wrappers w",
+  "name": "foreign_data_wrapper_options",
+  "schema": "information_schema"
+}

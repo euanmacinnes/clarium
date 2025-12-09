@@ -1,0 +1,42 @@
+{
+  "columns": [
+    {
+      "data_type": "text",
+      "name": "foreign_server_catalog",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "foreign_server_name",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "foreign_data_wrapper_catalog",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "foreign_data_wrapper_name",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "foreign_server_type",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "foreign_server_version",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "authorization_identifier",
+      "udt_name": "text"
+    }
+  ],
+  "definition_sql": "SELECT _pg_foreign_servers.foreign_server_catalog,\n    _pg_foreign_servers.foreign_server_name,\n    _pg_foreign_servers.foreign_data_wrapper_catalog,\n    _pg_foreign_servers.foreign_data_wrapper_name,\n    _pg_foreign_servers.foreign_server_type,\n    _pg_foreign_servers.foreign_server_version,\n    _pg_foreign_servers.authorization_identifier\n   FROM information_schema._pg_foreign_servers",
+  "name": "foreign_servers",
+  "schema": "information_schema"
+}

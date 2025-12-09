@@ -1,0 +1,32 @@
+{
+  "columns": [
+    {
+      "data_type": "text",
+      "name": "relid",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "schemaname",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "relname",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "blks_read",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "blks_hit",
+      "udt_name": "text"
+    }
+  ],
+  "definition_sql": "SELECT pg_statio_all_sequences.relid,\n    pg_statio_all_sequences.schemaname,\n    pg_statio_all_sequences.relname,\n    pg_statio_all_sequences.blks_read,\n    pg_statio_all_sequences.blks_hit\n   FROM pg_statio_all_sequences\n  WHERE (pg_statio_all_sequences.schemaname = ANY (ARRAY['pg_catalog'::name, 'information_schema'::name])) OR pg_statio_all_sequences.schemaname ~ '^pg_toast'::text",
+  "name": "pg_statio_sys_sequences",
+  "schema": "pg_catalog"
+}

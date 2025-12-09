@@ -1,0 +1,22 @@
+{
+  "columns": [
+    {
+      "data_type": "text",
+      "name": "authorization_identifier",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "foreign_server_catalog",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "foreign_server_name",
+      "udt_name": "text"
+    }
+  ],
+  "definition_sql": "SELECT _pg_user_mappings.authorization_identifier,\n    _pg_user_mappings.foreign_server_catalog,\n    _pg_user_mappings.foreign_server_name\n   FROM information_schema._pg_user_mappings",
+  "name": "user_mappings",
+  "schema": "information_schema"
+}

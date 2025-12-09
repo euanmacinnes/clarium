@@ -1,0 +1,27 @@
+{
+  "columns": [
+    {
+      "data_type": "text",
+      "name": "name",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "off",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "size",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "allocated_size",
+      "udt_name": "text"
+    }
+  ],
+  "definition_sql": "SELECT pg_get_shmem_allocations.name,\n    pg_get_shmem_allocations.off,\n    pg_get_shmem_allocations.size,\n    pg_get_shmem_allocations.allocated_size\n   FROM pg_get_shmem_allocations() pg_get_shmem_allocations(name, off, size, allocated_size)",
+  "name": "pg_shmem_allocations",
+  "schema": "pg_catalog"
+}

@@ -1,0 +1,32 @@
+{
+  "columns": [
+    {
+      "data_type": "text",
+      "name": "foreign_table_catalog",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "foreign_table_schema",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "foreign_table_name",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "OPTION_NAME",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "OPTION_VALUE",
+      "udt_name": "text"
+    }
+  ],
+  "definition_sql": "SELECT t.foreign_table_catalog,\n    t.foreign_table_schema,\n    t.foreign_table_name,\n    (pg_options_to_table(t.ftoptions)).option_name::information_schema.sql_identifier AS option_name,\n    (pg_options_to_table(t.ftoptions)).option_value::information_schema.character_data AS option_value\n   FROM information_schema._pg_foreign_tables t",
+  "name": "foreign_table_options",
+  "schema": "information_schema"
+}

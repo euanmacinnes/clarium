@@ -1,0 +1,182 @@
+{
+  "columns": [
+    {
+      "data_type": "text",
+      "name": "DOMAIN_CATALOG",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "DOMAIN_SCHEMA",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "DOMAIN_NAME",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "typbasetype",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "DATA_TYPE",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "typbasetype",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "CHARACTER_MAXIMUM_LENGTH",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "typbasetype",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "CHARACTER_OCTET_LENGTH",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "CHARACTER_SET_CATALOG",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "CHARACTER_SET_SCHEMA",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "CHARACTER_SET_NAME",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "COLLATION_CATALOG",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "COLLATION_SCHEMA",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "COLLATION_NAME",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "typbasetype",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "NUMERIC_PRECISION",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "typbasetype",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "NUMERIC_PRECISION_RADIX",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "typbasetype",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "NUMERIC_SCALE",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "typbasetype",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "DATETIME_PRECISION",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "typbasetype",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "INTERVAL_TYPE",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "INTERVAL_PRECISION",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "DOMAIN_DEFAULT",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "UDT_CATALOG",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "UDT_SCHEMA",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "UDT_NAME",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "SCOPE_CATALOG",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "SCOPE_SCHEMA",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "SCOPE_NAME",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "MAXIMUM_CARDINALITY",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "DTD_IDENTIFIER",
+      "udt_name": "text"
+    }
+  ],
+  "definition_sql": "SELECT current_database()::information_schema.sql_identifier AS domain_catalog,\n    nt.nspname::information_schema.sql_identifier AS domain_schema,\n    t.typname::information_schema.sql_identifier AS domain_name,\n        CASE\n            WHEN t.typelem <> 0::oid AND t.typlen = '-1'::integer THEN 'ARRAY'::text\n            WHEN nbt.nspname = 'pg_catalog'::name THEN format_type(t.typbasetype, NULL::integer)\n            ELSE 'USER-DEFINED'::text\n        END::information_schema.character_data AS data_type,\n    information_schema._pg_char_max_length(t.typbasetype, t.typtypmod)::information_schema.cardinal_number AS character_maximum_length,\n    information_schema._pg_char_octet_length(t.typbasetype, t.typtypmod)::information_schema.cardinal_number AS character_octet_length,\n    NULL::name::information_schema.sql_identifier AS character_set_catalog,\n    NULL::name::information_schema.sql_identifier AS character_set_schema,\n    NULL::name::information_schema.sql_identifier AS character_set_name,\n        CASE\n            WHEN nco.nspname IS NOT NULL THEN current_database()\n            ELSE NULL::name\n        END::information_schema.sql_identifier AS collation_catalog,\n    nco.nspname::information_schema.sql_identifier AS collation_schema,\n    co.collname::information_schema.sql_identifier AS collation_name,\n    information_schema._pg_numeric_precision(t.typbasetype, t.typtypmod)::information_schema.cardinal_number AS numeric_precision,\n    information_schema._pg_numeric_precision_radix(t.typbasetype, t.typtypmod)::information_schema.cardinal_number AS numeric_precision_radix,\n    information_schema._pg_numeric_scale(t.typbasetype, t.typtypmod)::information_schema.cardinal_number AS numeric_scale,\n    information_schema._pg_datetime_precision(t.typbasetype, t.typtypmod)::information_schema.cardinal_number AS datetime_precision,\n    information_schema._pg_interval_type(t.typbasetype, t.typtypmod)::information_schema.character_data AS interval_type,\n    NULL::integer::information_schema.cardinal_number AS interval_precision,\n    t.typdefault::information_schema.character_data AS domain_default,\n    current_database()::information_schema.sql_identifier AS udt_catalog,\n    nbt.nspname::information_schema.sql_identifier AS udt_schema,\n    bt.typname::information_schema.sql_identifier AS udt_name,\n    NULL::name::information_schema.sql_identifier AS scope_catalog,\n    NULL::name::information_schema.sql_identifier AS scope_schema,\n    NULL::name::information_schema.sql_identifier AS scope_name,\n    NULL::integer::information_schema.cardinal_number AS maximum_cardinality,\n    1::information_schema.sql_identifier AS dtd_identifier\n   FROM pg_type t\n     JOIN pg_namespace nt ON t.typnamespace = nt.oid\n     JOIN (pg_type bt\n     JOIN pg_namespace nbt ON bt.typnamespace = nbt.oid) ON t.typbasetype = bt.oid AND t.typtype = 'd'::\"char\"\n     LEFT JOIN (pg_collation co\n     JOIN pg_namespace nco ON co.collnamespace = nco.oid) ON t.typcollation = co.oid AND (nco.nspname <> 'pg_catalog'::name OR co.collname <> 'default'::name)\n  WHERE pg_has_role(t.typowner, 'USAGE'::text) OR has_type_privilege(t.oid, 'USAGE'::text)",
+  "name": "domains",
+  "schema": "information_schema"
+}

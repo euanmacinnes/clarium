@@ -1,0 +1,77 @@
+{
+  "columns": [
+    {
+      "data_type": "text",
+      "name": "SEQUENCE_CATALOG",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "SEQUENCE_SCHEMA",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "SEQUENCE_NAME",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "seqtypid",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "DATA_TYPE",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "seqtypid",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "NUMERIC_PRECISION",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "NUMERIC_PRECISION_RADIX",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "NUMERIC_SCALE",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "START_VALUE",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "MINIMUM_VALUE",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "MAXIMUM_VALUE",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "INCREMENT",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "CYCLE_OPTION",
+      "udt_name": "text"
+    }
+  ],
+  "definition_sql": "SELECT current_database()::information_schema.sql_identifier AS sequence_catalog,\n    nc.nspname::information_schema.sql_identifier AS sequence_schema,\n    c.relname::information_schema.sql_identifier AS sequence_name,\n    format_type(s.seqtypid, NULL::integer)::information_schema.character_data AS data_type,\n    information_schema._pg_numeric_precision(s.seqtypid, '-1'::integer)::information_schema.cardinal_number AS numeric_precision,\n    2::information_schema.cardinal_number AS numeric_precision_radix,\n    0::information_schema.cardinal_number AS numeric_scale,\n    s.seqstart::information_schema.character_data AS start_value,\n    s.seqmin::information_schema.character_data AS minimum_value,\n    s.seqmax::information_schema.character_data AS maximum_value,\n    s.seqincrement::information_schema.character_data AS increment,\n        CASE\n            WHEN s.seqcycle THEN 'YES'::text\n            ELSE 'NO'::text\n        END::information_schema.yes_or_no AS cycle_option\n   FROM pg_namespace nc,\n    pg_class c,\n    pg_sequence s\n  WHERE c.relnamespace = nc.oid AND c.relkind = 'S'::\"char\" AND NOT (EXISTS ( SELECT 1\n           FROM pg_depend\n          WHERE pg_depend.classid = 'pg_class'::regclass::oid AND pg_depend.objid = c.oid AND pg_depend.deptype = 'i'::\"char\")) AND NOT pg_is_other_temp_schema(nc.oid) AND c.oid = s.seqrelid AND (pg_has_role(c.relowner, 'USAGE'::text) OR has_sequence_privilege(c.oid, 'SELECT, UPDATE, USAGE'::text))",
+  "name": "\"sequences\"",
+  "schema": "information_schema"
+}

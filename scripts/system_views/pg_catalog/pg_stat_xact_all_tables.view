@@ -1,0 +1,62 @@
+{
+  "columns": [
+    {
+      "data_type": "text",
+      "name": "RELID",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "SCHEMANAME",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "relname",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "SEQ_SCAN",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "SEQ_TUP_READ",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "IDX_SCAN",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "IDX_TUP_FETCH",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "N_TUP_INS",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "N_TUP_UPD",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "N_TUP_DEL",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "N_TUP_HOT_UPD",
+      "udt_name": "text"
+    }
+  ],
+  "definition_sql": "SELECT c.oid AS relid,\n    n.nspname AS schemaname,\n    c.relname,\n    pg_stat_get_xact_numscans(c.oid) AS seq_scan,\n    pg_stat_get_xact_tuples_returned(c.oid) AS seq_tup_read,\n    sum(pg_stat_get_xact_numscans(i.indexrelid))::bigint AS idx_scan,\n    sum(pg_stat_get_xact_tuples_fetched(i.indexrelid))::bigint + pg_stat_get_xact_tuples_fetched(c.oid) AS idx_tup_fetch,\n    pg_stat_get_xact_tuples_inserted(c.oid) AS n_tup_ins,\n    pg_stat_get_xact_tuples_updated(c.oid) AS n_tup_upd,\n    pg_stat_get_xact_tuples_deleted(c.oid) AS n_tup_del,\n    pg_stat_get_xact_tuples_hot_updated(c.oid) AS n_tup_hot_upd\n   FROM pg_class c\n     LEFT JOIN pg_index i ON c.oid = i.indrelid\n     LEFT JOIN pg_namespace n ON n.oid = c.relnamespace\n  WHERE c.relkind = ANY (ARRAY['r'::\"char\", 't'::\"char\", 'm'::\"char\", 'p'::\"char\"])\n  GROUP BY c.oid, n.nspname, c.relname",
+  "name": "pg_stat_xact_all_tables",
+  "schema": "pg_catalog"
+}

@@ -1,0 +1,27 @@
+{
+  "columns": [
+    {
+      "data_type": "text",
+      "name": "SCHEMANAME",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "VIEWNAME",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "VIEWOWNER",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "DEFINITION",
+      "udt_name": "text"
+    }
+  ],
+  "definition_sql": "SELECT n.nspname AS schemaname,\n    c.relname AS viewname,\n    pg_get_userbyid(c.relowner) AS viewowner,\n    pg_get_viewdef(c.oid) AS definition\n   FROM pg_class c\n     LEFT JOIN pg_namespace n ON n.oid = c.relnamespace\n  WHERE c.relkind = 'v'::\"char\"",
+  "name": "pg_views",
+  "schema": "pg_catalog"
+}

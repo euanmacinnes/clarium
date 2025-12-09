@@ -1,0 +1,107 @@
+{
+  "columns": [
+    {
+      "data_type": "text",
+      "name": "pid",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "usesysid",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "USENAME",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "application_name",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "client_addr",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "client_hostname",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "client_port",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "backend_start",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "backend_xmin",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "state",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "sent_lsn",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "write_lsn",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "flush_lsn",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "replay_lsn",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "write_lag",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "flush_lag",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "replay_lag",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "sync_priority",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "sync_state",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "reply_time",
+      "udt_name": "text"
+    }
+  ],
+  "definition_sql": "SELECT s.pid,\n    s.usesysid,\n    u.rolname AS usename,\n    s.application_name,\n    s.client_addr,\n    s.client_hostname,\n    s.client_port,\n    s.backend_start,\n    s.backend_xmin,\n    w.state,\n    w.sent_lsn,\n    w.write_lsn,\n    w.flush_lsn,\n    w.replay_lsn,\n    w.write_lag,\n    w.flush_lag,\n    w.replay_lag,\n    w.sync_priority,\n    w.sync_state,\n    w.reply_time\n   FROM pg_stat_get_activity(NULL::integer) s(datid, pid, usesysid, application_name, state, query, wait_event_type, wait_event, xact_start, query_start, backend_start, state_change, client_addr, client_hostname, client_port, backend_xid, backend_xmin, backend_type, ssl, sslversion, sslcipher, sslbits, ssl_client_dn, ssl_client_serial, ssl_issuer_dn, gss_auth, gss_princ, gss_enc, leader_pid, query_id)\n     JOIN pg_stat_get_wal_senders() w(pid, state, sent_lsn, write_lsn, flush_lsn, replay_lsn, write_lag, flush_lag, replay_lag, sync_priority, sync_state, reply_time) ON s.pid = w.pid\n     LEFT JOIN pg_authid u ON s.usesysid = u.oid",
+  "name": "pg_stat_replication",
+  "schema": "pg_catalog"
+}

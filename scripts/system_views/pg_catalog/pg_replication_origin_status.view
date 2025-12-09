@@ -1,0 +1,27 @@
+{
+  "columns": [
+    {
+      "data_type": "text",
+      "name": "local_id",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "external_id",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "remote_lsn",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "local_lsn",
+      "udt_name": "text"
+    }
+  ],
+  "definition_sql": "SELECT pg_show_replication_origin_status.local_id,\n    pg_show_replication_origin_status.external_id,\n    pg_show_replication_origin_status.remote_lsn,\n    pg_show_replication_origin_status.local_lsn\n   FROM pg_show_replication_origin_status() pg_show_replication_origin_status(local_id, external_id, remote_lsn, local_lsn)",
+  "name": "pg_replication_origin_status",
+  "schema": "pg_catalog"
+}

@@ -1,0 +1,42 @@
+{
+  "columns": [
+    {
+      "data_type": "text",
+      "name": "FOREIGN_TABLE_CATALOG",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "FOREIGN_TABLE_SCHEMA",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "FOREIGN_TABLE_NAME",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "ftoptions",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "FOREIGN_SERVER_CATALOG",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "FOREIGN_SERVER_NAME",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "AUTHORIZATION_IDENTIFIER",
+      "udt_name": "text"
+    }
+  ],
+  "definition_sql": "SELECT current_database()::information_schema.sql_identifier AS foreign_table_catalog,\n    n.nspname::information_schema.sql_identifier AS foreign_table_schema,\n    c.relname::information_schema.sql_identifier AS foreign_table_name,\n    t.ftoptions,\n    current_database()::information_schema.sql_identifier AS foreign_server_catalog,\n    s.srvname::information_schema.sql_identifier AS foreign_server_name,\n    u.rolname::information_schema.sql_identifier AS authorization_identifier\n   FROM pg_foreign_table t,\n    pg_foreign_server s,\n    pg_foreign_data_wrapper w,\n    pg_authid u,\n    pg_namespace n,\n    pg_class c\n  WHERE w.oid = s.srvfdw AND u.oid = c.relowner AND (pg_has_role(c.relowner, 'USAGE'::text) OR has_table_privilege(c.oid, 'SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER'::text) OR has_any_column_privilege(c.oid, 'SELECT, INSERT, UPDATE, REFERENCES'::text)) AND n.oid = c.relnamespace AND c.oid = t.ftrelid AND c.relkind = 'f'::\"char\" AND s.oid = t.ftserver",
+  "name": "_pg_foreign_tables",
+  "schema": "information_schema"
+}

@@ -1,0 +1,122 @@
+{
+  "columns": [
+    {
+      "data_type": "text",
+      "name": "relid",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "schemaname",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "relname",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "seq_scan",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "seq_tup_read",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "idx_scan",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "idx_tup_fetch",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "n_tup_ins",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "n_tup_upd",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "n_tup_del",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "n_tup_hot_upd",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "n_live_tup",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "n_dead_tup",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "n_mod_since_analyze",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "n_ins_since_vacuum",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "last_vacuum",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "last_autovacuum",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "last_analyze",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "last_autoanalyze",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "vacuum_count",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "autovacuum_count",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "analyze_count",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "autoanalyze_count",
+      "udt_name": "text"
+    }
+  ],
+  "definition_sql": "SELECT pg_stat_all_tables.relid,\n    pg_stat_all_tables.schemaname,\n    pg_stat_all_tables.relname,\n    pg_stat_all_tables.seq_scan,\n    pg_stat_all_tables.seq_tup_read,\n    pg_stat_all_tables.idx_scan,\n    pg_stat_all_tables.idx_tup_fetch,\n    pg_stat_all_tables.n_tup_ins,\n    pg_stat_all_tables.n_tup_upd,\n    pg_stat_all_tables.n_tup_del,\n    pg_stat_all_tables.n_tup_hot_upd,\n    pg_stat_all_tables.n_live_tup,\n    pg_stat_all_tables.n_dead_tup,\n    pg_stat_all_tables.n_mod_since_analyze,\n    pg_stat_all_tables.n_ins_since_vacuum,\n    pg_stat_all_tables.last_vacuum,\n    pg_stat_all_tables.last_autovacuum,\n    pg_stat_all_tables.last_analyze,\n    pg_stat_all_tables.last_autoanalyze,\n    pg_stat_all_tables.vacuum_count,\n    pg_stat_all_tables.autovacuum_count,\n    pg_stat_all_tables.analyze_count,\n    pg_stat_all_tables.autoanalyze_count\n   FROM pg_stat_all_tables\n  WHERE (pg_stat_all_tables.schemaname <> ALL (ARRAY['pg_catalog'::name, 'information_schema'::name])) AND pg_stat_all_tables.schemaname !~ '^pg_toast'::text",
+  "name": "pg_stat_user_tables",
+  "schema": "pg_catalog"
+}

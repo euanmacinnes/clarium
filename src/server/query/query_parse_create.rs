@@ -1,6 +1,30 @@
 use crate::server::query::query_common::*;
 use crate::server::query::*;
 
+fn is_ws(ch: char) -> bool { ch.is_whitespace() }
+
+// Find the "AS" keyword position in a case-insensitive way, tolerating arbitrary
+// whitespace/newlines around it, and ensuring token boundaries (ws before and after).
+fn find_as_token(s: &str) -> Option<usize> {
+    let bytes = s.as_bytes();
+    let mut i = 0usize;
+    while i + 1 < bytes.len() {
+        let c0 = bytes[i] as char;
+        // require token boundary before
+        let before_ok = if i == 0 { true } else { is_ws(bytes[i - 1] as char) };
+        if (c0 == 'A' || c0 == 'a') && before_ok {
+            let c1 = bytes[i + 1] as char;
+            if c1 == 'S' || c1 == 's' {
+                // after must be boundary as well
+                let after_ok = if i + 2 >= bytes.len() { true } else { is_ws(bytes[i + 2] as char) };
+                if after_ok { return Some(i); }
+            }
+        }
+        i += 1;
+    }
+    None
+}
+
 pub fn parse_create(s: &str) -> Result<Command> {
     // CREATE DATABASE <db>
     // CREATE SCHEMA <db>/<schema> | <schema>
@@ -14,20 +38,25 @@ pub fn parse_create(s: &str) -> Result<Command> {
         return Ok(Command::CreateDatabase { name: name.to_string() });
     }
     // CREATE MATCH VIEW <name> AS MATCH ...
-    if up.starts_with("MATCH VIEW ") || up.starts_with("OR ALTER MATCH VIEW ") {
+    if up.starts_with("MATCH VIEW ") || up.starts_with("OR ALTER MATCH VIEW ") || up.starts_with("OR REPLACE MATCH VIEW ") {
         // Normalize optional OR ALTER
         let mut or_alter = false;
         let after = if up.starts_with("OR ALTER MATCH VIEW ") {
             or_alter = true;
             &rest["OR ALTER MATCH VIEW ".len()..]
+        } else if up.starts_with("OR REPLACE MATCH VIEW ") {
+            // treat OR REPLACE as not altering existing semantics here; execution layer can interpret
+            &rest["OR REPLACE MATCH VIEW ".len()..]
         } else {
             &rest["MATCH VIEW ".len()..]
         };
         let after = after.trim();
-        let up_after = after.to_uppercase();
-        let as_pos = up_after.find(" AS ").ok_or_else(|| anyhow::anyhow!("Invalid CREATE MATCH VIEW: expected AS"))?;
+        let as_pos = find_as_token(after).ok_or_else(|| anyhow::anyhow!("Invalid CREATE MATCH VIEW: expected AS"))?;
         let name = after[..as_pos].trim();
-        let body = after[as_pos + 4..].trim();
+        // skip the 2-letter AS and any subsequent whitespace
+        let mut k = as_pos + 2;
+        while k < after.len() && is_ws(after.as_bytes()[k] as char) { k += 1; }
+        let body = after[k..].trim();
         if name.is_empty() { anyhow::bail!("Invalid CREATE MATCH VIEW: missing view name"); }
         if body.is_empty() { anyhow::bail!("Invalid CREATE MATCH VIEW: missing MATCH definition after AS"); }
         // Body must start with MATCH ...
@@ -47,22 +76,27 @@ pub fn parse_create(s: &str) -> Result<Command> {
             }
         }
     }
-    if up.starts_with("VIEW ") || up.starts_with("OR ALTER VIEW ") {
+    if up.starts_with("VIEW ") || up.starts_with("OR ALTER VIEW ") || up.starts_with("OR REPLACE VIEW ") {
         // CREATE [OR ALTER] VIEW <name> AS <SELECT...>
         // Capture the definition SQL verbatim after AS (can be SELECT or SELECT UNION)
         let mut or_alter = false;
         let after = if up.starts_with("OR ALTER VIEW ") {
             or_alter = true;
             &rest["OR ALTER VIEW ".len()..]
+        } else if up.starts_with("OR REPLACE VIEW ") {
+            // treat OR REPLACE similarly to plain CREATE; engine can interpret replace semantics
+            &rest["OR REPLACE VIEW ".len()..]
         } else {
             &rest["VIEW ".len()..]
         };
         let after = after.trim();
-        // Split on AS (case-insensitive)
-        let up_after = after.to_uppercase();
-        let as_pos = up_after.find(" AS ").ok_or_else(|| anyhow::anyhow!("Invalid CREATE VIEW: expected AS"))?;
+        // Split on AS (case-insensitive, token with whitespace boundaries)
+        let as_pos = find_as_token(after).ok_or_else(|| anyhow::anyhow!("Invalid CREATE VIEW: expected AS"))?;
         let name = after[..as_pos].trim();
-        let def_sql = after[as_pos + 4..].trim();
+        // advance past AS + following whitespace
+        let mut k = as_pos + 2;
+        while k < after.len() && is_ws(after.as_bytes()[k] as char) { k += 1; }
+        let def_sql = after[k..].trim();
         if name.is_empty() { anyhow::bail!("Invalid CREATE VIEW: missing view name"); }
         if def_sql.is_empty() { anyhow::bail!("Invalid CREATE VIEW: missing SELECT definition after AS"); }
         let normalized_name = crate::ident::normalize_identifier(name);

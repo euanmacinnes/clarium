@@ -1,0 +1,32 @@
+{
+  "columns": [
+    {
+      "data_type": "text",
+      "name": "transaction",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "gid",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "prepared",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "OWNER",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "DATABASE",
+      "udt_name": "text"
+    }
+  ],
+  "definition_sql": "SELECT p.transaction,\n    p.gid,\n    p.prepared,\n    u.rolname AS owner,\n    d.datname AS database\n   FROM pg_prepared_xact() p(transaction, gid, prepared, ownerid, dbid)\n     LEFT JOIN pg_authid u ON p.ownerid = u.oid\n     LEFT JOIN pg_database d ON p.dbid = d.oid",
+  "name": "pg_prepared_xacts",
+  "schema": "pg_catalog"
+}

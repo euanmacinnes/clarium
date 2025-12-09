@@ -1,0 +1,42 @@
+{
+  "columns": [
+    {
+      "data_type": "text",
+      "name": "DOMAIN_CATALOG",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "DOMAIN_SCHEMA",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "DOMAIN_NAME",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "TABLE_CATALOG",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "TABLE_SCHEMA",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "TABLE_NAME",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "COLUMN_NAME",
+      "udt_name": "text"
+    }
+  ],
+  "definition_sql": "SELECT current_database()::information_schema.sql_identifier AS domain_catalog,\n    nt.nspname::information_schema.sql_identifier AS domain_schema,\n    t.typname::information_schema.sql_identifier AS domain_name,\n    current_database()::information_schema.sql_identifier AS table_catalog,\n    nc.nspname::information_schema.sql_identifier AS table_schema,\n    c.relname::information_schema.sql_identifier AS table_name,\n    a.attname::information_schema.sql_identifier AS column_name\n   FROM pg_type t,\n    pg_namespace nt,\n    pg_class c,\n    pg_namespace nc,\n    pg_attribute a\n  WHERE t.typnamespace = nt.oid AND c.relnamespace = nc.oid AND a.attrelid = c.oid AND a.atttypid = t.oid AND t.typtype = 'd'::\"char\" AND (c.relkind = ANY (ARRAY['r'::\"char\", 'v'::\"char\", 'f'::\"char\", 'p'::\"char\"])) AND a.attnum > 0 AND NOT a.attisdropped AND pg_has_role(t.typowner, 'USAGE'::text)",
+  "name": "column_domain_usage",
+  "schema": "information_schema"
+}

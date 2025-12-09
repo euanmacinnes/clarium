@@ -1,0 +1,62 @@
+{
+  "columns": [
+    {
+      "data_type": "text",
+      "name": "pid",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "datid",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "datname",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "relid",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "PHASE",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "HEAP_BLKS_TOTAL",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "HEAP_BLKS_SCANNED",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "HEAP_BLKS_VACUUMED",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "INDEX_VACUUM_COUNT",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "MAX_DEAD_TUPLES",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "NUM_DEAD_TUPLES",
+      "udt_name": "text"
+    }
+  ],
+  "definition_sql": "SELECT s.pid,\n    s.datid,\n    d.datname,\n    s.relid,\n        CASE s.param1\n            WHEN 0 THEN 'initializing'::text\n            WHEN 1 THEN 'scanning heap'::text\n            WHEN 2 THEN 'vacuuming indexes'::text\n            WHEN 3 THEN 'vacuuming heap'::text\n            WHEN 4 THEN 'cleaning up indexes'::text\n            WHEN 5 THEN 'truncating heap'::text\n            WHEN 6 THEN 'performing final cleanup'::text\n            ELSE NULL::text\n        END AS phase,\n    s.param2 AS heap_blks_total,\n    s.param3 AS heap_blks_scanned,\n    s.param4 AS heap_blks_vacuumed,\n    s.param5 AS index_vacuum_count,\n    s.param6 AS max_dead_tuples,\n    s.param7 AS num_dead_tuples\n   FROM pg_stat_get_progress_info('VACUUM'::text) s(pid, datid, relid, param1, param2, param3, param4, param5, param6, param7, param8, param9, param10, param11, param12, param13, param14, param15, param16, param17, param18, param19, param20)\n     LEFT JOIN pg_database d ON s.datid = d.oid",
+  "name": "pg_stat_progress_vacuum",
+  "schema": "pg_catalog"
+}

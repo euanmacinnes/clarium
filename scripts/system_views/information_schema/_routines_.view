@@ -1,0 +1,432 @@
+{
+  "columns": [
+    {
+      "data_type": "text",
+      "name": "SPECIFIC_CATALOG",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "SPECIFIC_SCHEMA",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "proname",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "SPECIFIC_NAME",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "ROUTINE_CATALOG",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "ROUTINE_SCHEMA",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "ROUTINE_NAME",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "ROUTINE_TYPE",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "MODULE_CATALOG",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "MODULE_SCHEMA",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "MODULE_NAME",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "UDT_CATALOG",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "UDT_SCHEMA",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "UDT_NAME",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "oid",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "DATA_TYPE",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "CHARACTER_MAXIMUM_LENGTH",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "CHARACTER_OCTET_LENGTH",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "CHARACTER_SET_CATALOG",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "CHARACTER_SET_SCHEMA",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "CHARACTER_SET_NAME",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "COLLATION_CATALOG",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "COLLATION_SCHEMA",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "COLLATION_NAME",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "NUMERIC_PRECISION",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "NUMERIC_PRECISION_RADIX",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "NUMERIC_SCALE",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "DATETIME_PRECISION",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "INTERVAL_TYPE",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "INTERVAL_PRECISION",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "TYPE_UDT_CATALOG",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "TYPE_UDT_SCHEMA",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "TYPE_UDT_NAME",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "SCOPE_CATALOG",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "SCOPE_SCHEMA",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "SCOPE_NAME",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "MAXIMUM_CARDINALITY",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "DTD_IDENTIFIER",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "ROUTINE_BODY",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "proowner",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "ROUTINE_DEFINITION",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "EXTERNAL_NAME",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "EXTERNAL_LANGUAGE",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "PARAMETER_STYLE",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "IS_DETERMINISTIC",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "SQL_DATA_ACCESS",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "IS_NULL_CALL",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "SQL_PATH",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "SCHEMA_LEVEL_ROUTINE",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "MAX_DYNAMIC_RESULT_SETS",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "IS_USER_DEFINED_CAST",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "IS_IMPLICITLY_INVOCABLE",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "SECURITY_TYPE",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "TO_SQL_SPECIFIC_CATALOG",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "TO_SQL_SPECIFIC_SCHEMA",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "TO_SQL_SPECIFIC_NAME",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "AS_LOCATOR",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "CREATED",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "LAST_ALTERED",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "NEW_SAVEPOINT_LEVEL",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "IS_UDT_DEPENDENT",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "RESULT_CAST_FROM_DATA_TYPE",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "RESULT_CAST_AS_LOCATOR",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "RESULT_CAST_CHAR_MAX_LENGTH",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "RESULT_CAST_CHAR_OCTET_LENGTH",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "RESULT_CAST_CHAR_SET_CATALOG",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "RESULT_CAST_CHAR_SET_SCHEMA",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "RESULT_CAST_CHAR_SET_NAME",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "RESULT_CAST_COLLATION_CATALOG",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "RESULT_CAST_COLLATION_SCHEMA",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "RESULT_CAST_COLLATION_NAME",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "RESULT_CAST_NUMERIC_PRECISION",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "RESULT_CAST_NUMERIC_PRECISION_RADIX",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "RESULT_CAST_NUMERIC_SCALE",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "RESULT_CAST_DATETIME_PRECISION",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "RESULT_CAST_INTERVAL_TYPE",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "RESULT_CAST_INTERVAL_PRECISION",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "RESULT_CAST_TYPE_UDT_CATALOG",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "RESULT_CAST_TYPE_UDT_SCHEMA",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "RESULT_CAST_TYPE_UDT_NAME",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "RESULT_CAST_SCOPE_CATALOG",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "RESULT_CAST_SCOPE_SCHEMA",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "RESULT_CAST_SCOPE_NAME",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "RESULT_CAST_MAXIMUM_CARDINALITY",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "RESULT_CAST_DTD_IDENTIFIER",
+      "udt_name": "text"
+    }
+  ],
+  "definition_sql": "SELECT current_database()::information_schema.sql_identifier AS specific_catalog,\n    n.nspname::information_schema.sql_identifier AS specific_schema,\n    nameconcatoid(p.proname, p.oid)::information_schema.sql_identifier AS specific_name,\n    current_database()::information_schema.sql_identifier AS routine_catalog,\n    n.nspname::information_schema.sql_identifier AS routine_schema,\n    p.proname::information_schema.sql_identifier AS routine_name,\n        CASE p.prokind\n            WHEN 'f'::\"char\" THEN 'FUNCTION'::text\n            WHEN 'p'::\"char\" THEN 'PROCEDURE'::text\n            ELSE NULL::text\n        END::information_schema.character_data AS routine_type,\n    NULL::name::information_schema.sql_identifier AS module_catalog,\n    NULL::name::information_schema.sql_identifier AS module_schema,\n    NULL::name::information_schema.sql_identifier AS module_name,\n    NULL::name::information_schema.sql_identifier AS udt_catalog,\n    NULL::name::information_schema.sql_identifier AS udt_schema,\n    NULL::name::information_schema.sql_identifier AS udt_name,\n        CASE\n            WHEN p.prokind = 'p'::\"char\" THEN NULL::text\n            WHEN t.typelem <> 0::oid AND t.typlen = '-1'::integer THEN 'ARRAY'::text\n            WHEN nt.nspname = 'pg_catalog'::name THEN format_type(t.oid, NULL::integer)\n            ELSE 'USER-DEFINED'::text\n        END::information_schema.character_data AS data_type,\n    NULL::integer::information_schema.cardinal_number AS character_maximum_length,\n    NULL::integer::information_schema.cardinal_number AS character_octet_length,\n    NULL::name::information_schema.sql_identifier AS character_set_catalog,\n    NULL::name::information_schema.sql_identifier AS character_set_schema,\n    NULL::name::information_schema.sql_identifier AS character_set_name,\n    NULL::name::information_schema.sql_identifier AS collation_catalog,\n    NULL::name::information_schema.sql_identifier AS collation_schema,\n    NULL::name::information_schema.sql_identifier AS collation_name,\n    NULL::integer::information_schema.cardinal_number AS numeric_precision,\n    NULL::integer::information_schema.cardinal_number AS numeric_precision_radix,\n    NULL::integer::information_schema.cardinal_number AS numeric_scale,\n    NULL::integer::information_schema.cardinal_number AS datetime_precision,\n    NULL::character varying::information_schema.character_data AS interval_type,\n    NULL::integer::information_schema.cardinal_number AS interval_precision,\n        CASE\n            WHEN nt.nspname IS NOT NULL THEN current_database()\n            ELSE NULL::name\n        END::information_schema.sql_identifier AS type_udt_catalog,\n    nt.nspname::information_schema.sql_identifier AS type_udt_schema,\n    t.typname::information_schema.sql_identifier AS type_udt_name,\n    NULL::name::information_schema.sql_identifier AS scope_catalog,\n    NULL::name::information_schema.sql_identifier AS scope_schema,\n    NULL::name::information_schema.sql_identifier AS scope_name,\n    NULL::integer::information_schema.cardinal_number AS maximum_cardinality,\n        CASE\n            WHEN p.prokind <> 'p'::\"char\" THEN 0\n            ELSE NULL::integer\n        END::information_schema.sql_identifier AS dtd_identifier,\n        CASE\n            WHEN l.lanname = 'sql'::name THEN 'SQL'::text\n            ELSE 'EXTERNAL'::text\n        END::information_schema.character_data AS routine_body,\n        CASE\n            WHEN pg_has_role(p.proowner, 'USAGE'::text) THEN p.prosrc\n            ELSE NULL::text\n        END::information_schema.character_data AS routine_definition,\n        CASE\n            WHEN l.lanname = 'c'::name THEN p.prosrc\n            ELSE NULL::text\n        END::information_schema.character_data AS external_name,\n    upper(l.lanname::text)::information_schema.character_data AS external_language,\n    'GENERAL'::character varying::information_schema.character_data AS parameter_style,\n        CASE\n            WHEN p.provolatile = 'i'::\"char\" THEN 'YES'::text\n            ELSE 'NO'::text\n        END::information_schema.yes_or_no AS is_deterministic,\n    'MODIFIES'::character varying::information_schema.character_data AS sql_data_access,\n        CASE\n            WHEN p.prokind <> 'p'::\"char\" THEN\n            CASE\n                WHEN p.proisstrict THEN 'YES'::text\n                ELSE 'NO'::text\n            END\n            ELSE NULL::text\n        END::information_schema.yes_or_no AS is_null_call,\n    NULL::character varying::information_schema.character_data AS sql_path,\n    'YES'::character varying::information_schema.yes_or_no AS schema_level_routine,\n    0::information_schema.cardinal_number AS max_dynamic_result_sets,\n    NULL::character varying::information_schema.yes_or_no AS is_user_defined_cast,\n    NULL::character varying::information_schema.yes_or_no AS is_implicitly_invocable,\n        CASE\n            WHEN p.prosecdef THEN 'DEFINER'::text\n            ELSE 'INVOKER'::text\n        END::information_schema.character_data AS security_type,\n    NULL::name::information_schema.sql_identifier AS to_sql_specific_catalog,\n    NULL::name::information_schema.sql_identifier AS to_sql_specific_schema,\n    NULL::name::information_schema.sql_identifier AS to_sql_specific_name,\n    'NO'::character varying::information_schema.yes_or_no AS as_locator,\n    NULL::timestamp with time zone::information_schema.time_stamp AS created,\n    NULL::timestamp with time zone::information_schema.time_stamp AS last_altered,\n    NULL::character varying::information_schema.yes_or_no AS new_savepoint_level,\n    'NO'::character varying::information_schema.yes_or_no AS is_udt_dependent,\n    NULL::character varying::information_schema.character_data AS result_cast_from_data_type,\n    NULL::character varying::information_schema.yes_or_no AS result_cast_as_locator,\n    NULL::integer::information_schema.cardinal_number AS result_cast_char_max_length,\n    NULL::integer::information_schema.cardinal_number AS result_cast_char_octet_length,\n    NULL::name::information_schema.sql_identifier AS result_cast_char_set_catalog,\n    NULL::name::information_schema.sql_identifier AS result_cast_char_set_schema,\n    NULL::name::information_schema.sql_identifier AS result_cast_char_set_name,\n    NULL::name::information_schema.sql_identifier AS result_cast_collation_catalog,\n    NULL::name::information_schema.sql_identifier AS result_cast_collation_schema,\n    NULL::name::information_schema.sql_identifier AS result_cast_collation_name,\n    NULL::integer::information_schema.cardinal_number AS result_cast_numeric_precision,\n    NULL::integer::information_schema.cardinal_number AS result_cast_numeric_precision_radix,\n    NULL::integer::information_schema.cardinal_number AS result_cast_numeric_scale,\n    NULL::integer::information_schema.cardinal_number AS result_cast_datetime_precision,\n    NULL::character varying::information_schema.character_data AS result_cast_interval_type,\n    NULL::integer::information_schema.cardinal_number AS result_cast_interval_precision,\n    NULL::name::information_schema.sql_identifier AS result_cast_type_udt_catalog,\n    NULL::name::information_schema.sql_identifier AS result_cast_type_udt_schema,\n    NULL::name::information_schema.sql_identifier AS result_cast_type_udt_name,\n    NULL::name::information_schema.sql_identifier AS result_cast_scope_catalog,\n    NULL::name::information_schema.sql_identifier AS result_cast_scope_schema,\n    NULL::name::information_schema.sql_identifier AS result_cast_scope_name,\n    NULL::integer::information_schema.cardinal_number AS result_cast_maximum_cardinality,\n    NULL::name::information_schema.sql_identifier AS result_cast_dtd_identifier\n   FROM pg_namespace n\n     JOIN pg_proc p ON n.oid = p.pronamespace\n     JOIN pg_language l ON p.prolang = l.oid\n     LEFT JOIN (pg_type t\n     JOIN pg_namespace nt ON t.typnamespace = nt.oid) ON p.prorettype = t.oid AND p.prokind <> 'p'::\"char\"\n  WHERE pg_has_role(p.proowner, 'USAGE'::text) OR has_function_privilege(p.oid, 'EXECUTE'::text)",
+  "name": "\"routines\"",
+  "schema": "information_schema"
+}

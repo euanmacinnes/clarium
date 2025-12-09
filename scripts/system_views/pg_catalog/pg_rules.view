@@ -1,0 +1,27 @@
+{
+  "columns": [
+    {
+      "data_type": "text",
+      "name": "SCHEMANAME",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "TABLENAME",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "rulename",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "DEFINITION",
+      "udt_name": "text"
+    }
+  ],
+  "definition_sql": "SELECT n.nspname AS schemaname,\n    c.relname AS tablename,\n    r.rulename,\n    pg_get_ruledef(r.oid) AS definition\n   FROM pg_rewrite r\n     JOIN pg_class c ON c.oid = r.ev_class\n     LEFT JOIN pg_namespace n ON n.oid = c.relnamespace\n  WHERE r.rulename <> '_RETURN'::name",
+  "name": "pg_rules",
+  "schema": "pg_catalog"
+}

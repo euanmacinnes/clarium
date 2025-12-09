@@ -1,0 +1,42 @@
+{
+  "columns": [
+    {
+      "data_type": "text",
+      "name": "TABLE_CATALOG",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "TABLE_SCHEMA",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "TABLE_NAME",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "SPECIFIC_CATALOG",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "SPECIFIC_SCHEMA",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "proname",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "SPECIFIC_NAME",
+      "udt_name": "text"
+    }
+  ],
+  "definition_sql": "SELECT DISTINCT current_database()::information_schema.sql_identifier AS table_catalog,\n    nv.nspname::information_schema.sql_identifier AS table_schema,\n    v.relname::information_schema.sql_identifier AS table_name,\n    current_database()::information_schema.sql_identifier AS specific_catalog,\n    np.nspname::information_schema.sql_identifier AS specific_schema,\n    nameconcatoid(p.proname, p.oid)::information_schema.sql_identifier AS specific_name\n   FROM pg_namespace nv,\n    pg_class v,\n    pg_depend dv,\n    pg_depend dp,\n    pg_proc p,\n    pg_namespace np\n  WHERE nv.oid = v.relnamespace AND v.relkind = 'v'::\"char\" AND v.oid = dv.refobjid AND dv.refclassid = 'pg_class'::regclass::oid AND dv.classid = 'pg_rewrite'::regclass::oid AND dv.deptype = 'i'::\"char\" AND dv.objid = dp.objid AND dp.classid = 'pg_rewrite'::regclass::oid AND dp.refclassid = 'pg_proc'::regclass::oid AND dp.refobjid = p.oid AND p.pronamespace = np.oid AND pg_has_role(p.proowner, 'USAGE'::text)",
+  "name": "view_routine_usage",
+  "schema": "information_schema"
+}

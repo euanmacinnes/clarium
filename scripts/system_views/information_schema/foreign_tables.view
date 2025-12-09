@@ -1,0 +1,32 @@
+{
+  "columns": [
+    {
+      "data_type": "text",
+      "name": "foreign_table_catalog",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "foreign_table_schema",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "foreign_table_name",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "foreign_server_catalog",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "foreign_server_name",
+      "udt_name": "text"
+    }
+  ],
+  "definition_sql": "SELECT _pg_foreign_tables.foreign_table_catalog,\n    _pg_foreign_tables.foreign_table_schema,\n    _pg_foreign_tables.foreign_table_name,\n    _pg_foreign_tables.foreign_server_catalog,\n    _pg_foreign_tables.foreign_server_name\n   FROM information_schema._pg_foreign_tables",
+  "name": "foreign_tables",
+  "schema": "information_schema"
+}

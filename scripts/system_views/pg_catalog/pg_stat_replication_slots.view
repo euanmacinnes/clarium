@@ -1,0 +1,57 @@
+{
+  "columns": [
+    {
+      "data_type": "text",
+      "name": "slot_name",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "spill_txns",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "spill_count",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "spill_bytes",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "stream_txns",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "stream_count",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "stream_bytes",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "total_txns",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "total_bytes",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "stats_reset",
+      "udt_name": "text"
+    }
+  ],
+  "definition_sql": "SELECT s.slot_name,\n    s.spill_txns,\n    s.spill_count,\n    s.spill_bytes,\n    s.stream_txns,\n    s.stream_count,\n    s.stream_bytes,\n    s.total_txns,\n    s.total_bytes,\n    s.stats_reset\n   FROM pg_replication_slots r,\n    LATERAL pg_stat_get_replication_slot(r.slot_name::text) s(slot_name, spill_txns, spill_count, spill_bytes, stream_txns, stream_count, stream_bytes, total_txns, total_bytes, stats_reset)\n  WHERE r.datoid IS NOT NULL",
+  "name": "pg_stat_replication_slots",
+  "schema": "pg_catalog"
+}

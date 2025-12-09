@@ -1,0 +1,67 @@
+{
+  "columns": [
+    {
+      "data_type": "text",
+      "name": "pid",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "datid",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "datname",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "relid",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "COMMAND",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "PHASE",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "CLUSTER_INDEX_RELID",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "HEAP_TUPLES_SCANNED",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "HEAP_TUPLES_WRITTEN",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "HEAP_BLKS_TOTAL",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "HEAP_BLKS_SCANNED",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "INDEX_REBUILD_COUNT",
+      "udt_name": "text"
+    }
+  ],
+  "definition_sql": "SELECT s.pid,\n    s.datid,\n    d.datname,\n    s.relid,\n        CASE s.param1\n            WHEN 1 THEN 'CLUSTER'::text\n            WHEN 2 THEN 'VACUUM FULL'::text\n            ELSE NULL::text\n        END AS command,\n        CASE s.param2\n            WHEN 0 THEN 'initializing'::text\n            WHEN 1 THEN 'seq scanning heap'::text\n            WHEN 2 THEN 'index scanning heap'::text\n            WHEN 3 THEN 'sorting tuples'::text\n            WHEN 4 THEN 'writing new heap'::text\n            WHEN 5 THEN 'swapping relation files'::text\n            WHEN 6 THEN 'rebuilding index'::text\n            WHEN 7 THEN 'performing final cleanup'::text\n            ELSE NULL::text\n        END AS phase,\n    s.param3::oid AS cluster_index_relid,\n    s.param4 AS heap_tuples_scanned,\n    s.param5 AS heap_tuples_written,\n    s.param6 AS heap_blks_total,\n    s.param7 AS heap_blks_scanned,\n    s.param8 AS index_rebuild_count\n   FROM pg_stat_get_progress_info('CLUSTER'::text) s(pid, datid, relid, param1, param2, param3, param4, param5, param6, param7, param8, param9, param10, param11, param12, param13, param14, param15, param16, param17, param18, param19, param20)\n     LEFT JOIN pg_database d ON s.datid = d.oid",
+  "name": "pg_stat_progress_cluster",
+  "schema": "pg_catalog"
+}

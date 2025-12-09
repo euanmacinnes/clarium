@@ -1,0 +1,97 @@
+{
+  "columns": [
+    {
+      "data_type": "text",
+      "name": "pid",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "datid",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "datname",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "relid",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "INDEX_RELID",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "COMMAND",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "param9::oid",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "param11)",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "PHASE",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "LOCKERS_TOTAL",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "LOCKERS_DONE",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "CURRENT_LOCKER_PID",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "BLOCKS_TOTAL",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "BLOCKS_DONE",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "TUPLES_TOTAL",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "TUPLES_DONE",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "PARTITIONS_TOTAL",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "PARTITIONS_DONE",
+      "udt_name": "text"
+    }
+  ],
+  "definition_sql": "SELECT s.pid,\n    s.datid,\n    d.datname,\n    s.relid,\n    s.param7::oid AS index_relid,\n        CASE s.param1\n            WHEN 1 THEN 'CREATE INDEX'::text\n            WHEN 2 THEN 'CREATE INDEX CONCURRENTLY'::text\n            WHEN 3 THEN 'REINDEX'::text\n            WHEN 4 THEN 'REINDEX CONCURRENTLY'::text\n            ELSE NULL::text\n        END AS command,\n        CASE s.param10\n            WHEN 0 THEN 'initializing'::text\n            WHEN 1 THEN 'waiting for writers before build'::text\n            WHEN 2 THEN 'building index'::text || COALESCE(': '::text || pg_indexam_progress_phasename(s.param9::oid, s.param11), ''::text)\n            WHEN 3 THEN 'waiting for writers before validation'::text\n            WHEN 4 THEN 'index validation: scanning index'::text\n            WHEN 5 THEN 'index validation: sorting tuples'::text\n            WHEN 6 THEN 'index validation: scanning table'::text\n            WHEN 7 THEN 'waiting for old snapshots'::text\n            WHEN 8 THEN 'waiting for readers before marking dead'::text\n            WHEN 9 THEN 'waiting for readers before dropping'::text\n            ELSE NULL::text\n        END AS phase,\n    s.param4 AS lockers_total,\n    s.param5 AS lockers_done,\n    s.param6 AS current_locker_pid,\n    s.param16 AS blocks_total,\n    s.param17 AS blocks_done,\n    s.param12 AS tuples_total,\n    s.param13 AS tuples_done,\n    s.param14 AS partitions_total,\n    s.param15 AS partitions_done\n   FROM pg_stat_get_progress_info('CREATE INDEX'::text) s(pid, datid, relid, param1, param2, param3, param4, param5, param6, param7, param8, param9, param10, param11, param12, param13, param14, param15, param16, param17, param18, param19, param20)\n     LEFT JOIN pg_database d ON s.datid = d.oid",
+  "name": "pg_stat_progress_create_index",
+  "schema": "pg_catalog"
+}

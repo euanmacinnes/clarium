@@ -1,0 +1,22 @@
+{
+  "columns": [
+    {
+      "data_type": "text",
+      "name": "GRONAME",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "GROSYSID",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "member",
+      "udt_name": "text"
+    }
+  ],
+  "definition_sql": "SELECT pg_authid.rolname AS groname,\n    pg_authid.oid AS grosysid,\n    ARRAY( SELECT pg_auth_members.member\n           FROM pg_auth_members\n          WHERE pg_auth_members.roleid = pg_authid.oid) AS grolist\n   FROM pg_authid\n  WHERE NOT pg_authid.rolcanlogin",
+  "name": "pg_group",
+  "schema": "pg_catalog"
+}

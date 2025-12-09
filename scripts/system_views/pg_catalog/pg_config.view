@@ -1,0 +1,17 @@
+{
+  "columns": [
+    {
+      "data_type": "text",
+      "name": "name",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "setting",
+      "udt_name": "text"
+    }
+  ],
+  "definition_sql": "SELECT pg_config.name,\n    pg_config.setting\n   FROM pg_config() pg_config(name, setting)",
+  "name": "pg_config",
+  "schema": "pg_catalog"
+}

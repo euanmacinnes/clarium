@@ -1,0 +1,52 @@
+{
+  "columns": [
+    {
+      "data_type": "text",
+      "name": "name",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "blks_zeroed",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "blks_hit",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "blks_read",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "blks_written",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "blks_exists",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "flushes",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "truncates",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "stats_reset",
+      "udt_name": "text"
+    }
+  ],
+  "definition_sql": "SELECT s.name,\n    s.blks_zeroed,\n    s.blks_hit,\n    s.blks_read,\n    s.blks_written,\n    s.blks_exists,\n    s.flushes,\n    s.truncates,\n    s.stats_reset\n   FROM pg_stat_get_slru() s(name, blks_zeroed, blks_hit, blks_read, blks_written, blks_exists, flushes, truncates, stats_reset)",
+  "name": "pg_stat_slru",
+  "schema": "pg_catalog"
+}

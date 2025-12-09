@@ -1,0 +1,52 @@
+{
+  "columns": [
+    {
+      "data_type": "text",
+      "name": "USENAME",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "USESYSID",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "USECREATEDB",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "USESUPER",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "USEREPL",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "USEBYPASSRLS",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "PASSWD",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "VALUNTIL",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "USECONFIG",
+      "udt_name": "text"
+    }
+  ],
+  "definition_sql": "SELECT pg_authid.rolname AS usename,\n    pg_authid.oid AS usesysid,\n    pg_authid.rolcreatedb AS usecreatedb,\n    pg_authid.rolsuper AS usesuper,\n    pg_authid.rolreplication AS userepl,\n    pg_authid.rolbypassrls AS usebypassrls,\n    pg_authid.rolpassword AS passwd,\n    pg_authid.rolvaliduntil AS valuntil,\n    s.setconfig AS useconfig\n   FROM pg_authid\n     LEFT JOIN pg_db_role_setting s ON pg_authid.oid = s.setrole AND s.setdatabase = 0::oid\n  WHERE pg_authid.rolcanlogin",
+  "name": "pg_shadow",
+  "schema": "pg_catalog"
+}

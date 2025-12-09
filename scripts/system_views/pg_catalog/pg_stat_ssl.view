@@ -1,0 +1,47 @@
+{
+  "columns": [
+    {
+      "data_type": "text",
+      "name": "pid",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "ssl",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "VERSION",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "CIPHER",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "BITS",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "CLIENT_DN",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "CLIENT_SERIAL",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "ISSUER_DN",
+      "udt_name": "text"
+    }
+  ],
+  "definition_sql": "SELECT s.pid,\n    s.ssl,\n    s.sslversion AS version,\n    s.sslcipher AS cipher,\n    s.sslbits AS bits,\n    s.ssl_client_dn AS client_dn,\n    s.ssl_client_serial AS client_serial,\n    s.ssl_issuer_dn AS issuer_dn\n   FROM pg_stat_get_activity(NULL::integer) s(datid, pid, usesysid, application_name, state, query, wait_event_type, wait_event, xact_start, query_start, backend_start, state_change, client_addr, client_hostname, client_port, backend_xid, backend_xmin, backend_type, ssl, sslversion, sslcipher, sslbits, ssl_client_dn, ssl_client_serial, ssl_issuer_dn, gss_auth, gss_princ, gss_enc, leader_pid, query_id)\n  WHERE s.client_port IS NOT NULL",
+  "name": "pg_stat_ssl",
+  "schema": "pg_catalog"
+}

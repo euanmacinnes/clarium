@@ -1,0 +1,47 @@
+{
+  "columns": [
+    {
+      "data_type": "text",
+      "name": "RELID",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "INDEXRELID",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "SCHEMANAME",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "relname",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "INDEXRELNAME",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "IDX_SCAN",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "IDX_TUP_READ",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "IDX_TUP_FETCH",
+      "udt_name": "text"
+    }
+  ],
+  "definition_sql": "SELECT c.oid AS relid,\n    i.oid AS indexrelid,\n    n.nspname AS schemaname,\n    c.relname,\n    i.relname AS indexrelname,\n    pg_stat_get_numscans(i.oid) AS idx_scan,\n    pg_stat_get_tuples_returned(i.oid) AS idx_tup_read,\n    pg_stat_get_tuples_fetched(i.oid) AS idx_tup_fetch\n   FROM pg_class c\n     JOIN pg_index x ON c.oid = x.indrelid\n     JOIN pg_class i ON i.oid = x.indexrelid\n     LEFT JOIN pg_namespace n ON n.oid = c.relnamespace\n  WHERE c.relkind = ANY (ARRAY['r'::\"char\", 't'::\"char\", 'm'::\"char\"])",
+  "name": "pg_stat_all_indexes",
+  "schema": "pg_catalog"
+}

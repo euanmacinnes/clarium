@@ -1,0 +1,52 @@
+{
+  "columns": [
+    {
+      "data_type": "text",
+      "name": "GRANTOR",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "GRANTEE",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "UDT_CATALOG",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "UDT_SCHEMA",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "UDT_NAME",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "PRIVILEGE_TYPE",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "oid",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "typowner",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "IS_GRANTABLE",
+      "udt_name": "text"
+    }
+  ],
+  "definition_sql": "SELECT u_grantor.rolname::information_schema.sql_identifier AS grantor,\n    grantee.rolname::information_schema.sql_identifier AS grantee,\n    current_database()::information_schema.sql_identifier AS udt_catalog,\n    n.nspname::information_schema.sql_identifier AS udt_schema,\n    t.typname::information_schema.sql_identifier AS udt_name,\n    'TYPE USAGE'::character varying::information_schema.character_data AS privilege_type,\n        CASE\n            WHEN pg_has_role(grantee.oid, t.typowner, 'USAGE'::text) OR t.grantable THEN 'YES'::text\n            ELSE 'NO'::text\n        END::information_schema.yes_or_no AS is_grantable\n   FROM ( SELECT pg_type.oid,\n            pg_type.typname,\n            pg_type.typnamespace,\n            pg_type.typtype,\n            pg_type.typowner,\n            (aclexplode(COALESCE(pg_type.typacl, acldefault('T'::\"char\", pg_type.typowner)))).grantor AS grantor,\n            (aclexplode(COALESCE(pg_type.typacl, acldefault('T'::\"char\", pg_type.typowner)))).grantee AS grantee,\n            (aclexplode(COALESCE(pg_type.typacl, acldefault('T'::\"char\", pg_type.typowner)))).privilege_type AS privilege_type,\n            (aclexplode(COALESCE(pg_type.typacl, acldefault('T'::\"char\", pg_type.typowner)))).is_grantable AS is_grantable\n           FROM pg_type) t(oid, typname, typnamespace, typtype, typowner, grantor, grantee, prtype, grantable),\n    pg_namespace n,\n    pg_authid u_grantor,\n    ( SELECT pg_authid.oid,\n            pg_authid.rolname\n           FROM pg_authid\n        UNION ALL\n         SELECT 0::oid AS oid,\n            'PUBLIC'::name) grantee(oid, rolname)\n  WHERE t.typnamespace = n.oid AND t.typtype = 'c'::\"char\" AND t.grantee = grantee.oid AND t.grantor = u_grantor.oid AND t.prtype = 'USAGE'::text AND (pg_has_role(u_grantor.oid, 'USAGE'::text) OR pg_has_role(grantee.oid, 'USAGE'::text) OR grantee.rolname = 'PUBLIC'::name)",
+  "name": "udt_privileges",
+  "schema": "information_schema"
+}

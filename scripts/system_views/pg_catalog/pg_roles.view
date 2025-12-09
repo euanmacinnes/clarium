@@ -1,0 +1,72 @@
+{
+  "columns": [
+    {
+      "data_type": "text",
+      "name": "rolname",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "rolsuper",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "rolinherit",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "rolcreaterole",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "rolcreatedb",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "rolcanlogin",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "rolreplication",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "rolconnlimit",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "ROLPASSWORD",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "rolvaliduntil",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "rolbypassrls",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "ROLCONFIG",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "oid",
+      "udt_name": "text"
+    }
+  ],
+  "definition_sql": "SELECT pg_authid.rolname,\n    pg_authid.rolsuper,\n    pg_authid.rolinherit,\n    pg_authid.rolcreaterole,\n    pg_authid.rolcreatedb,\n    pg_authid.rolcanlogin,\n    pg_authid.rolreplication,\n    pg_authid.rolconnlimit,\n    '********'::text AS rolpassword,\n    pg_authid.rolvaliduntil,\n    pg_authid.rolbypassrls,\n    s.setconfig AS rolconfig,\n    pg_authid.oid\n   FROM pg_authid\n     LEFT JOIN pg_db_role_setting s ON pg_authid.oid = s.setrole AND s.setdatabase = 0::oid",
+  "name": "pg_roles",
+  "schema": "pg_catalog"
+}

@@ -1,0 +1,42 @@
+{
+  "columns": [
+    {
+      "data_type": "text",
+      "name": "CATALOG_NAME",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "SCHEMA_NAME",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "SCHEMA_OWNER",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "DEFAULT_CHARACTER_SET_CATALOG",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "DEFAULT_CHARACTER_SET_SCHEMA",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "DEFAULT_CHARACTER_SET_NAME",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "SQL_PATH",
+      "udt_name": "text"
+    }
+  ],
+  "definition_sql": "SELECT current_database()::information_schema.sql_identifier AS catalog_name,\n    n.nspname::information_schema.sql_identifier AS schema_name,\n    u.rolname::information_schema.sql_identifier AS schema_owner,\n    NULL::name::information_schema.sql_identifier AS default_character_set_catalog,\n    NULL::name::information_schema.sql_identifier AS default_character_set_schema,\n    NULL::name::information_schema.sql_identifier AS default_character_set_name,\n    NULL::character varying::information_schema.character_data AS sql_path\n   FROM pg_namespace n,\n    pg_authid u\n  WHERE n.nspowner = u.oid AND (pg_has_role(n.nspowner, 'USAGE'::text) OR has_schema_privilege(n.oid, 'CREATE, USAGE'::text))",
+  "name": "schemata",
+  "schema": "information_schema"
+}

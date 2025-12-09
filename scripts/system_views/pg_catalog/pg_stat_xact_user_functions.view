@@ -1,0 +1,37 @@
+{
+  "columns": [
+    {
+      "data_type": "text",
+      "name": "FUNCID",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "SCHEMANAME",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "FUNCNAME",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "CALLS",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "TOTAL_TIME",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "SELF_TIME",
+      "udt_name": "text"
+    }
+  ],
+  "definition_sql": "SELECT p.oid AS funcid,\n    n.nspname AS schemaname,\n    p.proname AS funcname,\n    pg_stat_get_xact_function_calls(p.oid) AS calls,\n    pg_stat_get_xact_function_total_time(p.oid) AS total_time,\n    pg_stat_get_xact_function_self_time(p.oid) AS self_time\n   FROM pg_proc p\n     LEFT JOIN pg_namespace n ON n.oid = p.pronamespace\n  WHERE p.prolang <> 12::oid AND pg_stat_get_xact_function_calls(p.oid) IS NOT NULL",
+  "name": "pg_stat_xact_user_functions",
+  "schema": "pg_catalog"
+}

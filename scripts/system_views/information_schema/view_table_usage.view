@@ -1,0 +1,37 @@
+{
+  "columns": [
+    {
+      "data_type": "text",
+      "name": "VIEW_CATALOG",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "VIEW_SCHEMA",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "VIEW_NAME",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "TABLE_CATALOG",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "TABLE_SCHEMA",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "TABLE_NAME",
+      "udt_name": "text"
+    }
+  ],
+  "definition_sql": "SELECT DISTINCT current_database()::information_schema.sql_identifier AS view_catalog,\n    nv.nspname::information_schema.sql_identifier AS view_schema,\n    v.relname::information_schema.sql_identifier AS view_name,\n    current_database()::information_schema.sql_identifier AS table_catalog,\n    nt.nspname::information_schema.sql_identifier AS table_schema,\n    t.relname::information_schema.sql_identifier AS table_name\n   FROM pg_namespace nv,\n    pg_class v,\n    pg_depend dv,\n    pg_depend dt,\n    pg_class t,\n    pg_namespace nt\n  WHERE nv.oid = v.relnamespace AND v.relkind = 'v'::\"char\" AND v.oid = dv.refobjid AND dv.refclassid = 'pg_class'::regclass::oid AND dv.classid = 'pg_rewrite'::regclass::oid AND dv.deptype = 'i'::\"char\" AND dv.objid = dt.objid AND dv.refobjid <> dt.refobjid AND dt.classid = 'pg_rewrite'::regclass::oid AND dt.refclassid = 'pg_class'::regclass::oid AND dt.refobjid = t.oid AND t.relnamespace = nt.oid AND (t.relkind = ANY (ARRAY['r'::\"char\", 'v'::\"char\", 'f'::\"char\", 'p'::\"char\"])) AND pg_has_role(t.relowner, 'USAGE'::text)",
+  "name": "view_table_usage",
+  "schema": "information_schema"
+}

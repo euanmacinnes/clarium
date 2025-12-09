@@ -1,0 +1,192 @@
+{
+  "columns": [
+    {
+      "data_type": "text",
+      "name": "SPECIFIC_CATALOG",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "SPECIFIC_SCHEMA",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "proname",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "SPECIFIC_NAME",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "ORDINAL_POSITION",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "PARAMETER_MODE",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "IS_RESULT",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "AS_LOCATOR",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "n]",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "PARAMETER_NAME",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "oid",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "DATA_TYPE",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "CHARACTER_MAXIMUM_LENGTH",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "CHARACTER_OCTET_LENGTH",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "CHARACTER_SET_CATALOG",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "CHARACTER_SET_SCHEMA",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "CHARACTER_SET_NAME",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "COLLATION_CATALOG",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "COLLATION_SCHEMA",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "COLLATION_NAME",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "NUMERIC_PRECISION",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "NUMERIC_PRECISION_RADIX",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "NUMERIC_SCALE",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "DATETIME_PRECISION",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "INTERVAL_TYPE",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "INTERVAL_PRECISION",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "UDT_CATALOG",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "UDT_SCHEMA",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "UDT_NAME",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "SCOPE_CATALOG",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "SCOPE_SCHEMA",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "SCOPE_NAME",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "MAXIMUM_CARDINALITY",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "DTD_IDENTIFIER",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "proowner",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "p_oid",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "PARAMETER_DEFAULT",
+      "udt_name": "text"
+    }
+  ],
+  "definition_sql": "SELECT current_database()::information_schema.sql_identifier AS specific_catalog,\n    ss.n_nspname::information_schema.sql_identifier AS specific_schema,\n    nameconcatoid(ss.proname, ss.p_oid)::information_schema.sql_identifier AS specific_name,\n    (ss.x).n::information_schema.cardinal_number AS ordinal_position,\n        CASE\n            WHEN ss.proargmodes IS NULL THEN 'IN'::text\n            WHEN ss.proargmodes[(ss.x).n] = 'i'::\"char\" THEN 'IN'::text\n            WHEN ss.proargmodes[(ss.x).n] = 'o'::\"char\" THEN 'OUT'::text\n            WHEN ss.proargmodes[(ss.x).n] = 'b'::\"char\" THEN 'INOUT'::text\n            WHEN ss.proargmodes[(ss.x).n] = 'v'::\"char\" THEN 'IN'::text\n            WHEN ss.proargmodes[(ss.x).n] = 't'::\"char\" THEN 'OUT'::text\n            ELSE NULL::text\n        END::information_schema.character_data AS parameter_mode,\n    'NO'::character varying::information_schema.yes_or_no AS is_result,\n    'NO'::character varying::information_schema.yes_or_no AS as_locator,\n    NULLIF(ss.proargnames[(ss.x).n], ''::text)::information_schema.sql_identifier AS parameter_name,\n        CASE\n            WHEN t.typelem <> 0::oid AND t.typlen = '-1'::integer THEN 'ARRAY'::text\n            WHEN nt.nspname = 'pg_catalog'::name THEN format_type(t.oid, NULL::integer)\n            ELSE 'USER-DEFINED'::text\n        END::information_schema.character_data AS data_type,\n    NULL::integer::information_schema.cardinal_number AS character_maximum_length,\n    NULL::integer::information_schema.cardinal_number AS character_octet_length,\n    NULL::name::information_schema.sql_identifier AS character_set_catalog,\n    NULL::name::information_schema.sql_identifier AS character_set_schema,\n    NULL::name::information_schema.sql_identifier AS character_set_name,\n    NULL::name::information_schema.sql_identifier AS collation_catalog,\n    NULL::name::information_schema.sql_identifier AS collation_schema,\n    NULL::name::information_schema.sql_identifier AS collation_name,\n    NULL::integer::information_schema.cardinal_number AS numeric_precision,\n    NULL::integer::information_schema.cardinal_number AS numeric_precision_radix,\n    NULL::integer::information_schema.cardinal_number AS numeric_scale,\n    NULL::integer::information_schema.cardinal_number AS datetime_precision,\n    NULL::character varying::information_schema.character_data AS interval_type,\n    NULL::integer::information_schema.cardinal_number AS interval_precision,\n    current_database()::information_schema.sql_identifier AS udt_catalog,\n    nt.nspname::information_schema.sql_identifier AS udt_schema,\n    t.typname::information_schema.sql_identifier AS udt_name,\n    NULL::name::information_schema.sql_identifier AS scope_catalog,\n    NULL::name::information_schema.sql_identifier AS scope_schema,\n    NULL::name::information_schema.sql_identifier AS scope_name,\n    NULL::integer::information_schema.cardinal_number AS maximum_cardinality,\n    (ss.x).n::information_schema.sql_identifier AS dtd_identifier,\n        CASE\n            WHEN pg_has_role(ss.proowner, 'USAGE'::text) THEN pg_get_function_arg_default(ss.p_oid, (ss.x).n)\n            ELSE NULL::text\n        END::information_schema.character_data AS parameter_default\n   FROM pg_type t,\n    pg_namespace nt,\n    ( SELECT n.nspname AS n_nspname,\n            p.proname,\n            p.oid AS p_oid,\n            p.proowner,\n            p.proargnames,\n            p.proargmodes,\n            information_schema._pg_expandarray(COALESCE(p.proallargtypes, p.proargtypes::oid[])) AS x\n           FROM pg_namespace n,\n            pg_proc p\n          WHERE n.oid = p.pronamespace AND (pg_has_role(p.proowner, 'USAGE'::text) OR has_function_privilege(p.oid, 'EXECUTE'::text))) ss\n  WHERE t.oid = (ss.x).x AND t.typnamespace = nt.oid",
+  "name": "parameters",
+  "schema": "information_schema"
+}

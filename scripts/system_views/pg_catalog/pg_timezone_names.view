@@ -1,0 +1,27 @@
+{
+  "columns": [
+    {
+      "data_type": "text",
+      "name": "name",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "abbrev",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "utc_offset",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "is_dst",
+      "udt_name": "text"
+    }
+  ],
+  "definition_sql": "SELECT pg_timezone_names.name,\n    pg_timezone_names.abbrev,\n    pg_timezone_names.utc_offset,\n    pg_timezone_names.is_dst\n   FROM pg_timezone_names() pg_timezone_names(name, abbrev, utc_offset, is_dst)",
+  "name": "pg_timezone_names",
+  "schema": "pg_catalog"
+}

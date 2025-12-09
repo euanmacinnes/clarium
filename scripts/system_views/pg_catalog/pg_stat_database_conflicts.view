@@ -1,0 +1,42 @@
+{
+  "columns": [
+    {
+      "data_type": "text",
+      "name": "DATID",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "datname",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "CONFL_TABLESPACE",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "CONFL_LOCK",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "CONFL_SNAPSHOT",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "CONFL_BUFFERPIN",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "CONFL_DEADLOCK",
+      "udt_name": "text"
+    }
+  ],
+  "definition_sql": "SELECT d.oid AS datid,\n    d.datname,\n    pg_stat_get_db_conflict_tablespace(d.oid) AS confl_tablespace,\n    pg_stat_get_db_conflict_lock(d.oid) AS confl_lock,\n    pg_stat_get_db_conflict_snapshot(d.oid) AS confl_snapshot,\n    pg_stat_get_db_conflict_bufferpin(d.oid) AS confl_bufferpin,\n    pg_stat_get_db_conflict_startup_deadlock(d.oid) AS confl_deadlock\n   FROM pg_database d",
+  "name": "pg_stat_database_conflicts",
+  "schema": "pg_catalog"
+}

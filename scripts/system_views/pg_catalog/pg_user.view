@@ -1,0 +1,52 @@
+{
+  "columns": [
+    {
+      "data_type": "text",
+      "name": "usename",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "usesysid",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "usecreatedb",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "usesuper",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "userepl",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "usebypassrls",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "PASSWD",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "valuntil",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "useconfig",
+      "udt_name": "text"
+    }
+  ],
+  "definition_sql": "SELECT pg_shadow.usename,\n    pg_shadow.usesysid,\n    pg_shadow.usecreatedb,\n    pg_shadow.usesuper,\n    pg_shadow.userepl,\n    pg_shadow.usebypassrls,\n    '********'::text AS passwd,\n    pg_shadow.valuntil,\n    pg_shadow.useconfig\n   FROM pg_shadow",
+  "name": "pg_user",
+  "schema": "pg_catalog"
+}

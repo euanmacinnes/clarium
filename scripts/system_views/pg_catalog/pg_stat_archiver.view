@@ -1,0 +1,42 @@
+{
+  "columns": [
+    {
+      "data_type": "text",
+      "name": "archived_count",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "last_archived_wal",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "last_archived_time",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "failed_count",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "last_failed_wal",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "last_failed_time",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "stats_reset",
+      "udt_name": "text"
+    }
+  ],
+  "definition_sql": "SELECT s.archived_count,\n    s.last_archived_wal,\n    s.last_archived_time,\n    s.failed_count,\n    s.last_failed_wal,\n    s.last_failed_time,\n    s.stats_reset\n   FROM pg_stat_get_archiver() s(archived_count, last_archived_wal, last_archived_time, failed_count, last_failed_wal, last_failed_time, stats_reset)",
+  "name": "pg_stat_archiver",
+  "schema": "pg_catalog"
+}

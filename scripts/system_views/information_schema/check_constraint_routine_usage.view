@@ -1,0 +1,42 @@
+{
+  "columns": [
+    {
+      "data_type": "text",
+      "name": "CONSTRAINT_CATALOG",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "CONSTRAINT_SCHEMA",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "CONSTRAINT_NAME",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "SPECIFIC_CATALOG",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "SPECIFIC_SCHEMA",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "proname",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "SPECIFIC_NAME",
+      "udt_name": "text"
+    }
+  ],
+  "definition_sql": "SELECT DISTINCT current_database()::information_schema.sql_identifier AS constraint_catalog,\n    nc.nspname::information_schema.sql_identifier AS constraint_schema,\n    c.conname::information_schema.sql_identifier AS constraint_name,\n    current_database()::information_schema.sql_identifier AS specific_catalog,\n    np.nspname::information_schema.sql_identifier AS specific_schema,\n    nameconcatoid(p.proname, p.oid)::information_schema.sql_identifier AS specific_name\n   FROM pg_namespace nc,\n    pg_constraint c,\n    pg_depend d,\n    pg_proc p,\n    pg_namespace np\n  WHERE nc.oid = c.connamespace AND c.contype = 'c'::\"char\" AND c.oid = d.objid AND d.classid = 'pg_constraint'::regclass::oid AND d.refobjid = p.oid AND d.refclassid = 'pg_proc'::regclass::oid AND p.pronamespace = np.oid AND pg_has_role(p.proowner, 'USAGE'::text)",
+  "name": "check_constraint_routine_usage",
+  "schema": "information_schema"
+}

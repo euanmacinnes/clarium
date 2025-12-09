@@ -1,0 +1,57 @@
+{
+  "columns": [
+    {
+      "data_type": "text",
+      "name": "CONSTRAINT_CATALOG",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "CONSTRAINT_SCHEMA",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "CONSTRAINT_NAME",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "TABLE_CATALOG",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "TABLE_SCHEMA",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "TABLE_NAME",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "COLUMN_NAME",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "ORDINAL_POSITION",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "conindid",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "POSITION_IN_UNIQUE_CONSTRAINT",
+      "udt_name": "text"
+    }
+  ],
+  "definition_sql": "SELECT current_database()::information_schema.sql_identifier AS constraint_catalog,\n    ss.nc_nspname::information_schema.sql_identifier AS constraint_schema,\n    ss.conname::information_schema.sql_identifier AS constraint_name,\n    current_database()::information_schema.sql_identifier AS table_catalog,\n    ss.nr_nspname::information_schema.sql_identifier AS table_schema,\n    ss.relname::information_schema.sql_identifier AS table_name,\n    a.attname::information_schema.sql_identifier AS column_name,\n    (ss.x).n::information_schema.cardinal_number AS ordinal_position,\n        CASE\n            WHEN ss.contype = 'f'::\"char\" THEN information_schema._pg_index_position(ss.conindid, ss.confkey[(ss.x).n])\n            ELSE NULL::integer\n        END::information_schema.cardinal_number AS position_in_unique_constraint\n   FROM pg_attribute a,\n    ( SELECT r.oid AS roid,\n            r.relname,\n            r.relowner,\n            nc.nspname AS nc_nspname,\n            nr.nspname AS nr_nspname,\n            c.oid AS coid,\n            c.conname,\n            c.contype,\n            c.conindid,\n            c.confkey,\n            c.confrelid,\n            information_schema._pg_expandarray(c.conkey) AS x\n           FROM pg_namespace nr,\n            pg_class r,\n            pg_namespace nc,\n            pg_constraint c\n          WHERE nr.oid = r.relnamespace AND r.oid = c.conrelid AND nc.oid = c.connamespace AND (c.contype = ANY (ARRAY['p'::\"char\", 'u'::\"char\", 'f'::\"char\"])) AND (r.relkind = ANY (ARRAY['r'::\"char\", 'p'::\"char\"])) AND NOT pg_is_other_temp_schema(nr.oid)) ss\n  WHERE ss.roid = a.attrelid AND a.attnum = (ss.x).x AND NOT a.attisdropped AND (pg_has_role(ss.relowner, 'USAGE'::text) OR has_column_privilege(ss.roid, a.attnum, 'SELECT, INSERT, UPDATE, REFERENCES'::text))",
+  "name": "key_column_usage",
+  "schema": "information_schema"
+}

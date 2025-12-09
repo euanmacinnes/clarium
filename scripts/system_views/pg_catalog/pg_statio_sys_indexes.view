@@ -1,0 +1,42 @@
+{
+  "columns": [
+    {
+      "data_type": "text",
+      "name": "relid",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "indexrelid",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "schemaname",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "relname",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "indexrelname",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "idx_blks_read",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "idx_blks_hit",
+      "udt_name": "text"
+    }
+  ],
+  "definition_sql": "SELECT pg_statio_all_indexes.relid,\n    pg_statio_all_indexes.indexrelid,\n    pg_statio_all_indexes.schemaname,\n    pg_statio_all_indexes.relname,\n    pg_statio_all_indexes.indexrelname,\n    pg_statio_all_indexes.idx_blks_read,\n    pg_statio_all_indexes.idx_blks_hit\n   FROM pg_statio_all_indexes\n  WHERE (pg_statio_all_indexes.schemaname = ANY (ARRAY['pg_catalog'::name, 'information_schema'::name])) OR pg_statio_all_indexes.schemaname ~ '^pg_toast'::text",
+  "name": "pg_statio_sys_indexes",
+  "schema": "pg_catalog"
+}

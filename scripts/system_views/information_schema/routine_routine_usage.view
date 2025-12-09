@@ -1,0 +1,47 @@
+{
+  "columns": [
+    {
+      "data_type": "text",
+      "name": "SPECIFIC_CATALOG",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "SPECIFIC_SCHEMA",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "proname",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "SPECIFIC_NAME",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "ROUTINE_CATALOG",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "ROUTINE_SCHEMA",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "proname",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "ROUTINE_NAME",
+      "udt_name": "text"
+    }
+  ],
+  "definition_sql": "SELECT DISTINCT current_database()::information_schema.sql_identifier AS specific_catalog,\n    np.nspname::information_schema.sql_identifier AS specific_schema,\n    nameconcatoid(p.proname, p.oid)::information_schema.sql_identifier AS specific_name,\n    current_database()::information_schema.sql_identifier AS routine_catalog,\n    np1.nspname::information_schema.sql_identifier AS routine_schema,\n    nameconcatoid(p1.proname, p1.oid)::information_schema.sql_identifier AS routine_name\n   FROM pg_namespace np,\n    pg_proc p,\n    pg_depend d,\n    pg_proc p1,\n    pg_namespace np1\n  WHERE np.oid = p.pronamespace AND p.oid = d.objid AND d.classid = 'pg_proc'::regclass::oid AND d.refobjid = p1.oid AND d.refclassid = 'pg_proc'::regclass::oid AND p1.pronamespace = np1.oid AND (p.prokind = ANY (ARRAY['f'::\"char\", 'p'::\"char\"])) AND (p1.prokind = ANY (ARRAY['f'::\"char\", 'p'::\"char\"])) AND pg_has_role(p1.proowner, 'USAGE'::text)",
+  "name": "routine_routine_usage",
+  "schema": "information_schema"
+}

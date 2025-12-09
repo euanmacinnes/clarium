@@ -1,0 +1,52 @@
+{
+  "columns": [
+    {
+      "data_type": "text",
+      "name": "SUBID",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "subname",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "pid",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "relid",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "received_lsn",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "last_msg_send_time",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "last_msg_receipt_time",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "latest_end_lsn",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "latest_end_time",
+      "udt_name": "text"
+    }
+  ],
+  "definition_sql": "SELECT su.oid AS subid,\n    su.subname,\n    st.pid,\n    st.relid,\n    st.received_lsn,\n    st.last_msg_send_time,\n    st.last_msg_receipt_time,\n    st.latest_end_lsn,\n    st.latest_end_time\n   FROM pg_subscription su\n     LEFT JOIN pg_stat_get_subscription(NULL::oid) st(subid, relid, pid, received_lsn, last_msg_send_time, last_msg_receipt_time, latest_end_lsn, latest_end_time) ON st.subid = su.oid",
+  "name": "pg_stat_subscription",
+  "schema": "pg_catalog"
+}

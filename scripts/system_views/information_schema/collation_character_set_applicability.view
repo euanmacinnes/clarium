@@ -1,0 +1,37 @@
+{
+  "columns": [
+    {
+      "data_type": "text",
+      "name": "COLLATION_CATALOG",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "COLLATION_SCHEMA",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "COLLATION_NAME",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "CHARACTER_SET_CATALOG",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "CHARACTER_SET_SCHEMA",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "CHARACTER_SET_NAME",
+      "udt_name": "text"
+    }
+  ],
+  "definition_sql": "SELECT current_database()::information_schema.sql_identifier AS collation_catalog,\n    nc.nspname::information_schema.sql_identifier AS collation_schema,\n    c.collname::information_schema.sql_identifier AS collation_name,\n    NULL::name::information_schema.sql_identifier AS character_set_catalog,\n    NULL::name::information_schema.sql_identifier AS character_set_schema,\n    getdatabaseencoding()::information_schema.sql_identifier AS character_set_name\n   FROM pg_collation c,\n    pg_namespace nc\n  WHERE c.collnamespace = nc.oid AND (c.collencoding = ANY (ARRAY['-1'::integer, ( SELECT pg_database.encoding\n           FROM pg_database\n          WHERE pg_database.datname = current_database())]))",
+  "name": "collation_character_set_applicability",
+  "schema": "information_schema"
+}

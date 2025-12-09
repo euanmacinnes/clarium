@@ -1,0 +1,27 @@
+{
+  "columns": [
+    {
+      "data_type": "text",
+      "name": "CONSTRAINT_CATALOG",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "CONSTRAINT_SCHEMA",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "CONSTRAINT_NAME",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "oid)",
+      "udt_name": "text"
+    }
+  ],
+  "definition_sql": "SELECT current_database()::information_schema.sql_identifier AS constraint_catalog,\n    rs.nspname::information_schema.sql_identifier AS constraint_schema,\n    con.conname::information_schema.sql_identifier AS constraint_name,\n    SUBSTRING(pg_get_constraintdef(con.oid) FROM 7)::information_schema.character_data AS check_clause\n   FROM pg_constraint con\n     LEFT JOIN pg_namespace rs ON rs.oid = con.connamespace\n     LEFT JOIN pg_class c ON c.oid = con.conrelid\n     LEFT JOIN pg_type t ON t.oid = con.contypid\n  WHERE pg_has_role(COALESCE(c.relowner, t.typowner), 'USAGE'::text) AND con.contype = 'c'::\"char\"\nUNION\n SELECT current_database()::information_schema.sql_identifier AS constraint_catalog,\n    n.nspname::information_schema.sql_identifier AS constraint_schema,\n    (((((n.oid::text || '_'::text) || r.oid::text) || '_'::text) || a.attnum::text) || '_not_null'::text)::information_schema.sql_identifier AS constraint_name,\n    (a.attname::text || ' IS NOT NULL'::text)::information_schema.character_data AS check_clause\n   FROM pg_namespace n,\n    pg_class r,\n    pg_attribute a\n  WHERE n.oid = r.relnamespace AND r.oid = a.attrelid AND a.attnum > 0 AND NOT a.attisdropped AND a.attnotnull AND (r.relkind = ANY (ARRAY['r'::\"char\", 'p'::\"char\"])) AND pg_has_role(r.relowner, 'USAGE'::text)",
+  "name": "check_constraints",
+  "schema": "information_schema"
+}

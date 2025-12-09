@@ -1,0 +1,27 @@
+{
+  "columns": [
+    {
+      "data_type": "text",
+      "name": "pid",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "GSS_AUTHENTICATED",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "PRINCIPAL",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "ENCRYPTED",
+      "udt_name": "text"
+    }
+  ],
+  "definition_sql": "SELECT s.pid,\n    s.gss_auth AS gss_authenticated,\n    s.gss_princ AS principal,\n    s.gss_enc AS encrypted\n   FROM pg_stat_get_activity(NULL::integer) s(datid, pid, usesysid, application_name, state, query, wait_event_type, wait_event, xact_start, query_start, backend_start, state_change, client_addr, client_hostname, client_port, backend_xid, backend_xmin, backend_type, ssl, sslversion, sslcipher, sslbits, ssl_client_dn, ssl_client_serial, ssl_issuer_dn, gss_auth, gss_princ, gss_enc, leader_pid, query_id)\n  WHERE s.client_port IS NOT NULL",
+  "name": "pg_stat_gssapi",
+  "schema": "pg_catalog"
+}

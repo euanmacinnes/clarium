@@ -1,0 +1,117 @@
+{
+  "columns": [
+    {
+      "data_type": "text",
+      "name": "datid",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "datname",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "pid",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "leader_pid",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "usesysid",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "USENAME",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "application_name",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "client_addr",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "client_hostname",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "client_port",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "backend_start",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "xact_start",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "query_start",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "state_change",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "wait_event_type",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "wait_event",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "state",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "backend_xid",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "backend_xmin",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "query_id",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "query",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "backend_type",
+      "udt_name": "text"
+    }
+  ],
+  "definition_sql": "SELECT s.datid,\n    d.datname,\n    s.pid,\n    s.leader_pid,\n    s.usesysid,\n    u.rolname AS usename,\n    s.application_name,\n    s.client_addr,\n    s.client_hostname,\n    s.client_port,\n    s.backend_start,\n    s.xact_start,\n    s.query_start,\n    s.state_change,\n    s.wait_event_type,\n    s.wait_event,\n    s.state,\n    s.backend_xid,\n    s.backend_xmin,\n    s.query_id,\n    s.query,\n    s.backend_type\n   FROM pg_stat_get_activity(NULL::integer) s(datid, pid, usesysid, application_name, state, query, wait_event_type, wait_event, xact_start, query_start, backend_start, state_change, client_addr, client_hostname, client_port, backend_xid, backend_xmin, backend_type, ssl, sslversion, sslcipher, sslbits, ssl_client_dn, ssl_client_serial, ssl_issuer_dn, gss_auth, gss_princ, gss_enc, leader_pid, query_id)\n     LEFT JOIN pg_database d ON s.datid = d.oid\n     LEFT JOIN pg_authid u ON s.usesysid = u.oid",
+  "name": "pg_stat_activity",
+  "schema": "pg_catalog"
+}

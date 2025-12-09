@@ -1,0 +1,52 @@
+{
+  "columns": [
+    {
+      "data_type": "text",
+      "name": "wal_records",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "wal_fpi",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "wal_bytes",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "wal_buffers_full",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "wal_write",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "wal_sync",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "wal_write_time",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "wal_sync_time",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "stats_reset",
+      "udt_name": "text"
+    }
+  ],
+  "definition_sql": "SELECT w.wal_records,\n    w.wal_fpi,\n    w.wal_bytes,\n    w.wal_buffers_full,\n    w.wal_write,\n    w.wal_sync,\n    w.wal_write_time,\n    w.wal_sync_time,\n    w.stats_reset\n   FROM pg_stat_get_wal() w(wal_records, wal_fpi, wal_bytes, wal_buffers_full, wal_write, wal_sync, wal_write_time, wal_sync_time, stats_reset)",
+  "name": "pg_stat_wal",
+  "schema": "pg_catalog"
+}

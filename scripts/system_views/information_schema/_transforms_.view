@@ -1,0 +1,52 @@
+{
+  "columns": [
+    {
+      "data_type": "text",
+      "name": "UDT_CATALOG",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "UDT_SCHEMA",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "UDT_NAME",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "SPECIFIC_CATALOG",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "SPECIFIC_SCHEMA",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "proname",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "SPECIFIC_NAME",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "GROUP_NAME",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "TRANSFORM_TYPE",
+      "udt_name": "text"
+    }
+  ],
+  "definition_sql": "SELECT current_database()::information_schema.sql_identifier AS udt_catalog,\n    nt.nspname::information_schema.sql_identifier AS udt_schema,\n    t.typname::information_schema.sql_identifier AS udt_name,\n    current_database()::information_schema.sql_identifier AS specific_catalog,\n    np.nspname::information_schema.sql_identifier AS specific_schema,\n    nameconcatoid(p.proname, p.oid)::information_schema.sql_identifier AS specific_name,\n    l.lanname::information_schema.sql_identifier AS group_name,\n    'FROM SQL'::character varying::information_schema.character_data AS transform_type\n   FROM pg_type t\n     JOIN pg_transform x ON t.oid = x.trftype\n     JOIN pg_language l ON x.trflang = l.oid\n     JOIN pg_proc p ON x.trffromsql::oid = p.oid\n     JOIN pg_namespace nt ON t.typnamespace = nt.oid\n     JOIN pg_namespace np ON p.pronamespace = np.oid\nUNION\n SELECT current_database()::information_schema.sql_identifier AS udt_catalog,\n    nt.nspname::information_schema.sql_identifier AS udt_schema,\n    t.typname::information_schema.sql_identifier AS udt_name,\n    current_database()::information_schema.sql_identifier AS specific_catalog,\n    np.nspname::information_schema.sql_identifier AS specific_schema,\n    nameconcatoid(p.proname, p.oid)::information_schema.sql_identifier AS specific_name,\n    l.lanname::information_schema.sql_identifier AS group_name,\n    'TO SQL'::character varying::information_schema.character_data AS transform_type\n   FROM pg_type t\n     JOIN pg_transform x ON t.oid = x.trftype\n     JOIN pg_language l ON x.trflang = l.oid\n     JOIN pg_proc p ON x.trftosql::oid = p.oid\n     JOIN pg_namespace nt ON t.typnamespace = nt.oid\n     JOIN pg_namespace np ON p.pronamespace = np.oid\n  ORDER BY 1, 2, 3, 7, 8",
+  "name": "\"transforms\"",
+  "schema": "information_schema"
+}

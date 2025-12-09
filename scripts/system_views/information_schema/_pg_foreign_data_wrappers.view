@@ -1,0 +1,42 @@
+{
+  "columns": [
+    {
+      "data_type": "text",
+      "name": "oid",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "fdwowner",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "fdwoptions",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "FOREIGN_DATA_WRAPPER_CATALOG",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "FOREIGN_DATA_WRAPPER_NAME",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "AUTHORIZATION_IDENTIFIER",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "FOREIGN_DATA_WRAPPER_LANGUAGE",
+      "udt_name": "text"
+    }
+  ],
+  "definition_sql": "SELECT w.oid,\n    w.fdwowner,\n    w.fdwoptions,\n    current_database()::information_schema.sql_identifier AS foreign_data_wrapper_catalog,\n    w.fdwname::information_schema.sql_identifier AS foreign_data_wrapper_name,\n    u.rolname::information_schema.sql_identifier AS authorization_identifier,\n    'c'::character varying::information_schema.character_data AS foreign_data_wrapper_language\n   FROM pg_foreign_data_wrapper w,\n    pg_authid u\n  WHERE u.oid = w.fdwowner AND (pg_has_role(w.fdwowner, 'USAGE'::text) OR has_foreign_data_wrapper_privilege(w.oid, 'USAGE'::text))",
+  "name": "_pg_foreign_data_wrappers",
+  "schema": "information_schema"
+}

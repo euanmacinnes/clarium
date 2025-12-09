@@ -1,0 +1,147 @@
+{
+  "columns": [
+    {
+      "data_type": "text",
+      "name": "DATID",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "datname",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "NUMBACKENDS",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "XACT_COMMIT",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "XACT_ROLLBACK",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "BLKS_READ",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "BLKS_HIT",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "TUP_RETURNED",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "TUP_FETCHED",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "TUP_INSERTED",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "TUP_UPDATED",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "TUP_DELETED",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "CONFLICTS",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "TEMP_FILES",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "TEMP_BYTES",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "DEADLOCKS",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "CHECKSUM_FAILURES",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "CHECKSUM_LAST_FAILURE",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "BLK_READ_TIME",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "BLK_WRITE_TIME",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "SESSION_TIME",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "ACTIVE_TIME",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "IDLE_IN_TRANSACTION_TIME",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "SESSIONS",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "SESSIONS_ABANDONED",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "SESSIONS_FATAL",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "SESSIONS_KILLED",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "STATS_RESET",
+      "udt_name": "text"
+    }
+  ],
+  "definition_sql": "SELECT d.oid AS datid,\n    d.datname,\n        CASE\n            WHEN d.oid = 0::oid THEN 0\n            ELSE pg_stat_get_db_numbackends(d.oid)\n        END AS numbackends,\n    pg_stat_get_db_xact_commit(d.oid) AS xact_commit,\n    pg_stat_get_db_xact_rollback(d.oid) AS xact_rollback,\n    pg_stat_get_db_blocks_fetched(d.oid) - pg_stat_get_db_blocks_hit(d.oid) AS blks_read,\n    pg_stat_get_db_blocks_hit(d.oid) AS blks_hit,\n    pg_stat_get_db_tuples_returned(d.oid) AS tup_returned,\n    pg_stat_get_db_tuples_fetched(d.oid) AS tup_fetched,\n    pg_stat_get_db_tuples_inserted(d.oid) AS tup_inserted,\n    pg_stat_get_db_tuples_updated(d.oid) AS tup_updated,\n    pg_stat_get_db_tuples_deleted(d.oid) AS tup_deleted,\n    pg_stat_get_db_conflict_all(d.oid) AS conflicts,\n    pg_stat_get_db_temp_files(d.oid) AS temp_files,\n    pg_stat_get_db_temp_bytes(d.oid) AS temp_bytes,\n    pg_stat_get_db_deadlocks(d.oid) AS deadlocks,\n    pg_stat_get_db_checksum_failures(d.oid) AS checksum_failures,\n    pg_stat_get_db_checksum_last_failure(d.oid) AS checksum_last_failure,\n    pg_stat_get_db_blk_read_time(d.oid) AS blk_read_time,\n    pg_stat_get_db_blk_write_time(d.oid) AS blk_write_time,\n    pg_stat_get_db_session_time(d.oid) AS session_time,\n    pg_stat_get_db_active_time(d.oid) AS active_time,\n    pg_stat_get_db_idle_in_transaction_time(d.oid) AS idle_in_transaction_time,\n    pg_stat_get_db_sessions(d.oid) AS sessions,\n    pg_stat_get_db_sessions_abandoned(d.oid) AS sessions_abandoned,\n    pg_stat_get_db_sessions_fatal(d.oid) AS sessions_fatal,\n    pg_stat_get_db_sessions_killed(d.oid) AS sessions_killed,\n    pg_stat_get_db_stat_reset_time(d.oid) AS stats_reset\n   FROM ( SELECT 0 AS oid,\n            NULL::name AS datname\n        UNION ALL\n         SELECT pg_database.oid,\n            pg_database.datname\n           FROM pg_database) d",
+  "name": "pg_stat_database",
+  "schema": "pg_catalog"
+}

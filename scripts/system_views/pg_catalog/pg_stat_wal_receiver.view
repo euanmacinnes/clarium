@@ -1,0 +1,82 @@
+{
+  "columns": [
+    {
+      "data_type": "text",
+      "name": "pid",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "status",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "receive_start_lsn",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "receive_start_tli",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "written_lsn",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "flushed_lsn",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "received_tli",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "last_msg_send_time",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "last_msg_receipt_time",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "latest_end_lsn",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "latest_end_time",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "slot_name",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "sender_host",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "sender_port",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "conninfo",
+      "udt_name": "text"
+    }
+  ],
+  "definition_sql": "SELECT s.pid,\n    s.status,\n    s.receive_start_lsn,\n    s.receive_start_tli,\n    s.written_lsn,\n    s.flushed_lsn,\n    s.received_tli,\n    s.last_msg_send_time,\n    s.last_msg_receipt_time,\n    s.latest_end_lsn,\n    s.latest_end_time,\n    s.slot_name,\n    s.sender_host,\n    s.sender_port,\n    s.conninfo\n   FROM pg_stat_get_wal_receiver() s(pid, status, receive_start_lsn, receive_start_tli, written_lsn, flushed_lsn, received_tli, last_msg_send_time, last_msg_receipt_time, latest_end_lsn, latest_end_time, slot_name, sender_host, sender_port, conninfo)\n  WHERE s.pid IS NOT NULL",
+  "name": "pg_stat_wal_receiver",
+  "schema": "pg_catalog"
+}

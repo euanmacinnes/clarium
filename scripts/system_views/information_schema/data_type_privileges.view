@@ -1,0 +1,32 @@
+{
+  "columns": [
+    {
+      "data_type": "text",
+      "name": "OBJECT_CATALOG",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "OBJECT_SCHEMA",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "OBJECT_NAME",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "OBJECT_TYPE",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "DTD_IDENTIFIER",
+      "udt_name": "text"
+    }
+  ],
+  "definition_sql": "SELECT current_database()::information_schema.sql_identifier AS object_catalog,\n    x.objschema AS object_schema,\n    x.objname AS object_name,\n    x.objtype::information_schema.character_data AS object_type,\n    x.objdtdid AS dtd_identifier\n   FROM ( SELECT attributes.udt_schema,\n            attributes.udt_name,\n            'USER-DEFINED TYPE'::text AS text,\n            attributes.dtd_identifier\n           FROM information_schema.attributes\n        UNION ALL\n         SELECT columns.table_schema,\n            columns.table_name,\n            'TABLE'::text AS text,\n            columns.dtd_identifier\n           FROM information_schema.columns\n        UNION ALL\n         SELECT domains.domain_schema,\n            domains.domain_name,\n            'DOMAIN'::text AS text,\n            domains.dtd_identifier\n           FROM information_schema.domains\n        UNION ALL\n         SELECT parameters.specific_schema,\n            parameters.specific_name,\n            'ROUTINE'::text AS text,\n            parameters.dtd_identifier\n           FROM information_schema.parameters\n        UNION ALL\n         SELECT routines.specific_schema,\n            routines.specific_name,\n            'ROUTINE'::text AS text,\n            routines.dtd_identifier\n           FROM information_schema.routines) x(objschema, objname, objtype, objdtdid)",
+  "name": "data_type_privileges",
+  "schema": "information_schema"
+}

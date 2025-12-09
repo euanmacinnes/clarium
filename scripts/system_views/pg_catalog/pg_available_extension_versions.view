@@ -1,0 +1,52 @@
+{
+  "columns": [
+    {
+      "data_type": "text",
+      "name": "name",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "version",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "INSTALLED",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "superuser",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "trusted",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "relocatable",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "schema",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "requires",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "comment",
+      "udt_name": "text"
+    }
+  ],
+  "definition_sql": "SELECT e.name,\n    e.version,\n    x.extname IS NOT NULL AS installed,\n    e.superuser,\n    e.trusted,\n    e.relocatable,\n    e.schema,\n    e.requires,\n    e.comment\n   FROM pg_available_extension_versions() e(name, version, superuser, trusted, relocatable, schema, requires, comment)\n     LEFT JOIN pg_extension x ON e.name = x.extname AND e.version = x.extversion",
+  "name": "pg_available_extension_versions",
+  "schema": "pg_catalog"
+}

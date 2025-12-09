@@ -1,0 +1,22 @@
+{
+  "columns": [
+    {
+      "data_type": "text",
+      "name": "pubname",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "SCHEMANAME",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "TABLENAME",
+      "udt_name": "text"
+    }
+  ],
+  "definition_sql": "SELECT p.pubname,\n    n.nspname AS schemaname,\n    c.relname AS tablename\n   FROM pg_publication p,\n    LATERAL pg_get_publication_tables(p.pubname::text) gpt(relid),\n    pg_class c\n     JOIN pg_namespace n ON n.oid = c.relnamespace\n  WHERE c.oid = gpt.relid",
+  "name": "pg_publication_tables",
+  "schema": "pg_catalog"
+}

@@ -1,0 +1,32 @@
+{
+  "columns": [
+    {
+      "data_type": "text",
+      "name": "TABLE_CATALOG",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "TABLE_SCHEMA",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "TABLE_NAME",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "COLUMN_NAME",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "DEPENDENT_COLUMN",
+      "udt_name": "text"
+    }
+  ],
+  "definition_sql": "SELECT DISTINCT current_database()::information_schema.sql_identifier AS table_catalog,\n    n.nspname::information_schema.sql_identifier AS table_schema,\n    c.relname::information_schema.sql_identifier AS table_name,\n    ac.attname::information_schema.sql_identifier AS column_name,\n    ad.attname::information_schema.sql_identifier AS dependent_column\n   FROM pg_namespace n,\n    pg_class c,\n    pg_depend d,\n    pg_attribute ac,\n    pg_attribute ad\n  WHERE n.oid = c.relnamespace AND c.oid = ac.attrelid AND c.oid = ad.attrelid AND d.classid = 'pg_class'::regclass::oid AND d.refclassid = 'pg_class'::regclass::oid AND d.objid = d.refobjid AND c.oid = d.objid AND d.objsubid = ad.attnum AND d.refobjsubid = ac.attnum AND ad.attgenerated <> ''::\"char\" AND pg_has_role(c.relowner, 'USAGE'::text)",
+  "name": "column_column_usage",
+  "schema": "information_schema"
+}

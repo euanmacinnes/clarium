@@ -1,0 +1,52 @@
+{
+  "columns": [
+    {
+      "data_type": "text",
+      "name": "name",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "ident",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "parent",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "level",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "total_bytes",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "total_nblocks",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "free_bytes",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "free_chunks",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "used_bytes",
+      "udt_name": "text"
+    }
+  ],
+  "definition_sql": "SELECT pg_get_backend_memory_contexts.name,\n    pg_get_backend_memory_contexts.ident,\n    pg_get_backend_memory_contexts.parent,\n    pg_get_backend_memory_contexts.level,\n    pg_get_backend_memory_contexts.total_bytes,\n    pg_get_backend_memory_contexts.total_nblocks,\n    pg_get_backend_memory_contexts.free_bytes,\n    pg_get_backend_memory_contexts.free_chunks,\n    pg_get_backend_memory_contexts.used_bytes\n   FROM pg_get_backend_memory_contexts() pg_get_backend_memory_contexts(name, ident, parent, level, total_bytes, total_nblocks, free_bytes, free_chunks, used_bytes)",
+  "name": "pg_backend_memory_contexts",
+  "schema": "pg_catalog"
+}

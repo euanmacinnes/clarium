@@ -1,0 +1,62 @@
+{
+  "columns": [
+    {
+      "data_type": "text",
+      "name": "relid",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "schemaname",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "relname",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "heap_blks_read",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "heap_blks_hit",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "idx_blks_read",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "idx_blks_hit",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "toast_blks_read",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "toast_blks_hit",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "tidx_blks_read",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "tidx_blks_hit",
+      "udt_name": "text"
+    }
+  ],
+  "definition_sql": "SELECT pg_statio_all_tables.relid,\n    pg_statio_all_tables.schemaname,\n    pg_statio_all_tables.relname,\n    pg_statio_all_tables.heap_blks_read,\n    pg_statio_all_tables.heap_blks_hit,\n    pg_statio_all_tables.idx_blks_read,\n    pg_statio_all_tables.idx_blks_hit,\n    pg_statio_all_tables.toast_blks_read,\n    pg_statio_all_tables.toast_blks_hit,\n    pg_statio_all_tables.tidx_blks_read,\n    pg_statio_all_tables.tidx_blks_hit\n   FROM pg_statio_all_tables\n  WHERE (pg_statio_all_tables.schemaname <> ALL (ARRAY['pg_catalog'::name, 'information_schema'::name])) AND pg_statio_all_tables.schemaname !~ '^pg_toast'::text",
+  "name": "pg_statio_user_tables",
+  "schema": "pg_catalog"
+}

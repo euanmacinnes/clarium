@@ -1,0 +1,27 @@
+{
+  "columns": [
+    {
+      "data_type": "text",
+      "name": "name",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "default_version",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "INSTALLED_VERSION",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "comment",
+      "udt_name": "text"
+    }
+  ],
+  "definition_sql": "SELECT e.name,\n    e.default_version,\n    x.extversion AS installed_version,\n    e.comment\n   FROM pg_available_extensions() e(name, default_version, comment)\n     LEFT JOIN pg_extension x ON e.name = x.extname",
+  "name": "pg_available_extensions",
+  "schema": "pg_catalog"
+}

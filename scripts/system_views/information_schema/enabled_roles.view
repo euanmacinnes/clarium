@@ -1,0 +1,12 @@
+{
+  "columns": [
+    {
+      "data_type": "text",
+      "name": "ROLE_NAME",
+      "udt_name": "text"
+    }
+  ],
+  "definition_sql": "SELECT a.rolname::information_schema.sql_identifier AS role_name\n   FROM pg_authid a\n  WHERE pg_has_role(a.oid, 'USAGE'::text)",
+  "name": "enabled_roles",
+  "schema": "information_schema"
+}

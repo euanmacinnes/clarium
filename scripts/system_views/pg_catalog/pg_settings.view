@@ -1,0 +1,92 @@
+{
+  "columns": [
+    {
+      "data_type": "text",
+      "name": "name",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "setting",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "unit",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "category",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "short_desc",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "extra_desc",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "context",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "vartype",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "source",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "min_val",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "max_val",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "enumvals",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "boot_val",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "reset_val",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "sourcefile",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "sourceline",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "pending_restart",
+      "udt_name": "text"
+    }
+  ],
+  "definition_sql": "SELECT a.name,\n    a.setting,\n    a.unit,\n    a.category,\n    a.short_desc,\n    a.extra_desc,\n    a.context,\n    a.vartype,\n    a.source,\n    a.min_val,\n    a.max_val,\n    a.enumvals,\n    a.boot_val,\n    a.reset_val,\n    a.sourcefile,\n    a.sourceline,\n    a.pending_restart\n   FROM pg_show_all_settings() a(name, setting, unit, category, short_desc, extra_desc, context, vartype, source, min_val, max_val, enumvals, boot_val, reset_val, sourcefile, sourceline, pending_restart)",
+  "name": "pg_settings",
+  "schema": "pg_catalog"
+}

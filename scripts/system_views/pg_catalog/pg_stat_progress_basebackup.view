@@ -1,0 +1,37 @@
+{
+  "columns": [
+    {
+      "data_type": "text",
+      "name": "pid",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "PHASE",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "BACKUP_TOTAL",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "BACKUP_STREAMED",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "TABLESPACES_TOTAL",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "TABLESPACES_STREAMED",
+      "udt_name": "text"
+    }
+  ],
+  "definition_sql": "SELECT s.pid,\n        CASE s.param1\n            WHEN 0 THEN 'initializing'::text\n            WHEN 1 THEN 'waiting for checkpoint to finish'::text\n            WHEN 2 THEN 'estimating backup size'::text\n            WHEN 3 THEN 'streaming database files'::text\n            WHEN 4 THEN 'waiting for wal archiving to finish'::text\n            WHEN 5 THEN 'transferring wal files'::text\n            ELSE NULL::text\n        END AS phase,\n        CASE s.param2\n            WHEN '-1'::integer THEN NULL::bigint\n            ELSE s.param2\n        END AS backup_total,\n    s.param3 AS backup_streamed,\n    s.param4 AS tablespaces_total,\n    s.param5 AS tablespaces_streamed\n   FROM pg_stat_get_progress_info('BASEBACKUP'::text) s(pid, datid, relid, param1, param2, param3, param4, param5, param6, param7, param8, param9, param10, param11, param12, param13, param14, param15, param16, param17, param18, param19, param20)",
+  "name": "pg_stat_progress_basebackup",
+  "schema": "pg_catalog"
+}

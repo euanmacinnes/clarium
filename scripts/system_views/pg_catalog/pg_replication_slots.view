@@ -1,0 +1,82 @@
+{
+  "columns": [
+    {
+      "data_type": "text",
+      "name": "slot_name",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "plugin",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "slot_type",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "datoid",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "DATABASE",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "temporary",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "active",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "active_pid",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "xmin",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "catalog_xmin",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "restart_lsn",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "confirmed_flush_lsn",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "wal_status",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "safe_wal_size",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "two_phase",
+      "udt_name": "text"
+    }
+  ],
+  "definition_sql": "SELECT l.slot_name,\n    l.plugin,\n    l.slot_type,\n    l.datoid,\n    d.datname AS database,\n    l.temporary,\n    l.active,\n    l.active_pid,\n    l.xmin,\n    l.catalog_xmin,\n    l.restart_lsn,\n    l.confirmed_flush_lsn,\n    l.wal_status,\n    l.safe_wal_size,\n    l.two_phase\n   FROM pg_get_replication_slots() l(slot_name, plugin, slot_type, datoid, temporary, active, active_pid, xmin, catalog_xmin, restart_lsn, confirmed_flush_lsn, wal_status, safe_wal_size, two_phase)\n     LEFT JOIN pg_database d ON l.datoid = d.oid",
+  "name": "pg_replication_slots",
+  "schema": "pg_catalog"
+}

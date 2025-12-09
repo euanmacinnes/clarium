@@ -1,0 +1,42 @@
+{
+  "columns": [
+    {
+      "data_type": "text",
+      "name": "TABLE_CATALOG",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "TABLE_SCHEMA",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "TABLE_NAME",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "COLUMN_NAME",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "CONSTRAINT_CATALOG",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "CONSTRAINT_SCHEMA",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "CONSTRAINT_NAME",
+      "udt_name": "text"
+    }
+  ],
+  "definition_sql": "SELECT current_database()::information_schema.sql_identifier AS table_catalog,\n    x.tblschema::information_schema.sql_identifier AS table_schema,\n    x.tblname::information_schema.sql_identifier AS table_name,\n    x.colname::information_schema.sql_identifier AS column_name,\n    current_database()::information_schema.sql_identifier AS constraint_catalog,\n    x.cstrschema::information_schema.sql_identifier AS constraint_schema,\n    x.cstrname::information_schema.sql_identifier AS constraint_name\n   FROM ( SELECT DISTINCT nr.nspname,\n            r.relname,\n            r.relowner,\n            a.attname,\n            nc.nspname,\n            c.conname\n           FROM pg_namespace nr,\n            pg_class r,\n            pg_attribute a,\n            pg_depend d,\n            pg_namespace nc,\n            pg_constraint c\n          WHERE nr.oid = r.relnamespace AND r.oid = a.attrelid AND d.refclassid = 'pg_class'::regclass::oid AND d.refobjid = r.oid AND d.refobjsubid = a.attnum AND d.classid = 'pg_constraint'::regclass::oid AND d.objid = c.oid AND c.connamespace = nc.oid AND c.contype = 'c'::\"char\" AND (r.relkind = ANY (ARRAY['r'::\"char\", 'p'::\"char\"])) AND NOT a.attisdropped\n        UNION ALL\n         SELECT nr.nspname,\n            r.relname,\n            r.relowner,\n            a.attname,\n            nc.nspname,\n            c.conname\n           FROM pg_namespace nr,\n            pg_class r,\n            pg_attribute a,\n            pg_namespace nc,\n            pg_constraint c\n          WHERE nr.oid = r.relnamespace AND r.oid = a.attrelid AND nc.oid = c.connamespace AND r.oid =\n                CASE c.contype\n                    WHEN 'f'::\"char\" THEN c.confrelid\n                    ELSE c.conrelid\n                END AND (a.attnum = ANY (\n                CASE c.contype\n                    WHEN 'f'::\"char\" THEN c.confkey\n                    ELSE c.conkey\n                END)) AND NOT a.attisdropped AND (c.contype = ANY (ARRAY['p'::\"char\", 'u'::\"char\", 'f'::\"char\"])) AND (r.relkind = ANY (ARRAY['r'::\"char\", 'p'::\"char\"]))) x(tblschema, tblname, tblowner, colname, cstrschema, cstrname)\n  WHERE pg_has_role(x.tblowner, 'USAGE'::text)",
+  "name": "constraint_column_usage",
+  "schema": "information_schema"
+}

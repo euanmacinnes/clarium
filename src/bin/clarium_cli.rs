@@ -298,7 +298,6 @@ fn main() -> Result<()> {
 
     // System view generator flags
     let mut gen_system_views: bool = false;
-    let mut gen_plans_dir: Option<String> = None;
     let mut gen_out_dir: Option<String> = None;
     let mut gen_overwrite: bool = false;
     let mut gen_dry_run: bool = false;
@@ -344,10 +343,6 @@ fn main() -> Result<()> {
             "--repl" => { repl = true; i += 1; continue; }
             // --- System .view generator flags ---
             "--gen-system-views" => { gen_system_views = true; i += 1; continue; }
-            "--plans-dir" => {
-                if i + 1 >= args.len() { eprintln!("--plans-dir requires a value"); print_usage(&program); std::process::exit(2); }
-                gen_plans_dir = Some(args[i+1].clone()); i += 2; continue;
-            }
             "--out-dir" => {
                 if i + 1 >= args.len() { eprintln!("--out-dir requires a value"); print_usage(&program); std::process::exit(2); }
                 gen_out_dir = Some(args[i+1].clone()); i += 2; continue;
@@ -379,24 +374,19 @@ fn main() -> Result<()> {
 
     // Command-argument-gated: generate system .view files from plans markdown and exit
     if gen_system_views {
-        let plans_dir = gen_plans_dir.unwrap_or_else(|| {
-            // default to ./plans (scan recursively) to cover "plans/postgres system objects"
-            "plans".to_string()
-        });
         let out_dir = gen_out_dir.unwrap_or_else(|| {
             // default to repo scripts/system_views
             if cfg!(windows) { "scripts\\system_views".to_string() } else { "scripts/system_views".to_string() }
         });
         let opts = clarium::tools::viewgen::GenOptions {
-            plans_dir: std::path::PathBuf::from(&plans_dir),
             out_dir: std::path::PathBuf::from(&out_dir),
             overwrite: gen_overwrite,
             dry_run: gen_dry_run,
         };
         match clarium::tools::viewgen::generate_system_views(&opts) {
             Ok(n) => {
-                eprintln!("[viewgen] generated {} .view file(s) from '{}', output to '{}'{}{}",
-                    n, plans_dir, out_dir,
+                eprintln!("[viewgen] generated {} .view file(s) by scanning '{}' for original_schema_views.md{}{}",
+                    n, out_dir,
                     if gen_overwrite { " (overwrite)" } else { "" },
                     if gen_dry_run { " [dry-run]" } else { "" }
                 );

@@ -1,0 +1,62 @@
+{
+  "columns": [
+    {
+      "data_type": "text",
+      "name": "TABLE_CATALOG",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "TABLE_SCHEMA",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "TABLE_NAME",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "relowner",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "VIEW_DEFINITION",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "CHECK_OPTION",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "oid::regclass",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "IS_UPDATABLE",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "oid::regclass",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "IS_INSERTABLE_INTO",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "CASE\n            WHEN (EXISTS ( SELECT 1",
+      "udt_name": "text"
+    }
+  ],
+  "definition_sql": "SELECT current_database()::information_schema.sql_identifier AS table_catalog,\n    nc.nspname::information_schema.sql_identifier AS table_schema,\n    c.relname::information_schema.sql_identifier AS table_name,\n        CASE\n            WHEN pg_has_role(c.relowner, 'USAGE'::text) THEN pg_get_viewdef(c.oid)\n            ELSE NULL::text\n        END::information_schema.character_data AS view_definition,\n        CASE\n            WHEN 'check_option=cascaded'::text = ANY (c.reloptions) THEN 'CASCADED'::text\n            WHEN 'check_option=local'::text = ANY (c.reloptions) THEN 'LOCAL'::text\n            ELSE 'NONE'::text\n        END::information_schema.character_data AS check_option,\n        CASE\n            WHEN (pg_relation_is_updatable(c.oid::regclass, false) & 20) = 20 THEN 'YES'::text\n            ELSE 'NO'::text\n        END::information_schema.yes_or_no AS is_updatable,\n        CASE\n            WHEN (pg_relation_is_updatable(c.oid::regclass, false) & 8) = 8 THEN 'YES'::text\n            ELSE 'NO'::text\n        END::information_schema.yes_or_no AS is_insertable_into,\n        CASE\n            WHEN (EXISTS ( SELECT 1\n               FROM pg_trigger\n              WHERE pg_trigger.tgrelid = c.oid AND (pg_trigger.tgtype::integer & 81) = 81)) THEN 'YES'::text\n            ELSE 'NO'::text\n        END::information_schema.yes_or_no AS is_trigger_updatable,\n        CASE\n            WHEN (EXISTS ( SELECT 1\n               FROM pg_trigger\n              WHERE pg_trigger.tgrelid = c.oid AND (pg_trigger.tgtype::integer & 73) = 73)) THEN 'YES'::text\n            ELSE 'NO'::text\n        END::information_schema.yes_or_no AS is_trigger_deletable,\n        CASE\n            WHEN (EXISTS ( SELECT 1\n               FROM pg_trigger\n              WHERE pg_trigger.tgrelid = c.oid AND (pg_trigger.tgtype::integer & 69) = 69)) THEN 'YES'::text\n            ELSE 'NO'::text\n        END::information_schema.yes_or_no AS is_trigger_insertable_into\n   FROM pg_namespace nc,\n    pg_class c\n  WHERE c.relnamespace = nc.oid AND c.relkind = 'v'::\"char\" AND NOT pg_is_other_temp_schema(nc.oid) AND (pg_has_role(c.relowner, 'USAGE'::text) OR has_table_privilege(c.oid, 'SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER'::text) OR has_any_column_privilege(c.oid, 'SELECT, INSERT, UPDATE, REFERENCES'::text))",
+  "name": "\"views\"",
+  "schema": "information_schema"
+}

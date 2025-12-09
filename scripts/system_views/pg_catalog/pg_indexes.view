@@ -1,0 +1,32 @@
+{
+  "columns": [
+    {
+      "data_type": "text",
+      "name": "SCHEMANAME",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "TABLENAME",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "INDEXNAME",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "TABLESPACE",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "INDEXDEF",
+      "udt_name": "text"
+    }
+  ],
+  "definition_sql": "SELECT n.nspname AS schemaname,\n    c.relname AS tablename,\n    i.relname AS indexname,\n    t.spcname AS tablespace,\n    pg_get_indexdef(i.oid) AS indexdef\n   FROM pg_index x\n     JOIN pg_class c ON c.oid = x.indrelid\n     JOIN pg_class i ON i.oid = x.indexrelid\n     LEFT JOIN pg_namespace n ON n.oid = c.relnamespace\n     LEFT JOIN pg_tablespace t ON t.oid = i.reltablespace\n  WHERE (c.relkind = ANY (ARRAY['r'::\"char\", 'm'::\"char\", 'p'::\"char\"])) AND (i.relkind = ANY (ARRAY['i'::\"char\", 'I'::\"char\"]))",
+  "name": "pg_indexes",
+  "schema": "pg_catalog"
+}

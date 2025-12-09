@@ -1,0 +1,47 @@
+{
+  "columns": [
+    {
+      "data_type": "text",
+      "name": "CHARACTER_SET_CATALOG",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "CHARACTER_SET_SCHEMA",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "CHARACTER_SET_NAME",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "CHARACTER_REPERTOIRE",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "FORM_OF_USE",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "DEFAULT_COLLATE_CATALOG",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "DEFAULT_COLLATE_SCHEMA",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "DEFAULT_COLLATE_NAME",
+      "udt_name": "text"
+    }
+  ],
+  "definition_sql": "SELECT NULL::name::information_schema.sql_identifier AS character_set_catalog,\n    NULL::name::information_schema.sql_identifier AS character_set_schema,\n    getdatabaseencoding()::information_schema.sql_identifier AS character_set_name,\n        CASE\n            WHEN getdatabaseencoding() = 'UTF8'::name THEN 'UCS'::name\n            ELSE getdatabaseencoding()\n        END::information_schema.sql_identifier AS character_repertoire,\n    getdatabaseencoding()::information_schema.sql_identifier AS form_of_use,\n    current_database()::information_schema.sql_identifier AS default_collate_catalog,\n    nc.nspname::information_schema.sql_identifier AS default_collate_schema,\n    c.collname::information_schema.sql_identifier AS default_collate_name\n   FROM pg_database d\n     LEFT JOIN (pg_collation c\n     JOIN pg_namespace nc ON c.collnamespace = nc.oid) ON d.datcollate = c.collcollate AND d.datctype = c.collctype\n  WHERE d.datname = current_database()\n  ORDER BY (char_length(c.collname::text)) DESC, c.collname\n LIMIT 1",
+  "name": "character_sets",
+  "schema": "information_schema"
+}

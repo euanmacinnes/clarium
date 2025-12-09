@@ -1,0 +1,52 @@
+{
+  "columns": [
+    {
+      "data_type": "text",
+      "name": "line_number",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "type",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "database",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "user_name",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "address",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "netmask",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "auth_method",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "options",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "error",
+      "udt_name": "text"
+    }
+  ],
+  "definition_sql": "SELECT a.line_number,\n    a.type,\n    a.database,\n    a.user_name,\n    a.address,\n    a.netmask,\n    a.auth_method,\n    a.options,\n    a.error\n   FROM pg_hba_file_rules() a(line_number, type, database, user_name, address, netmask, auth_method, options, error)",
+  "name": "pg_hba_file_rules",
+  "schema": "pg_catalog"
+}

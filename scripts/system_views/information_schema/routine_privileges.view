@@ -1,0 +1,72 @@
+{
+  "columns": [
+    {
+      "data_type": "text",
+      "name": "GRANTOR",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "GRANTEE",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "SPECIFIC_CATALOG",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "SPECIFIC_SCHEMA",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "proname",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "SPECIFIC_NAME",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "ROUTINE_CATALOG",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "ROUTINE_SCHEMA",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "ROUTINE_NAME",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "PRIVILEGE_TYPE",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "oid",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "proowner",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "IS_GRANTABLE",
+      "udt_name": "text"
+    }
+  ],
+  "definition_sql": "SELECT u_grantor.rolname::information_schema.sql_identifier AS grantor,\n    grantee.rolname::information_schema.sql_identifier AS grantee,\n    current_database()::information_schema.sql_identifier AS specific_catalog,\n    n.nspname::information_schema.sql_identifier AS specific_schema,\n    nameconcatoid(p.proname, p.oid)::information_schema.sql_identifier AS specific_name,\n    current_database()::information_schema.sql_identifier AS routine_catalog,\n    n.nspname::information_schema.sql_identifier AS routine_schema,\n    p.proname::information_schema.sql_identifier AS routine_name,\n    'EXECUTE'::character varying::information_schema.character_data AS privilege_type,\n        CASE\n            WHEN pg_has_role(grantee.oid, p.proowner, 'USAGE'::text) OR p.grantable THEN 'YES'::text\n            ELSE 'NO'::text\n        END::information_schema.yes_or_no AS is_grantable\n   FROM ( SELECT pg_proc.oid,\n            pg_proc.proname,\n            pg_proc.proowner,\n            pg_proc.pronamespace,\n            (aclexplode(COALESCE(pg_proc.proacl, acldefault('f'::\"char\", pg_proc.proowner)))).grantor AS grantor,\n            (aclexplode(COALESCE(pg_proc.proacl, acldefault('f'::\"char\", pg_proc.proowner)))).grantee AS grantee,\n            (aclexplode(COALESCE(pg_proc.proacl, acldefault('f'::\"char\", pg_proc.proowner)))).privilege_type AS privilege_type,\n            (aclexplode(COALESCE(pg_proc.proacl, acldefault('f'::\"char\", pg_proc.proowner)))).is_grantable AS is_grantable\n           FROM pg_proc) p(oid, proname, proowner, pronamespace, grantor, grantee, prtype, grantable),\n    pg_namespace n,\n    pg_authid u_grantor,\n    ( SELECT pg_authid.oid,\n            pg_authid.rolname\n           FROM pg_authid\n        UNION ALL\n         SELECT 0::oid AS oid,\n            'PUBLIC'::name) grantee(oid, rolname)\n  WHERE p.pronamespace = n.oid AND grantee.oid = p.grantee AND u_grantor.oid = p.grantor AND p.prtype = 'EXECUTE'::text AND (pg_has_role(u_grantor.oid, 'USAGE'::text) OR pg_has_role(grantee.oid, 'USAGE'::text) OR grantee.rolname = 'PUBLIC'::name)",
+  "name": "routine_privileges",
+  "schema": "information_schema"
+}

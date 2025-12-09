@@ -1,0 +1,47 @@
+{
+  "columns": [
+    {
+      "data_type": "text",
+      "name": "grantor",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "grantee",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "table_catalog",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "table_schema",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "table_name",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "privilege_type",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "is_grantable",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "with_hierarchy",
+      "udt_name": "text"
+    }
+  ],
+  "definition_sql": "SELECT table_privileges.grantor,\n    table_privileges.grantee,\n    table_privileges.table_catalog,\n    table_privileges.table_schema,\n    table_privileges.table_name,\n    table_privileges.privilege_type,\n    table_privileges.is_grantable,\n    table_privileges.with_hierarchy\n   FROM information_schema.table_privileges\n  WHERE (table_privileges.grantor::name IN ( SELECT enabled_roles.role_name\n           FROM information_schema.enabled_roles)) OR (table_privileges.grantee::name IN ( SELECT enabled_roles.role_name\n           FROM information_schema.enabled_roles))",
+  "name": "role_table_grants",
+  "schema": "information_schema"
+}

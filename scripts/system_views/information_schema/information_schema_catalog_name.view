@@ -1,0 +1,6 @@
+{
+  "columns": [],
+  "definition_sql": "SELECT current_database()::information_schema.sql_identifier AS catalog_name",
+  "name": "information_schema_catalog_name",
+  "schema": "information_schema"
+}

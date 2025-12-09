@@ -1,0 +1,157 @@
+{
+  "columns": [
+    {
+      "data_type": "text",
+      "name": "OBJECT_CATALOG",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "OBJECT_SCHEMA",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "OBJECT_NAME",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "OBJECT_TYPE",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "COLLECTION_TYPE_IDENTIFIER",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "oid",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "DATA_TYPE",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "CHARACTER_MAXIMUM_LENGTH",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "CHARACTER_OCTET_LENGTH",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "CHARACTER_SET_CATALOG",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "CHARACTER_SET_SCHEMA",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "CHARACTER_SET_NAME",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "COLLATION_CATALOG",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "COLLATION_SCHEMA",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "COLLATION_NAME",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "NUMERIC_PRECISION",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "NUMERIC_PRECISION_RADIX",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "NUMERIC_SCALE",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "DATETIME_PRECISION",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "INTERVAL_TYPE",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "INTERVAL_PRECISION",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "DOMAIN_DEFAULT",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "UDT_CATALOG",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "UDT_SCHEMA",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "UDT_NAME",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "SCOPE_CATALOG",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "SCOPE_SCHEMA",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "SCOPE_NAME",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "MAXIMUM_CARDINALITY",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "DTD_IDENTIFIER",
+      "udt_name": "text"
+    }
+  ],
+  "definition_sql": "SELECT current_database()::information_schema.sql_identifier AS object_catalog,\n    n.nspname::information_schema.sql_identifier AS object_schema,\n    x.objname AS object_name,\n    x.objtype::information_schema.character_data AS object_type,\n    x.objdtdid::information_schema.sql_identifier AS collection_type_identifier,\n        CASE\n            WHEN nbt.nspname = 'pg_catalog'::name THEN format_type(bt.oid, NULL::integer)\n            ELSE 'USER-DEFINED'::text\n        END::information_schema.character_data AS data_type,\n    NULL::integer::information_schema.cardinal_number AS character_maximum_length,\n    NULL::integer::information_schema.cardinal_number AS character_octet_length,\n    NULL::name::information_schema.sql_identifier AS character_set_catalog,\n    NULL::name::information_schema.sql_identifier AS character_set_schema,\n    NULL::name::information_schema.sql_identifier AS character_set_name,\n        CASE\n            WHEN nco.nspname IS NOT NULL THEN current_database()\n            ELSE NULL::name\n        END::information_schema.sql_identifier AS collation_catalog,\n    nco.nspname::information_schema.sql_identifier AS collation_schema,\n    co.collname::information_schema.sql_identifier AS collation_name,\n    NULL::integer::information_schema.cardinal_number AS numeric_precision,\n    NULL::integer::information_schema.cardinal_number AS numeric_precision_radix,\n    NULL::integer::information_schema.cardinal_number AS numeric_scale,\n    NULL::integer::information_schema.cardinal_number AS datetime_precision,\n    NULL::character varying::information_schema.character_data AS interval_type,\n    NULL::integer::information_schema.cardinal_number AS interval_precision,\n    NULL::character varying::information_schema.character_data AS domain_default,\n    current_database()::information_schema.sql_identifier AS udt_catalog,\n    nbt.nspname::information_schema.sql_identifier AS udt_schema,\n    bt.typname::information_schema.sql_identifier AS udt_name,\n    NULL::name::information_schema.sql_identifier AS scope_catalog,\n    NULL::name::information_schema.sql_identifier AS scope_schema,\n    NULL::name::information_schema.sql_identifier AS scope_name,\n    NULL::integer::information_schema.cardinal_number AS maximum_cardinality,\n    ('a'::text || x.objdtdid::text)::information_schema.sql_identifier AS dtd_identifier\n   FROM pg_namespace n,\n    pg_type at,\n    pg_namespace nbt,\n    pg_type bt,\n    ( SELECT c.relnamespace,\n            c.relname::information_schema.sql_identifier AS relname,\n                CASE\n                    WHEN c.relkind = 'c'::\"char\" THEN 'USER-DEFINED TYPE'::text\n                    ELSE 'TABLE'::text\n                END AS \"case\",\n            a.attnum,\n            a.atttypid,\n            a.attcollation\n           FROM pg_class c,\n            pg_attribute a\n          WHERE c.oid = a.attrelid AND (c.relkind = ANY (ARRAY['r'::\"char\", 'v'::\"char\", 'f'::\"char\", 'c'::\"char\", 'p'::\"char\"])) AND a.attnum > 0 AND NOT a.attisdropped\n        UNION ALL\n         SELECT t.typnamespace,\n            t.typname::information_schema.sql_identifier AS typname,\n            'DOMAIN'::text AS text,\n            1,\n            t.typbasetype,\n            t.typcollation\n           FROM pg_type t\n          WHERE t.typtype = 'd'::\"char\"\n        UNION ALL\n         SELECT ss.pronamespace,\n            nameconcatoid(ss.proname, ss.oid)::information_schema.sql_identifier AS nameconcatoid,\n            'ROUTINE'::text AS text,\n            (ss.x).n AS n,\n            (ss.x).x AS x,\n            0\n           FROM ( SELECT p.pronamespace,\n                    p.proname,\n                    p.oid,\n                    information_schema._pg_expandarray(COALESCE(p.proallargtypes, p.proargtypes::oid[])) AS x\n                   FROM pg_proc p) ss\n        UNION ALL\n         SELECT p.pronamespace,\n            nameconcatoid(p.proname, p.oid)::information_schema.sql_identifier AS nameconcatoid,\n            'ROUTINE'::text AS text,\n            0,\n            p.prorettype,\n            0\n           FROM pg_proc p) x(objschema, objname, objtype, objdtdid, objtypeid, objcollation)\n     LEFT JOIN (pg_collation co\n     JOIN pg_namespace nco ON co.collnamespace = nco.oid) ON x.objcollation = co.oid AND (nco.nspname <> 'pg_catalog'::name OR co.collname <> 'default'::name)\n  WHERE n.oid = x.objschema AND at.oid = x.objtypeid AND at.typelem <> 0::oid AND at.typlen = '-1'::integer AND at.typelem = bt.oid AND nbt.oid = bt.typnamespace AND ((n.nspname, x.objname::name, x.objtype, x.objdtdid::information_schema.sql_identifier::name) IN ( SELECT data_type_privileges.object_schema,\n            data_type_privileges.object_name,\n            data_type_privileges.object_type,\n            data_type_privileges.dtd_identifier\n           FROM information_schema.data_type_privileges))",
+  "name": "element_types",
+  "schema": "information_schema"
+}

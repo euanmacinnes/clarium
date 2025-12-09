@@ -1,0 +1,22 @@
+{
+  "columns": [
+    {
+      "data_type": "text",
+      "name": "grantee",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "role_name",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "is_grantable",
+      "udt_name": "text"
+    }
+  ],
+  "definition_sql": "SELECT applicable_roles.grantee,\n    applicable_roles.role_name,\n    applicable_roles.is_grantable\n   FROM information_schema.applicable_roles\n  WHERE applicable_roles.is_grantable::text = 'YES'::text",
+  "name": "administrable_role_authorizations",
+  "schema": "information_schema"
+}

@@ -1,0 +1,57 @@
+{
+  "columns": [
+    {
+      "data_type": "text",
+      "name": "GRANTOR",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "GRANTEE",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "TABLE_CATALOG",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "TABLE_SCHEMA",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "TABLE_NAME",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "COLUMN_NAME",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "PRIVILEGE_TYPE",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "grantee",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "relowner",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "IS_GRANTABLE",
+      "udt_name": "text"
+    }
+  ],
+  "definition_sql": "SELECT u_grantor.rolname::information_schema.sql_identifier AS grantor,\n    grantee.rolname::information_schema.sql_identifier AS grantee,\n    current_database()::information_schema.sql_identifier AS table_catalog,\n    nc.nspname::information_schema.sql_identifier AS table_schema,\n    x.relname::information_schema.sql_identifier AS table_name,\n    x.attname::information_schema.sql_identifier AS column_name,\n    x.prtype::information_schema.character_data AS privilege_type,\n        CASE\n            WHEN pg_has_role(x.grantee, x.relowner, 'USAGE'::text) OR x.grantable THEN 'YES'::text\n            ELSE 'NO'::text\n        END::information_schema.yes_or_no AS is_grantable\n   FROM ( SELECT pr_c.grantor,\n            pr_c.grantee,\n            a.attname,\n            pr_c.relname,\n            pr_c.relnamespace,\n            pr_c.prtype,\n            pr_c.grantable,\n            pr_c.relowner\n           FROM ( SELECT pg_class.oid,\n                    pg_class.relname,\n                    pg_class.relnamespace,\n                    pg_class.relowner,\n                    (aclexplode(COALESCE(pg_class.relacl, acldefault('r'::\"char\", pg_class.relowner)))).grantor AS grantor,\n                    (aclexplode(COALESCE(pg_class.relacl, acldefault('r'::\"char\", pg_class.relowner)))).grantee AS grantee,\n                    (aclexplode(COALESCE(pg_class.relacl, acldefault('r'::\"char\", pg_class.relowner)))).privilege_type AS privilege_type,\n                    (aclexplode(COALESCE(pg_class.relacl, acldefault('r'::\"char\", pg_class.relowner)))).is_grantable AS is_grantable\n                   FROM pg_class\n                  WHERE pg_class.relkind = ANY (ARRAY['r'::\"char\", 'v'::\"char\", 'f'::\"char\", 'p'::\"char\"])) pr_c(oid, relname, relnamespace, relowner, grantor, grantee, prtype, grantable),\n            pg_attribute a\n          WHERE a.attrelid = pr_c.oid AND a.attnum > 0 AND NOT a.attisdropped\n        UNION\n         SELECT pr_a.grantor,\n            pr_a.grantee,\n            pr_a.attname,\n            c.relname,\n            c.relnamespace,\n            pr_a.prtype,\n            pr_a.grantable,\n            c.relowner\n           FROM ( SELECT a.attrelid,\n                    a.attname,\n                    (aclexplode(COALESCE(a.attacl, acldefault('c'::\"char\", cc.relowner)))).grantor AS grantor,\n                    (aclexplode(COALESCE(a.attacl, acldefault('c'::\"char\", cc.relowner)))).grantee AS grantee,\n                    (aclexplode(COALESCE(a.attacl, acldefault('c'::\"char\", cc.relowner)))).privilege_type AS privilege_type,\n                    (aclexplode(COALESCE(a.attacl, acldefault('c'::\"char\", cc.relowner)))).is_grantable AS is_grantable\n                   FROM pg_attribute a\n                     JOIN pg_class cc ON a.attrelid = cc.oid\n                  WHERE a.attnum > 0 AND NOT a.attisdropped) pr_a(attrelid, attname, grantor, grantee, prtype, grantable),\n            pg_class c\n          WHERE pr_a.attrelid = c.oid AND (c.relkind = ANY (ARRAY['r'::\"char\", 'v'::\"char\", 'f'::\"char\", 'p'::\"char\"]))) x,\n    pg_namespace nc,\n    pg_authid u_grantor,\n    ( SELECT pg_authid.oid,\n            pg_authid.rolname\n           FROM pg_authid\n        UNION ALL\n         SELECT 0::oid AS oid,\n            'PUBLIC'::name) grantee(oid, rolname)\n  WHERE x.relnamespace = nc.oid AND x.grantee = grantee.oid AND x.grantor = u_grantor.oid AND (x.prtype = ANY (ARRAY['INSERT'::text, 'SELECT'::text, 'UPDATE'::text, 'REFERENCES'::text])) AND (pg_has_role(u_grantor.oid, 'USAGE'::text) OR pg_has_role(grantee.oid, 'USAGE'::text) OR grantee.rolname = 'PUBLIC'::name)",
+  "name": "column_privileges",
+  "schema": "information_schema"
+}

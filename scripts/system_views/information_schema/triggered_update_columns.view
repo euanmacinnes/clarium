@@ -1,0 +1,42 @@
+{
+  "columns": [
+    {
+      "data_type": "text",
+      "name": "TRIGGER_CATALOG",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "TRIGGER_SCHEMA",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "TRIGGER_NAME",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "EVENT_OBJECT_CATALOG",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "EVENT_OBJECT_SCHEMA",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "EVENT_OBJECT_TABLE",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "EVENT_OBJECT_COLUMN",
+      "udt_name": "text"
+    }
+  ],
+  "definition_sql": "SELECT current_database()::information_schema.sql_identifier AS trigger_catalog,\n    n.nspname::information_schema.sql_identifier AS trigger_schema,\n    t.tgname::information_schema.sql_identifier AS trigger_name,\n    current_database()::information_schema.sql_identifier AS event_object_catalog,\n    n.nspname::information_schema.sql_identifier AS event_object_schema,\n    c.relname::information_schema.sql_identifier AS event_object_table,\n    a.attname::information_schema.sql_identifier AS event_object_column\n   FROM pg_namespace n,\n    pg_class c,\n    pg_trigger t,\n    ( SELECT ta0.tgoid,\n            (ta0.tgat).x AS tgattnum,\n            (ta0.tgat).n AS tgattpos\n           FROM ( SELECT pg_trigger.oid AS tgoid,\n                    information_schema._pg_expandarray(pg_trigger.tgattr) AS tgat\n                   FROM pg_trigger) ta0) ta,\n    pg_attribute a\n  WHERE n.oid = c.relnamespace AND c.oid = t.tgrelid AND t.oid = ta.tgoid AND a.attrelid = t.tgrelid AND a.attnum = ta.tgattnum AND NOT t.tgisinternal AND NOT pg_is_other_temp_schema(n.oid) AND (pg_has_role(c.relowner, 'USAGE'::text) OR has_column_privilege(c.oid, a.attnum, 'INSERT, UPDATE, REFERENCES'::text))",
+  "name": "triggered_update_columns",
+  "schema": "information_schema"
+}

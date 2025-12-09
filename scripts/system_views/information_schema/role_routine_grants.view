@@ -1,0 +1,57 @@
+{
+  "columns": [
+    {
+      "data_type": "text",
+      "name": "grantor",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "grantee",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "specific_catalog",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "specific_schema",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "specific_name",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "routine_catalog",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "routine_schema",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "routine_name",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "privilege_type",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "is_grantable",
+      "udt_name": "text"
+    }
+  ],
+  "definition_sql": "SELECT routine_privileges.grantor,\n    routine_privileges.grantee,\n    routine_privileges.specific_catalog,\n    routine_privileges.specific_schema,\n    routine_privileges.specific_name,\n    routine_privileges.routine_catalog,\n    routine_privileges.routine_schema,\n    routine_privileges.routine_name,\n    routine_privileges.privilege_type,\n    routine_privileges.is_grantable\n   FROM information_schema.routine_privileges\n  WHERE (routine_privileges.grantor::name IN ( SELECT enabled_roles.role_name\n           FROM information_schema.enabled_roles)) OR (routine_privileges.grantee::name IN ( SELECT enabled_roles.role_name\n           FROM information_schema.enabled_roles))",
+  "name": "role_routine_grants",
+  "schema": "information_schema"
+}

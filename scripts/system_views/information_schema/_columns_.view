@@ -1,0 +1,387 @@
+{
+  "columns": [
+    {
+      "data_type": "text",
+      "name": "TABLE_CATALOG",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "TABLE_SCHEMA",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "TABLE_NAME",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "COLUMN_NAME",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "ORDINAL_POSITION",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "adbin",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "COLUMN_DEFAULT",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "IS_NULLABLE",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "typbasetype",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "atttypid",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "DATA_TYPE",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "*",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "*)",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "*",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "CHARACTER_MAXIMUM_LENGTH",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "*",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "*)",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "*",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "CHARACTER_OCTET_LENGTH",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "*",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "*)",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "*",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "NUMERIC_PRECISION",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "*",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "*)",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "*",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "NUMERIC_PRECISION_RADIX",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "*",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "*)",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "*",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "NUMERIC_SCALE",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "*",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "*)",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "*",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "DATETIME_PRECISION",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "*",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "*)",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "*",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "INTERVAL_TYPE",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "INTERVAL_PRECISION",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "CHARACTER_SET_CATALOG",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "CHARACTER_SET_SCHEMA",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "CHARACTER_SET_NAME",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "COLLATION_CATALOG",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "COLLATION_SCHEMA",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "COLLATION_NAME",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "DOMAIN_CATALOG",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "DOMAIN_SCHEMA",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "DOMAIN_NAME",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "UDT_CATALOG",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "nspname",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "UDT_SCHEMA",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "typname",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "UDT_NAME",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "SCOPE_CATALOG",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "SCOPE_SCHEMA",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "SCOPE_NAME",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "MAXIMUM_CARDINALITY",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "DTD_IDENTIFIER",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "IS_SELF_REFERENCING",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "attidentity = ANY (ARRAY['a'::\"char",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "IS_IDENTITY",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "IDENTITY_GENERATION",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "IDENTITY_START",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "IDENTITY_INCREMENT",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "IDENTITY_MAXIMUM",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "IDENTITY_MINIMUM",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "IDENTITY_CYCLE",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "IS_GENERATED",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "adbin",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "GENERATION_EXPRESSION",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "relkind = ANY (ARRAY['r'::\"char",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "relkind = ANY (ARRAY['v'::\"char",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "oid::regclass",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "attnum",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "IS_UPDATABLE",
+      "udt_name": "text"
+    }
+  ],
+  "definition_sql": "SELECT current_database()::information_schema.sql_identifier AS table_catalog,\n    nc.nspname::information_schema.sql_identifier AS table_schema,\n    c.relname::information_schema.sql_identifier AS table_name,\n    a.attname::information_schema.sql_identifier AS column_name,\n    a.attnum::information_schema.cardinal_number AS ordinal_position,\n        CASE\n            WHEN a.attgenerated = ''::\"char\" THEN pg_get_expr(ad.adbin, ad.adrelid)\n            ELSE NULL::text\n        END::information_schema.character_data AS column_default,\n        CASE\n            WHEN a.attnotnull OR t.typtype = 'd'::\"char\" AND t.typnotnull THEN 'NO'::text\n            ELSE 'YES'::text\n        END::information_schema.yes_or_no AS is_nullable,\n        CASE\n            WHEN t.typtype = 'd'::\"char\" THEN\n            CASE\n                WHEN bt.typelem <> 0::oid AND bt.typlen = '-1'::integer THEN 'ARRAY'::text\n                WHEN nbt.nspname = 'pg_catalog'::name THEN format_type(t.typbasetype, NULL::integer)\n                ELSE 'USER-DEFINED'::text\n            END\n            ELSE\n            CASE\n                WHEN t.typelem <> 0::oid AND t.typlen = '-1'::integer THEN 'ARRAY'::text\n                WHEN nt.nspname = 'pg_catalog'::name THEN format_type(a.atttypid, NULL::integer)\n                ELSE 'USER-DEFINED'::text\n            END\n        END::information_schema.character_data AS data_type,\n    information_schema._pg_char_max_length(information_schema._pg_truetypid(a.*, t.*), information_schema._pg_truetypmod(a.*, t.*))::information_schema.cardinal_number AS character_maximum_length,\n    information_schema._pg_char_octet_length(information_schema._pg_truetypid(a.*, t.*), information_schema._pg_truetypmod(a.*, t.*))::information_schema.cardinal_number AS character_octet_length,\n    information_schema._pg_numeric_precision(information_schema._pg_truetypid(a.*, t.*), information_schema._pg_truetypmod(a.*, t.*))::information_schema.cardinal_number AS numeric_precision,\n    information_schema._pg_numeric_precision_radix(information_schema._pg_truetypid(a.*, t.*), information_schema._pg_truetypmod(a.*, t.*))::information_schema.cardinal_number AS numeric_precision_radix,\n    information_schema._pg_numeric_scale(information_schema._pg_truetypid(a.*, t.*), information_schema._pg_truetypmod(a.*, t.*))::information_schema.cardinal_number AS numeric_scale,\n    information_schema._pg_datetime_precision(information_schema._pg_truetypid(a.*, t.*), information_schema._pg_truetypmod(a.*, t.*))::information_schema.cardinal_number AS datetime_precision,\n    information_schema._pg_interval_type(information_schema._pg_truetypid(a.*, t.*), information_schema._pg_truetypmod(a.*, t.*))::information_schema.character_data AS interval_type,\n    NULL::integer::information_schema.cardinal_number AS interval_precision,\n    NULL::name::information_schema.sql_identifier AS character_set_catalog,\n    NULL::name::information_schema.sql_identifier AS character_set_schema,\n    NULL::name::information_schema.sql_identifier AS character_set_name,\n        CASE\n            WHEN nco.nspname IS NOT NULL THEN current_database()\n            ELSE NULL::name\n        END::information_schema.sql_identifier AS collation_catalog,\n    nco.nspname::information_schema.sql_identifier AS collation_schema,\n    co.collname::information_schema.sql_identifier AS collation_name,\n        CASE\n            WHEN t.typtype = 'd'::\"char\" THEN current_database()\n            ELSE NULL::name\n        END::information_schema.sql_identifier AS domain_catalog,\n        CASE\n            WHEN t.typtype = 'd'::\"char\" THEN nt.nspname\n            ELSE NULL::name\n        END::information_schema.sql_identifier AS domain_schema,\n        CASE\n            WHEN t.typtype = 'd'::\"char\" THEN t.typname\n            ELSE NULL::name\n        END::information_schema.sql_identifier AS domain_name,\n    current_database()::information_schema.sql_identifier AS udt_catalog,\n    COALESCE(nbt.nspname, nt.nspname)::information_schema.sql_identifier AS udt_schema,\n    COALESCE(bt.typname, t.typname)::information_schema.sql_identifier AS udt_name,\n    NULL::name::information_schema.sql_identifier AS scope_catalog,\n    NULL::name::information_schema.sql_identifier AS scope_schema,\n    NULL::name::information_schema.sql_identifier AS scope_name,\n    NULL::integer::information_schema.cardinal_number AS maximum_cardinality,\n    a.attnum::information_schema.sql_identifier AS dtd_identifier,\n    'NO'::character varying::information_schema.yes_or_no AS is_self_referencing,\n        CASE\n            WHEN a.attidentity = ANY (ARRAY['a'::\"char\", 'd'::\"char\"]) THEN 'YES'::text\n            ELSE 'NO'::text\n        END::information_schema.yes_or_no AS is_identity,\n        CASE a.attidentity\n            WHEN 'a'::\"char\" THEN 'ALWAYS'::text\n            WHEN 'd'::\"char\" THEN 'BY DEFAULT'::text\n            ELSE NULL::text\n        END::information_schema.character_data AS identity_generation,\n    seq.seqstart::information_schema.character_data AS identity_start,\n    seq.seqincrement::information_schema.character_data AS identity_increment,\n    seq.seqmax::information_schema.character_data AS identity_maximum,\n    seq.seqmin::information_schema.character_data AS identity_minimum,\n        CASE\n            WHEN seq.seqcycle THEN 'YES'::text\n            ELSE 'NO'::text\n        END::information_schema.yes_or_no AS identity_cycle,\n        CASE\n            WHEN a.attgenerated <> ''::\"char\" THEN 'ALWAYS'::text\n            ELSE 'NEVER'::text\n        END::information_schema.character_data AS is_generated,\n        CASE\n            WHEN a.attgenerated <> ''::\"char\" THEN pg_get_expr(ad.adbin, ad.adrelid)\n            ELSE NULL::text\n        END::information_schema.character_data AS generation_expression,\n        CASE\n            WHEN (c.relkind = ANY (ARRAY['r'::\"char\", 'p'::\"char\"])) OR (c.relkind = ANY (ARRAY['v'::\"char\", 'f'::\"char\"])) AND pg_column_is_updatable(c.oid::regclass, a.attnum, false) THEN 'YES'::text\n            ELSE 'NO'::text\n        END::information_schema.yes_or_no AS is_updatable\n   FROM pg_attribute a\n     LEFT JOIN pg_attrdef ad ON a.attrelid = ad.adrelid AND a.attnum = ad.adnum\n     JOIN (pg_class c\n     JOIN pg_namespace nc ON c.relnamespace = nc.oid) ON a.attrelid = c.oid\n     JOIN (pg_type t\n     JOIN pg_namespace nt ON t.typnamespace = nt.oid) ON a.atttypid = t.oid\n     LEFT JOIN (pg_type bt\n     JOIN pg_namespace nbt ON bt.typnamespace = nbt.oid) ON t.typtype = 'd'::\"char\" AND t.typbasetype = bt.oid\n     LEFT JOIN (pg_collation co\n     JOIN pg_namespace nco ON co.collnamespace = nco.oid) ON a.attcollation = co.oid AND (nco.nspname <> 'pg_catalog'::name OR co.collname <> 'default'::name)\n     LEFT JOIN (pg_depend dep\n     JOIN pg_sequence seq ON dep.classid = 'pg_class'::regclass::oid AND dep.objid = seq.seqrelid AND dep.deptype = 'i'::\"char\") ON dep.refclassid = 'pg_class'::regclass::oid AND dep.refobjid = c.oid AND dep.refobjsubid = a.attnum\n  WHERE NOT pg_is_other_temp_schema(nc.oid) AND a.attnum > 0 AND NOT a.attisdropped AND (c.relkind = ANY (ARRAY['r'::\"char\", 'v'::\"char\", 'f'::\"char\", 'p'::\"char\"])) AND (pg_has_role(c.relowner, 'USAGE'::text) OR has_column_privilege(c.oid, a.attnum, 'SELECT, INSERT, UPDATE, REFERENCES'::text))",
+  "name": "\"columns\"",
+  "schema": "information_schema"
+}

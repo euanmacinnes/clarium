@@ -1,0 +1,62 @@
+{
+  "columns": [
+    {
+      "data_type": "text",
+      "name": "relid",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "schemaname",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "relname",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "seq_scan",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "seq_tup_read",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "idx_scan",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "idx_tup_fetch",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "n_tup_ins",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "n_tup_upd",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "n_tup_del",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "n_tup_hot_upd",
+      "udt_name": "text"
+    }
+  ],
+  "definition_sql": "SELECT pg_stat_xact_all_tables.relid,\n    pg_stat_xact_all_tables.schemaname,\n    pg_stat_xact_all_tables.relname,\n    pg_stat_xact_all_tables.seq_scan,\n    pg_stat_xact_all_tables.seq_tup_read,\n    pg_stat_xact_all_tables.idx_scan,\n    pg_stat_xact_all_tables.idx_tup_fetch,\n    pg_stat_xact_all_tables.n_tup_ins,\n    pg_stat_xact_all_tables.n_tup_upd,\n    pg_stat_xact_all_tables.n_tup_del,\n    pg_stat_xact_all_tables.n_tup_hot_upd\n   FROM pg_stat_xact_all_tables\n  WHERE (pg_stat_xact_all_tables.schemaname = ANY (ARRAY['pg_catalog'::name, 'information_schema'::name])) OR pg_stat_xact_all_tables.schemaname ~ '^pg_toast'::text",
+  "name": "pg_stat_xact_sys_tables",
+  "schema": "pg_catalog"
+}

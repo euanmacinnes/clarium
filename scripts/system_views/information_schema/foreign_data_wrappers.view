@@ -1,0 +1,32 @@
+{
+  "columns": [
+    {
+      "data_type": "text",
+      "name": "foreign_data_wrapper_catalog",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "foreign_data_wrapper_name",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "authorization_identifier",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "LIBRARY_NAME",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "foreign_data_wrapper_language",
+      "udt_name": "text"
+    }
+  ],
+  "definition_sql": "SELECT w.foreign_data_wrapper_catalog,\n    w.foreign_data_wrapper_name,\n    w.authorization_identifier,\n    NULL::character varying::information_schema.character_data AS library_name,\n    w.foreign_data_wrapper_language\n   FROM information_schema._pg_foreign_data_wrappers w",
+  "name": "foreign_data_wrappers",
+  "schema": "information_schema"
+}

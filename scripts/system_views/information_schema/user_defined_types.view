@@ -1,0 +1,152 @@
+{
+  "columns": [
+    {
+      "data_type": "text",
+      "name": "USER_DEFINED_TYPE_CATALOG",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "USER_DEFINED_TYPE_SCHEMA",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "USER_DEFINED_TYPE_NAME",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "USER_DEFINED_TYPE_CATEGORY",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "IS_INSTANTIABLE",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "IS_FINAL",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "ORDERING_FORM",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "ORDERING_CATEGORY",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "ORDERING_ROUTINE_CATALOG",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "ORDERING_ROUTINE_SCHEMA",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "ORDERING_ROUTINE_NAME",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "REFERENCE_TYPE",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "DATA_TYPE",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "CHARACTER_MAXIMUM_LENGTH",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "CHARACTER_OCTET_LENGTH",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "CHARACTER_SET_CATALOG",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "CHARACTER_SET_SCHEMA",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "CHARACTER_SET_NAME",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "COLLATION_CATALOG",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "COLLATION_SCHEMA",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "COLLATION_NAME",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "NUMERIC_PRECISION",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "NUMERIC_PRECISION_RADIX",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "NUMERIC_SCALE",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "DATETIME_PRECISION",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "INTERVAL_TYPE",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "INTERVAL_PRECISION",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "SOURCE_DTD_IDENTIFIER",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "REF_DTD_IDENTIFIER",
+      "udt_name": "text"
+    }
+  ],
+  "definition_sql": "SELECT current_database()::information_schema.sql_identifier AS user_defined_type_catalog,\n    n.nspname::information_schema.sql_identifier AS user_defined_type_schema,\n    c.relname::information_schema.sql_identifier AS user_defined_type_name,\n    'STRUCTURED'::character varying::information_schema.character_data AS user_defined_type_category,\n    'YES'::character varying::information_schema.yes_or_no AS is_instantiable,\n    NULL::character varying::information_schema.yes_or_no AS is_final,\n    NULL::character varying::information_schema.character_data AS ordering_form,\n    NULL::character varying::information_schema.character_data AS ordering_category,\n    NULL::name::information_schema.sql_identifier AS ordering_routine_catalog,\n    NULL::name::information_schema.sql_identifier AS ordering_routine_schema,\n    NULL::name::information_schema.sql_identifier AS ordering_routine_name,\n    NULL::character varying::information_schema.character_data AS reference_type,\n    NULL::character varying::information_schema.character_data AS data_type,\n    NULL::integer::information_schema.cardinal_number AS character_maximum_length,\n    NULL::integer::information_schema.cardinal_number AS character_octet_length,\n    NULL::name::information_schema.sql_identifier AS character_set_catalog,\n    NULL::name::information_schema.sql_identifier AS character_set_schema,\n    NULL::name::information_schema.sql_identifier AS character_set_name,\n    NULL::name::information_schema.sql_identifier AS collation_catalog,\n    NULL::name::information_schema.sql_identifier AS collation_schema,\n    NULL::name::information_schema.sql_identifier AS collation_name,\n    NULL::integer::information_schema.cardinal_number AS numeric_precision,\n    NULL::integer::information_schema.cardinal_number AS numeric_precision_radix,\n    NULL::integer::information_schema.cardinal_number AS numeric_scale,\n    NULL::integer::information_schema.cardinal_number AS datetime_precision,\n    NULL::character varying::information_schema.character_data AS interval_type,\n    NULL::integer::information_schema.cardinal_number AS interval_precision,\n    NULL::name::information_schema.sql_identifier AS source_dtd_identifier,\n    NULL::name::information_schema.sql_identifier AS ref_dtd_identifier\n   FROM pg_namespace n,\n    pg_class c,\n    pg_type t\n  WHERE n.oid = c.relnamespace AND t.typrelid = c.oid AND c.relkind = 'c'::\"char\" AND (pg_has_role(t.typowner, 'USAGE'::text) OR has_type_privilege(t.oid, 'USAGE'::text))",
+  "name": "user_defined_types",
+  "schema": "information_schema"
+}

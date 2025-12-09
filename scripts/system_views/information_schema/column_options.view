@@ -1,0 +1,37 @@
+{
+  "columns": [
+    {
+      "data_type": "text",
+      "name": "TABLE_CATALOG",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "TABLE_SCHEMA",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "TABLE_NAME",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "COLUMN_NAME",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "OPTION_NAME",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "OPTION_VALUE",
+      "udt_name": "text"
+    }
+  ],
+  "definition_sql": "SELECT current_database()::information_schema.sql_identifier AS table_catalog,\n    c.nspname::information_schema.sql_identifier AS table_schema,\n    c.relname::information_schema.sql_identifier AS table_name,\n    c.attname::information_schema.sql_identifier AS column_name,\n    (pg_options_to_table(c.attfdwoptions)).option_name::information_schema.sql_identifier AS option_name,\n    (pg_options_to_table(c.attfdwoptions)).option_value::information_schema.character_data AS option_value\n   FROM information_schema._pg_foreign_table_columns c",
+  "name": "column_options",
+  "schema": "information_schema"
+}

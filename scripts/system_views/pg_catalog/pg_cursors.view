@@ -1,0 +1,37 @@
+{
+  "columns": [
+    {
+      "data_type": "text",
+      "name": "name",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "statement",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "is_holdable",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "is_binary",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "is_scrollable",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "creation_time",
+      "udt_name": "text"
+    }
+  ],
+  "definition_sql": "SELECT c.name,\n    c.statement,\n    c.is_holdable,\n    c.is_binary,\n    c.is_scrollable,\n    c.creation_time\n   FROM pg_cursor() c(name, statement, is_holdable, is_binary, is_scrollable, creation_time)",
+  "name": "pg_cursors",
+  "schema": "pg_catalog"
+}

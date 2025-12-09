@@ -1,0 +1,57 @@
+{
+  "columns": [
+    {
+      "data_type": "text",
+      "name": "pid",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "datid",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "datname",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "relid",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "COMMAND",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "TYPE",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "BYTES_PROCESSED",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "BYTES_TOTAL",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "TUPLES_PROCESSED",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "TUPLES_EXCLUDED",
+      "udt_name": "text"
+    }
+  ],
+  "definition_sql": "SELECT s.pid,\n    s.datid,\n    d.datname,\n    s.relid,\n        CASE s.param5\n            WHEN 1 THEN 'COPY FROM'::text\n            WHEN 2 THEN 'COPY TO'::text\n            ELSE NULL::text\n        END AS command,\n        CASE s.param6\n            WHEN 1 THEN 'FILE'::text\n            WHEN 2 THEN 'PROGRAM'::text\n            WHEN 3 THEN 'PIPE'::text\n            WHEN 4 THEN 'CALLBACK'::text\n            ELSE NULL::text\n        END AS type,\n    s.param1 AS bytes_processed,\n    s.param2 AS bytes_total,\n    s.param3 AS tuples_processed,\n    s.param4 AS tuples_excluded\n   FROM pg_stat_get_progress_info('COPY'::text) s(pid, datid, relid, param1, param2, param3, param4, param5, param6, param7, param8, param9, param10, param11, param12, param13, param14, param15, param16, param17, param18, param19, param20)\n     LEFT JOIN pg_database d ON s.datid = d.oid",
+  "name": "pg_stat_progress_copy",
+  "schema": "pg_catalog"
+}

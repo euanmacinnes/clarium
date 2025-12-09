@@ -1,0 +1,27 @@
+{
+  "columns": [
+    {
+      "data_type": "text",
+      "name": "COLLATION_CATALOG",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "COLLATION_SCHEMA",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "COLLATION_NAME",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "PAD_ATTRIBUTE",
+      "udt_name": "text"
+    }
+  ],
+  "definition_sql": "SELECT current_database()::information_schema.sql_identifier AS collation_catalog,\n    nc.nspname::information_schema.sql_identifier AS collation_schema,\n    c.collname::information_schema.sql_identifier AS collation_name,\n    'NO PAD'::character varying::information_schema.character_data AS pad_attribute\n   FROM pg_collation c,\n    pg_namespace nc\n  WHERE c.collnamespace = nc.oid AND (c.collencoding = ANY (ARRAY['-1'::integer, ( SELECT pg_database.encoding\n           FROM pg_database\n          WHERE pg_database.datname = current_database())]))",
+  "name": "collations",
+  "schema": "information_schema"
+}

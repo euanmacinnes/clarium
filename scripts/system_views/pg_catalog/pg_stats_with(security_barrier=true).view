@@ -1,0 +1,77 @@
+{
+  "columns": [
+    {
+      "data_type": "text",
+      "name": "SCHEMANAME",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "TABLENAME",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "attname",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "INHERITED",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "NULL_FRAC",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "AVG_WIDTH",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "N_DISTINCT",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "MOST_COMMON_VALS",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "MOST_COMMON_FREQS",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "HISTOGRAM_BOUNDS",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "CORRELATION",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "MOST_COMMON_ELEMS",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "MOST_COMMON_ELEM_FREQS",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "ELEM_COUNT_HISTOGRAM",
+      "udt_name": "text"
+    }
+  ],
+  "definition_sql": "SELECT n.nspname AS schemaname,\n    c.relname AS tablename,\n    a.attname,\n    s.stainherit AS inherited,\n    s.stanullfrac AS null_frac,\n    s.stawidth AS avg_width,\n    s.stadistinct AS n_distinct,\n        CASE\n            WHEN s.stakind1 = 1 THEN s.stavalues1\n            WHEN s.stakind2 = 1 THEN s.stavalues2\n            WHEN s.stakind3 = 1 THEN s.stavalues3\n            WHEN s.stakind4 = 1 THEN s.stavalues4\n            WHEN s.stakind5 = 1 THEN s.stavalues5\n            ELSE NULL::anyarray\n        END AS most_common_vals,\n        CASE\n            WHEN s.stakind1 = 1 THEN s.stanumbers1\n            WHEN s.stakind2 = 1 THEN s.stanumbers2\n            WHEN s.stakind3 = 1 THEN s.stanumbers3\n            WHEN s.stakind4 = 1 THEN s.stanumbers4\n            WHEN s.stakind5 = 1 THEN s.stanumbers5\n            ELSE NULL::real[]\n        END AS most_common_freqs,\n        CASE\n            WHEN s.stakind1 = 2 THEN s.stavalues1\n            WHEN s.stakind2 = 2 THEN s.stavalues2\n            WHEN s.stakind3 = 2 THEN s.stavalues3\n            WHEN s.stakind4 = 2 THEN s.stavalues4\n            WHEN s.stakind5 = 2 THEN s.stavalues5\n            ELSE NULL::anyarray\n        END AS histogram_bounds,\n        CASE\n            WHEN s.stakind1 = 3 THEN s.stanumbers1[1]\n            WHEN s.stakind2 = 3 THEN s.stanumbers2[1]\n            WHEN s.stakind3 = 3 THEN s.stanumbers3[1]\n            WHEN s.stakind4 = 3 THEN s.stanumbers4[1]\n            WHEN s.stakind5 = 3 THEN s.stanumbers5[1]\n            ELSE NULL::real\n        END AS correlation,\n        CASE\n            WHEN s.stakind1 = 4 THEN s.stavalues1\n            WHEN s.stakind2 = 4 THEN s.stavalues2\n            WHEN s.stakind3 = 4 THEN s.stavalues3\n            WHEN s.stakind4 = 4 THEN s.stavalues4\n            WHEN s.stakind5 = 4 THEN s.stavalues5\n            ELSE NULL::anyarray\n        END AS most_common_elems,\n        CASE\n            WHEN s.stakind1 = 4 THEN s.stanumbers1\n            WHEN s.stakind2 = 4 THEN s.stanumbers2\n            WHEN s.stakind3 = 4 THEN s.stanumbers3\n            WHEN s.stakind4 = 4 THEN s.stanumbers4\n            WHEN s.stakind5 = 4 THEN s.stanumbers5\n            ELSE NULL::real[]\n        END AS most_common_elem_freqs,\n        CASE\n            WHEN s.stakind1 = 5 THEN s.stanumbers1\n            WHEN s.stakind2 = 5 THEN s.stanumbers2\n            WHEN s.stakind3 = 5 THEN s.stanumbers3\n            WHEN s.stakind4 = 5 THEN s.stanumbers4\n            WHEN s.stakind5 = 5 THEN s.stanumbers5\n            ELSE NULL::real[]\n        END AS elem_count_histogram\n   FROM pg_statistic s\n     JOIN pg_class c ON c.oid = s.starelid\n     JOIN pg_attribute a ON c.oid = a.attrelid AND a.attnum = s.staattnum\n     LEFT JOIN pg_namespace n ON n.oid = c.relnamespace\n  WHERE NOT a.attisdropped AND has_column_privilege(c.oid, a.attnum, 'select'::text) AND (c.relrowsecurity = false OR NOT row_security_active(c.oid))",
+  "name": "pg_stats\nwith(security_barrier=true)",
+  "schema": "pg_catalog"
+}

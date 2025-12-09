@@ -1,0 +1,92 @@
+{
+  "columns": [
+    {
+      "data_type": "text",
+      "name": "TRIGGER_CATALOG",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "TRIGGER_SCHEMA",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "TRIGGER_NAME",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "EVENT_MANIPULATION",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "EVENT_OBJECT_CATALOG",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "EVENT_OBJECT_SCHEMA",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "EVENT_OBJECT_TABLE",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "sql_identifier)",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "sql_identifier)",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "num",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "tgtype::integer & 1)",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "ACTION_ORDER",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "relowner",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "oid)",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "{35",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "ACTION_CONDITION",
+      "udt_name": "text"
+    },
+    {
+      "data_type": "text",
+      "name": "oid)",
+      "udt_name": "text"
+    }
+  ],
+  "definition_sql": "SELECT current_database()::information_schema.sql_identifier AS trigger_catalog,\n    n.nspname::information_schema.sql_identifier AS trigger_schema,\n    t.tgname::information_schema.sql_identifier AS trigger_name,\n    em.text::information_schema.character_data AS event_manipulation,\n    current_database()::information_schema.sql_identifier AS event_object_catalog,\n    n.nspname::information_schema.sql_identifier AS event_object_schema,\n    c.relname::information_schema.sql_identifier AS event_object_table,\n    rank() OVER (PARTITION BY (n.nspname::information_schema.sql_identifier), (c.relname::information_schema.sql_identifier), em.num, (t.tgtype::integer & 1), (t.tgtype::integer & 66) ORDER BY t.tgname)::information_schema.cardinal_number AS action_order,\n        CASE\n            WHEN pg_has_role(c.relowner, 'USAGE'::text) THEN (regexp_match(pg_get_triggerdef(t.oid), '.{35,} WHEN \\((.+)\\) EXECUTE FUNCTION'::text))[1]\n            ELSE NULL::text\n        END::information_schema.character_data AS action_condition,\n    SUBSTRING(pg_get_triggerdef(t.oid) FROM POSITION(('EXECUTE FUNCTION'::text) IN (SUBSTRING(pg_get_triggerdef(t.oid) FROM 48))) + 47)::information_schema.character_data AS action_statement,\n        CASE t.tgtype::integer & 1\n            WHEN 1 THEN 'ROW'::text\n            ELSE 'STATEMENT'::text\n        END::information_schema.character_data AS action_orientation,\n        CASE t.tgtype::integer & 66\n            WHEN 2 THEN 'BEFORE'::text\n            WHEN 64 THEN 'INSTEAD OF'::text\n            ELSE 'AFTER'::text\n        END::information_schema.character_data AS action_timing,\n    t.tgoldtable::information_schema.sql_identifier AS action_reference_old_table,\n    t.tgnewtable::information_schema.sql_identifier AS action_reference_new_table,\n    NULL::name::information_schema.sql_identifier AS action_reference_old_row,\n    NULL::name::information_schema.sql_identifier AS action_reference_new_row,\n    NULL::timestamp with time zone::information_schema.time_stamp AS created\n   FROM pg_namespace n,\n    pg_class c,\n    pg_trigger t,\n    ( VALUES (4,'INSERT'::text), (8,'DELETE'::text), (16,'UPDATE'::text)) em(num, text)\n  WHERE n.oid = c.relnamespace AND c.oid = t.tgrelid AND (t.tgtype::integer & em.num) <> 0 AND NOT t.tgisinternal AND NOT pg_is_other_temp_schema(n.oid) AND (pg_has_role(c.relowner, 'USAGE'::text) OR has_table_privilege(c.oid, 'INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER'::text) OR has_any_column_privilege(c.oid, 'INSERT, UPDATE, REFERENCES'::text))",
+  "name": "triggers",
+  "schema": "information_schema"
+}
