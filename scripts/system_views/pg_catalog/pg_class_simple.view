@@ -1,0 +1,7 @@
+{
+  "definition_sql": "SELECT relname, nspname FROM pg_catalog.pg_class;",
+  "columns": [
+    { "name": "relname", "data_type": "text" },
+    { "name": "nspname", "data_type": "text" }
+  ]
+}
