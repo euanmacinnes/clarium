@@ -1,7 +1,8 @@
 use polars::prelude::{DataFrame, Series, NamedFrom};
 use crate::system_catalog::registry::{SystemTable, ColumnDef, ColType};
 use crate::system_catalog::registry;
-use crate::system_catalog::shared::{enumerate_tables,get_or_assign_table_oid};
+use crate::system_catalog::shared::{enumerate_tables,get_or_assign_table_oid, TableMeta};
+use std::collections::HashMap;
 use crate::storage::SharedStore;
 use crate::tprintln;
 
@@ -84,6 +85,10 @@ impl SystemTable for PgConstraint {
             }
         };
 
+        // Build quick lookup for referenced table schemas
+        let mut meta_by_st: HashMap<(String,String), &TableMeta> = HashMap::new();
+        for m in metas.iter() { meta_by_st.insert((m.schema.clone(), m.table.clone()), m); }
+
         for m in metas.iter() {
             let table_oid = get_or_assign_table_oid(&m.dir, &m.db, &m.schema, &m.table);
             if m.has_primary_marker {
@@ -136,6 +141,106 @@ impl SystemTable for PgConstraint {
                     conbin.push(None);
                     constraint_oid += 1;
                 }
+            }
+
+            // Synthesize additional constraints from metadata (unique, foreign key, check, exclusion)
+            for c in &m.constraints {
+                // helper: map column names to 1-based positions in this table
+                let pos_for = |name: &str| -> Option<i32> {
+                    m.cols.iter().enumerate()
+                        .find(|(_i,(n,_t))| n == name)
+                        .map(|(i,_v)| (i as i32) + 1)
+                };
+                let conkey_positions: Vec<i32> = c.columns.iter().filter_map(|cn| pos_for(cn)).collect();
+                let conkey_str = if conkey_positions.is_empty() { "{}".to_string() } else { format!("{{{}}}", conkey_positions.iter().map(|n| n.to_string()).collect::<Vec<_>>().join(",")) };
+                let (ctype_char, is_fk, is_check, is_excl) = match c.ctype.as_str() {
+                    "unique" => ('u', false, false, false),
+                    "foreign_key" => ('f', true, false, false),
+                    "check" => ('c', false, true, false),
+                    "exclusion" => ('x', false, false, true),
+                    other if other.eq_ignore_ascii_case("fk") => ('f', true, false, false),
+                    _ => ('u', false, false, false),
+                };
+
+                conrelid.push(table_oid);
+                conname.push(if c.name.is_empty() { format!("{}_{}_constr", m.table, ctype_char) } else { c.name.clone() });
+                contype.push(ctype_char.to_string());
+                conkey.push(conkey_str);
+                conindid.push(0);
+                oid.push(constraint_oid);
+                connamespace.push(ns_oid_for(&m.schema));
+                condeferrable.push(false);
+                condeferred.push(false);
+                convalidated.push(true);
+                contypid.push(0);
+                conparentid.push(0);
+
+                // defaults for non-FK specifics
+                let mut fk_confrelid: i32 = 0;
+                let mut fk_confkey = String::from("{}");
+                let mut fk_upd = String::new();
+                let mut fk_del = String::new();
+                let mut fk_match = String::new();
+                if is_fk {
+                    if let (Some(rs), Some(rt)) = (c.ref_schema.as_ref(), c.ref_table.as_ref()) {
+                        if let Some(rm) = meta_by_st.get(&(rs.clone(), rt.clone())) {
+                            fk_confrelid = get_or_assign_table_oid(&rm.dir, &rm.db, &rm.schema, &rm.table);
+                            // map ref_columns to positions in referenced table
+                            let rpos_for = |name: &str| -> Option<i32> {
+                                rm.cols.iter().enumerate()
+                                    .find(|(_i,(n,_t))| n == name)
+                                    .map(|(i,_v)| (i as i32) + 1)
+                            };
+                            let rpos: Vec<i32> = if !c.ref_columns.is_empty() {
+                                c.ref_columns.iter().filter_map(|cn| rpos_for(cn)).collect()
+                            } else { Vec::new() };
+                            fk_confkey = if rpos.is_empty() { "{}".to_string() } else { format!("{{{}}}", rpos.iter().map(|n| n.to_string()).collect::<Vec<_>>().join(",")) };
+                        }
+                    }
+                    // Map actions to PG codes: no action=a, restrict=r, cascade=c, set null=n, set default=d
+                    let map_action = |s: &str| -> String {
+                        match s.to_ascii_lowercase().as_str() {
+                            "no action" | "no_action" | "noaction" => "a",
+                            "restrict" => "r",
+                            "cascade" => "c",
+                            "set null" | "set_null" | "setnull" => "n",
+                            "set default" | "set_default" | "setdefault" => "d",
+                            _ => "",
+                        }.to_string()
+                    };
+                    let map_match = |s: &str| -> String {
+                        match s.to_ascii_lowercase().as_str() {
+                            "full" => "f",
+                            "partial" => "p",
+                            "simple" => "s",
+                            _ => "",
+                        }.to_string()
+                    };
+                    if let Some(ref s) = c.on_update { fk_upd = map_action(s); }
+                    if let Some(ref s) = c.on_delete { fk_del = map_action(s); }
+                    if let Some(ref s) = c.match_type { fk_match = map_match(s); }
+                }
+                confrelid.push(fk_confrelid);
+                confupdtype.push(fk_upd);
+                confdeltype.push(fk_del);
+                confmatchtype.push(fk_match);
+                conislocal.push(true);
+                coninhcount.push(0);
+                connoinherit.push(false);
+                confkey.push(fk_confkey);
+                conpfeqop.push("{}".to_string());
+                conppeqop.push("{}".to_string());
+                conffeqop.push("{}".to_string());
+                // exclusion operators provided as text; store as array-ish text or empty
+                if is_excl && !c.excl_operators.is_empty() {
+                    let arr = format!("{{{}}}", c.excl_operators.join(","));
+                    conexclop.push(arr);
+                } else {
+                    conexclop.push("{}".to_string());
+                }
+                // check constraints keep expression in conbin
+                if is_check { conbin.push(c.check_expr.clone()); } else { conbin.push(None); }
+                constraint_oid += 1;
             }
         }
 

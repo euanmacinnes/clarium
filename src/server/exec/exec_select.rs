@@ -15,7 +15,6 @@ use crate::server::exec::select_stages::order_limit::order_limit as stage_order_
 use crate::scripts::get_script_registry;
 
 
-
 pub fn run_select(store: &SharedStore, q: &Query) -> Result<DataFrame> {
     run_select_with_context(store, q, None)
 }

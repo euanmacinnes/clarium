@@ -12,6 +12,9 @@ use tracing::{error, info, debug, warn};
 use crate::tprintln;
 
 use crate::{storage::SharedStore, server::exec};
+use crate::server::query::{self, Command};
+use crate::server::exec::exec_select::handle_select;
+use polars::prelude::AnyValue;
 use crate::ident::{DEFAULT_DB, DEFAULT_SCHEMA};
 use regex::Regex;
 
@@ -24,6 +27,27 @@ fn pgwire_trace_enabled() -> bool {
         let s = v.to_lowercase();
         s == "1" || s == "true" || s == "yes" || s == "on"
     }).unwrap_or(false)
+}
+
+#[inline]
+fn anyvalue_to_opt_string(av: &AnyValue) -> Option<String> {
+    match av {
+        AnyValue::Null => None,
+        AnyValue::String(s) => Some(s.to_string()),
+        AnyValue::StringOwned(s) => Some(s.to_string()),
+        AnyValue::Int8(v) => Some(v.to_string()),
+        AnyValue::Int16(v) => Some(v.to_string()),
+        AnyValue::Int32(v) => Some(v.to_string()),
+        AnyValue::Int64(v) => Some(v.to_string()),
+        AnyValue::UInt8(v) => Some(v.to_string()),
+        AnyValue::UInt16(v) => Some(v.to_string()),
+        AnyValue::UInt32(v) => Some(v.to_string()),
+        AnyValue::UInt64(v) => Some(v.to_string()),
+        AnyValue::Float32(v) => Some(v.to_string()),
+        AnyValue::Float64(v) => Some(v.to_string()),
+        AnyValue::Boolean(v) => Some(v.to_string()),
+        other => Some(format!("{}", other)),
+    }
 }
 
 fn hex_dump_prefix(data: &[u8], max: usize) -> String {
@@ -537,37 +561,76 @@ async fn handle_query(socket: &mut tokio::net::TcpStream, store: &SharedStore, _
         let up = q_trim.to_uppercase();
 
         let q_effective = exec::normalize_query_with_defaults(q_trim, &state.current_database, &state.current_schema);
-        match exec::execute_query_safe(store, &q_effective).await {
-            Ok(val) => {
-                let upper = q_trim.chars().take(32).collect::<String>().to_uppercase();
-                // Treat SHOW as a row-returning command similar to SELECT for client compatibility
-                let is_select_like = upper.starts_with("SELECT") || upper.starts_with("WITH ") || upper.starts_with("SHOW ");
-                let (cols, data) = if is_select_like {
-                    match &val {
-                        serde_json::Value::Array(arr) => to_table(arr.clone())?,
-                        serde_json::Value::Object(_) => to_table(vec![val.clone()])?,
-                        _ => to_table(vec![val.clone()])?,
+        let upper = q_trim.chars().take(32).collect::<String>().to_uppercase();
+        // Treat SHOW as a row-returning command similar to SELECT for client compatibility
+        let is_select_like = upper.starts_with("SELECT") || upper.starts_with("WITH ") || upper.starts_with("SHOW ");
+        if is_select_like {
+            // Use the query engine directly to preserve schema even for empty results
+            match query::parse(&q_effective) {
+                Ok(Command::Select(sel)) => {
+                    match handle_select(store, &sel) {
+                        Ok((df, _into)) => {
+                            let cols: Vec<String> = df.get_column_names().into_iter().map(|s| s.to_string()).collect();
+                            // Emit RowDescription with columns even if there are no rows
+                            send_row_description(socket, &cols).await?;
+                            // Emit DataRow frames
+                            for row_idx in 0..df.height() {
+                                let mut row: Vec<Option<String>> = Vec::with_capacity(cols.len());
+                                for s in df.get_columns() {
+                                    let v = s.as_materialized_series().get(row_idx);
+                                    let cell = match v {
+                                        Ok(av) => anyvalue_to_opt_string(&av),
+                                        Err(_) => None,
+                                    };
+                                    row.push(cell);
+                                }
+                                send_data_row(socket, &row).await?;
+                            }
+                            let tag = format!("SELECT {}", df.height());
+                            send_command_complete(socket, &tag).await?;
+                        }
+                        Err(e) => { send_error(socket, &format!("{}", e)).await?; state.in_error = true; }
                     }
-                } else { (Vec::new(), Vec::new()) };
-                if is_select_like && (!data.is_empty() || !cols.is_empty()) {
-                    send_row_description(socket, &cols).await?;
-                    for row in data.iter() { send_data_row(socket, row).await?; }
                 }
-                let tag = if upper.starts_with("SELECT") { format!("SELECT {}", data.len()) }
-                    else if upper.starts_with("CALCULATE") { let saved = match &val { serde_json::Value::Object(m) => m.get("saved").and_then(|v| v.as_u64()).unwrap_or(0), _ => 0 }; format!("CALCULATE {}", saved) }
-                    else if upper.starts_with("DELETE") { "DELETE".to_string() }
-                    else if upper.starts_with("SHOW ") { format!("SHOW {}", data.len()) }
-                    else if upper.starts_with("SCHEMA") || upper.starts_with("DATABASE") { format!("OK {}", data.len()) }
-                    else if upper.starts_with("SET") { "SET".to_string() }
-                    else if upper.starts_with("CREATE TABLE") { "CREATE TABLE".to_string() }
-                    else if data.is_empty() { "OK".to_string() } else { format!("OK {}", data.len()) };
-                debug!("pgwire simple query [{}]: CommandComplete tag='{}'", idx, tag);
-                send_command_complete(socket, &tag).await?;
+                Ok(_) | Err(_) => {
+                    // Fallback to legacy path
+                    match exec::execute_query_safe(store, &q_effective).await {
+                        Ok(val) => {
+                            let (cols, data) = match &val {
+                                serde_json::Value::Array(arr) => to_table(arr.clone())?,
+                                serde_json::Value::Object(_) => to_table(vec![val.clone()])?,
+                                _ => to_table(vec![val.clone()])?,
+                            };
+                            // Emit RowDescription even if empty
+                            send_row_description(socket, &cols).await?;
+                            for row in data.iter() { send_data_row(socket, row).await?; }
+                            let tag = format!("SELECT {}", data.len());
+                            send_command_complete(socket, &tag).await?;
+                        }
+                        Err(e) => { send_error(socket, &format!("{}", e)).await?; state.in_error = true; }
+                    }
+                }
             }
-            Err(e) => {
-                debug!("pgwire simple query [{}]: error: {}", idx, e);
-                send_error(socket, &format!("{}", e)).await?;
-                state.in_error = true;
+        } else {
+            match exec::execute_query_safe(store, &q_effective).await {
+                Ok(val) => {
+                    let (cols, data): (Vec<String>, Vec<Vec<Option<String>>>) = (Vec::new(), Vec::new());
+                    let tag = if upper.starts_with("SELECT") { format!("SELECT {}", data.len()) }
+                        else if upper.starts_with("CALCULATE") { let saved = match &val { serde_json::Value::Object(m) => m.get("saved").and_then(|v| v.as_u64()).unwrap_or(0), _ => 0 }; format!("CALCULATE {}", saved) }
+                        else if upper.starts_with("DELETE") { "DELETE".to_string() }
+                        else if upper.starts_with("SHOW ") { format!("SHOW {}", data.len()) }
+                        else if upper.starts_with("SCHEMA") || upper.starts_with("DATABASE") { format!("OK {}", data.len()) }
+                        else if upper.starts_with("SET") { "SET".to_string() }
+                        else if upper.starts_with("CREATE TABLE") { "CREATE TABLE".to_string() }
+                        else if data.is_empty() { "OK".to_string() } else { format!("OK {}", data.len()) };
+                    debug!("pgwire simple query [{}]: CommandComplete tag='{}'", idx, tag);
+                    send_command_complete(socket, &tag).await?;
+                }
+                Err(e) => {
+                    debug!("pgwire simple query [{}]: error: {}", idx, e);
+                    send_error(socket, &format!("{}", e)).await?;
+                    state.in_error = true;
+                }
             }
         }
     }
@@ -1099,24 +1162,45 @@ async fn describe_row_description(socket: &mut tokio::net::TcpStream, store: &Sh
     let q = sql.trim();
     let up = q.to_uppercase();
     if up.starts_with("SELECT") || up.starts_with("WITH ") || up.starts_with("SHOW ") {
-        tprintln!("[pgwire] describe_row_description normalize_query_with_defaults {}, cd: {}, cs: {}", q, &state.current_database, &state.current_schema);
+        // Normalize and try to parse into a SELECT to retrieve the output schema
         let q_eff = exec::normalize_query_with_defaults(q, &state.current_database, &state.current_schema);
-        tprintln!("[pgwire] describe_row_description execute_query_safe");
-        match exec::execute_query_safe(store, &q_eff).await {
-            Ok(val) => {
-                tprintln!("[pgwire] describe_row_description execute_query_safe Ok");
-                let (cols, _data) = match &val {
-                    serde_json::Value::Array(arr) => to_table(arr.clone())?,
-                    serde_json::Value::Object(_) => to_table(vec![val.clone()])?,
-                    _ => to_table(vec![val.clone()])?,
-                };
-                if cols.is_empty() { return send_no_data(socket).await; }
-                return send_row_description(socket, &cols).await;
+        match query::parse(&q_eff) {
+            Ok(Command::Select(sel)) => {
+                match handle_select(store, &sel) {
+                    Ok((df, _into)) => {
+                        let cols: Vec<String> = df.get_column_names().into_iter().map(|s| s.to_string()).collect();
+                        // Always send RowDescription for SELECT-like statements
+                        return send_row_description(socket, &cols).await;
+                    }
+                    Err(_) => {
+                        // Fallback to legacy JSON path
+                        match exec::execute_query_safe(store, &q_eff).await {
+                            Ok(val) => {
+                                let (cols, _data) = match &val {
+                                    serde_json::Value::Array(arr) => to_table(arr.clone())?,
+                                    serde_json::Value::Object(_) => to_table(vec![val.clone()])?,
+                                    _ => to_table(vec![val.clone()])?,
+                                };
+                                return send_row_description(socket, &cols).await;
+                            }
+                            Err(_) => return send_no_data(socket).await,
+                        }
+                    }
+                }
             }
-            Err(_e) => {
-                tprintln!("[pgwire] describe_row_description execute_query_safe Err");
-                // On error, fall back to NoData to keep the protocol moving
-                return send_no_data(socket).await;
+            _ => {
+                // Could not parse; attempt legacy path
+                match exec::execute_query_safe(store, &q_eff).await {
+                    Ok(val) => {
+                        let (cols, _data) = match &val {
+                            serde_json::Value::Array(arr) => to_table(arr.clone())?,
+                            serde_json::Value::Object(_) => to_table(vec![val.clone()])?,
+                            _ => to_table(vec![val.clone()])?,
+                        };
+                        return send_row_description(socket, &cols).await;
+                    }
+                    Err(_) => return send_no_data(socket).await,
+                }
             }
         }
     } else {

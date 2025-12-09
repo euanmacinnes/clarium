@@ -1,5 +1,5 @@
 --[[
-{ "kind": "scalar", "returns": ["number"], "nullable": true, "version": 1,
+{ "kind": "scalar", "returns": ["integer"], "nullable": true, "version": 1,
   "doc": "to_regtype(type_name): converts a type name to its OID, returns NULL if type doesn't exist" }
 ]]
 
@@ -54,8 +54,7 @@ function to_regtype(type_name)
         ["bytea"] = 17,
         ["json"] = 114,
         ["jsonb"] = 3802,
-        ["uuid"] = 2950,
-        ["hstore"] = 16414,
+        ["uuid"] = 2950
     }
     
     local oid = type_map[tn]
