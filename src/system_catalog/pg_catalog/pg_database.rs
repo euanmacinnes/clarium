@@ -16,6 +16,12 @@ const COLS: &[ColumnDef] = &[
     ColumnDef { name: "datistemplate", coltype: ColType::Boolean },
     ColumnDef { name: "datallowconn", coltype: ColType::Boolean },
     ColumnDef { name: "datconnlimit", coltype: ColType::Integer },
+    // added per reconciliation
+    ColumnDef { name: "datlastsysoid", coltype: ColType::Integer },
+    ColumnDef { name: "datfrozenxid", coltype: ColType::Text },
+    ColumnDef { name: "datminmxid", coltype: ColType::Text },
+    ColumnDef { name: "dattablespace", coltype: ColType::Integer },
+    ColumnDef { name: "datacl", coltype: ColType::Text },
 ];
 
 impl SystemTable for PgDatabase {
@@ -52,6 +58,12 @@ impl SystemTable for PgDatabase {
         let datallowconn: Vec<bool> = vec![true; names.len()];
         let datconnlimit: Vec<i32> = vec![-1; names.len()];
 
+        let datlastsysoid: Vec<i32> = vec![0; oids.len()];
+        let datfrozenxid: Vec<String> = vec![String::from("0"); oids.len()];
+        let datminmxid: Vec<String> = vec![String::from("0"); oids.len()];
+        let dattablespace: Vec<i32> = vec![0; oids.len()];
+        let datacl: Vec<Option<String>> = vec![None; oids.len()];
+
         DataFrame::new(vec![
             Series::new("oid".into(), oids).into(),
             Series::new("datname".into(), names).into(),
@@ -62,6 +74,11 @@ impl SystemTable for PgDatabase {
             Series::new("datistemplate".into(), datistemplate).into(),
             Series::new("datallowconn".into(), datallowconn).into(),
             Series::new("datconnlimit".into(), datconnlimit).into(),
+            Series::new("datlastsysoid".into(), datlastsysoid).into(),
+            Series::new("datfrozenxid".into(), datfrozenxid).into(),
+            Series::new("datminmxid".into(), datminmxid).into(),
+            Series::new("dattablespace".into(), dattablespace).into(),
+            Series::new("datacl".into(), datacl).into(),
         ]).ok()
     }
 }

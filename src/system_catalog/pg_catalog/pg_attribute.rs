@@ -12,6 +12,29 @@ const COLS: &[ColumnDef] = &[
     ColumnDef { name: "attname", coltype: ColType::Text },
     ColumnDef { name: "attnum", coltype: ColType::Integer },
     ColumnDef { name: "attisdropped", coltype: ColType::Boolean },
+    // added per reconciliation
+    ColumnDef { name: "atttypid", coltype: ColType::Integer },
+    ColumnDef { name: "attstattarget", coltype: ColType::Integer },
+    ColumnDef { name: "attlen", coltype: ColType::Integer },
+    ColumnDef { name: "attndims", coltype: ColType::Integer },
+    ColumnDef { name: "attcacheoff", coltype: ColType::Integer },
+    ColumnDef { name: "atttypmod", coltype: ColType::Integer },
+    ColumnDef { name: "attbyval", coltype: ColType::Boolean },
+    ColumnDef { name: "attalign", coltype: ColType::Text },
+    ColumnDef { name: "attstorage", coltype: ColType::Text },
+    ColumnDef { name: "attcompression", coltype: ColType::Text },
+    ColumnDef { name: "attnotnull", coltype: ColType::Boolean },
+    ColumnDef { name: "atthasdef", coltype: ColType::Boolean },
+    ColumnDef { name: "atthasmissing", coltype: ColType::Boolean },
+    ColumnDef { name: "attidentity", coltype: ColType::Text },
+    ColumnDef { name: "attgenerated", coltype: ColType::Text },
+    ColumnDef { name: "attislocal", coltype: ColType::Boolean },
+    ColumnDef { name: "attinhcount", coltype: ColType::Integer },
+    ColumnDef { name: "attcollation", coltype: ColType::Integer },
+    ColumnDef { name: "attacl", coltype: ColType::Text },
+    ColumnDef { name: "attoptions", coltype: ColType::Text },
+    ColumnDef { name: "attfdwoptions", coltype: ColType::Text },
+    ColumnDef { name: "attmissingval", coltype: ColType::Text },
 ];
 
 impl SystemTable for PgAttribute {
@@ -61,12 +84,46 @@ impl SystemTable for PgAttribute {
             }
         }
 
-        tprintln!("[loader] pg_attribute built: rows={}", attrelid.len());
+        let rows = attrelid.len();
+        tprintln!("[loader] pg_attribute built: rows={}", rows);
+        // defaults for added columns
+        let zeros_i32: Vec<i32> = vec![0; rows];
+        let falses: Vec<bool> = vec![false; rows];
+        let empty_txt: Vec<Option<String>> = vec![None; rows];
+        let empty_txt_s: Vec<String> = vec![String::new(); rows];
+        let attalign: Vec<String> = vec!["i".into(); rows];
+        let attstorage: Vec<String> = vec!["p".into(); rows];
+        let attcompression: Vec<Option<String>> = vec![None; rows];
+        let attidentity: Vec<String> = vec!["".into(); rows];
+        let attgenerated: Vec<String> = vec!["".into(); rows];
+
         DataFrame::new(vec![
             Series::new("attrelid".into(), attrelid).into(),
             Series::new("attname".into(), attname).into(),
             Series::new("attnum".into(), attnum).into(),
             Series::new("attisdropped".into(), attisdropped).into(),
+            Series::new("atttypid".into(), zeros_i32.clone()).into(),
+            Series::new("attstattarget".into(), zeros_i32.clone()).into(),
+            Series::new("attlen".into(), zeros_i32.clone()).into(),
+            Series::new("attndims".into(), zeros_i32.clone()).into(),
+            Series::new("attcacheoff".into(), zeros_i32.clone()).into(),
+            Series::new("atttypmod".into(), zeros_i32.clone()).into(),
+            Series::new("attbyval".into(), falses.clone()).into(),
+            Series::new("attalign".into(), attalign).into(),
+            Series::new("attstorage".into(), attstorage).into(),
+            Series::new("attcompression".into(), attcompression).into(),
+            Series::new("attnotnull".into(), falses.clone()).into(),
+            Series::new("atthasdef".into(), falses.clone()).into(),
+            Series::new("atthasmissing".into(), falses.clone()).into(),
+            Series::new("attidentity".into(), attidentity).into(),
+            Series::new("attgenerated".into(), attgenerated).into(),
+            Series::new("attislocal".into(), falses.clone()).into(),
+            Series::new("attinhcount".into(), zeros_i32.clone()).into(),
+            Series::new("attcollation".into(), zeros_i32.clone()).into(),
+            Series::new("attacl".into(), empty_txt.clone()).into(),
+            Series::new("attoptions".into(), empty_txt.clone()).into(),
+            Series::new("attfdwoptions".into(), empty_txt.clone()).into(),
+            Series::new("attmissingval".into(), empty_txt_s).into(),
         ]).ok()
     }
 }

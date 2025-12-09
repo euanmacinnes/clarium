@@ -23,6 +23,21 @@ fn write_json(path: &Path, val: &serde_json::Value) {
 
 
 #[derive(Debug, Clone)]
+pub struct ConstraintMeta {
+    pub name: String,
+    pub ctype: String, // unique, foreign_key, check, exclusion
+    pub columns: Vec<String>,
+    pub ref_schema: Option<String>,
+    pub ref_table: Option<String>,
+    pub ref_columns: Vec<String>,
+    pub on_update: Option<String>,
+    pub on_delete: Option<String>,
+    pub match_type: Option<String>,
+    pub check_expr: Option<String>,
+    pub excl_operators: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
 pub struct TableMeta {
     pub db: String,
     pub schema: String,
@@ -30,6 +45,7 @@ pub struct TableMeta {
     pub cols: Vec<(String, String)>,
     pub has_primary_marker: bool,
     pub dir: PathBuf,
+    pub constraints: Vec<ConstraintMeta>,
 }
 
 /// Enumerate user tables on disk by scanning the store root for schema.json files.
@@ -73,7 +89,30 @@ pub fn enumerate_tables(store: &SharedStore) -> Vec<TableMeta> {
                                         }
                                     }
                                     if !cols.iter().any(|(n, _)| n == "_time") { cols.insert(0, ("_time".into(), "int64".into())); }
-                                    out.push(TableMeta { db: dbname.clone(), schema: schema_name.clone(), table: tname, cols, has_primary_marker, dir: tp.clone() });
+                                    // optional constraints.json alongside schema.json
+                                    let mut constraints: Vec<ConstraintMeta> = Vec::new();
+                                    let cj = tp.join("constraints.json");
+                                    if cj.exists() {
+                                        if let Some(serde_json::Value::Array(arr)) = read_json(&cj) {
+                                            for v in arr.iter() {
+                                                if let Some(obj) = v.as_object() {
+                                                    let name = obj.get("name").and_then(|x| x.as_str()).unwrap_or("").to_string();
+                                                    let ctype = obj.get("type").and_then(|x| x.as_str()).unwrap_or("").to_string();
+                                                    let columns: Vec<String> = obj.get("columns").and_then(|x| x.as_array()).map(|a| a.iter().filter_map(|e| e.as_str().map(|s| s.to_string())).collect()).unwrap_or_default();
+                                                    let ref_schema = obj.get("ref_schema").and_then(|x| x.as_str()).map(|s| s.to_string());
+                                                    let ref_table = obj.get("ref_table").and_then(|x| x.as_str()).map(|s| s.to_string());
+                                                    let ref_columns: Vec<String> = obj.get("ref_columns").and_then(|x| x.as_array()).map(|a| a.iter().filter_map(|e| e.as_str().map(|s| s.to_string())).collect()).unwrap_or_default();
+                                                    let on_update = obj.get("on_update").and_then(|x| x.as_str()).map(|s| s.to_string());
+                                                    let on_delete = obj.get("on_delete").and_then(|x| x.as_str()).map(|s| s.to_string());
+                                                    let match_type = obj.get("match").and_then(|x| x.as_str()).map(|s| s.to_string());
+                                                    let check_expr = obj.get("expression").and_then(|x| x.as_str()).map(|s| s.to_string());
+                                                    let excl_operators: Vec<String> = obj.get("operators").and_then(|x| x.as_array()).map(|a| a.iter().filter_map(|e| e.as_str().map(|s| s.to_string())).collect()).unwrap_or_default();
+                                                    constraints.push(ConstraintMeta { name, ctype, columns, ref_schema, ref_table, ref_columns, on_update, on_delete, match_type, check_expr, excl_operators });
+                                                }
+                                            }
+                                        }
+                                    }
+                                    out.push(TableMeta { db: dbname.clone(), schema: schema_name.clone(), table: tname, cols, has_primary_marker, dir: tp.clone(), constraints });
                                 }
                             }
                         }

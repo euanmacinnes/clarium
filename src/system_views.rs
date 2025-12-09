@@ -56,10 +56,10 @@ fn copy_global_to_root(root: &Path) {
                     if p.extension().and_then(|s| s.to_str()).map(|x| x.eq_ignore_ascii_case("view")).unwrap_or(false) {
                         let fname = p.file_name().unwrap();
                         let tgt = dst.join(fname);
-                        if !tgt.exists() {
-                            let _ = fs::copy(&p, &tgt);
-                            tprintln!("[views] copied global system view '{}' -> '{}'", p.display(), tgt.display());
-                        }
+//                         if !tgt.exists() {
+//                             let _ = fs::copy(&p, &tgt);
+//                             tprintln!("[views] copied global system view '{}' -> '{}'", p.display(), tgt.display());
+//                         }
                     }
                 }
             }

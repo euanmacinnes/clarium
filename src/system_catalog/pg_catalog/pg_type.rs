@@ -17,6 +17,28 @@ const COLS: &[ColumnDef] = &[
     ColumnDef { name: "typcategory", coltype: ColType::Text },
     ColumnDef { name: "typtype", coltype: ColType::Text },
     ColumnDef { name: "typdelim", coltype: ColType::Text },
+    // Added per reconciliation
+    ColumnDef { name: "typowner", coltype: ColType::Integer },
+    ColumnDef { name: "typlen", coltype: ColType::Integer },
+    ColumnDef { name: "typbyval", coltype: ColType::Boolean },
+    ColumnDef { name: "typispreferred", coltype: ColType::Boolean },
+    ColumnDef { name: "typisdefined", coltype: ColType::Boolean },
+    ColumnDef { name: "typsubscript", coltype: ColType::Integer },
+    ColumnDef { name: "typinput", coltype: ColType::Integer },
+    ColumnDef { name: "typoutput", coltype: ColType::Integer },
+    ColumnDef { name: "typreceive", coltype: ColType::Integer },
+    ColumnDef { name: "typsend", coltype: ColType::Integer },
+    ColumnDef { name: "typmodin", coltype: ColType::Integer },
+    ColumnDef { name: "typmodout", coltype: ColType::Integer },
+    ColumnDef { name: "typanalyze", coltype: ColType::Integer },
+    ColumnDef { name: "typalign", coltype: ColType::Text },
+    ColumnDef { name: "typstorage", coltype: ColType::Text },
+    ColumnDef { name: "typnotnull", coltype: ColType::Boolean },
+    ColumnDef { name: "typndims", coltype: ColType::Integer },
+    ColumnDef { name: "typcollation", coltype: ColType::Integer },
+    ColumnDef { name: "typdefaultbin", coltype: ColType::Text },
+    ColumnDef { name: "typdefault", coltype: ColType::Text },
+    ColumnDef { name: "typacl", coltype: ColType::Text },
 ];
 
 impl SystemTable for PgType {
@@ -51,6 +73,21 @@ impl SystemTable for PgType {
         let typtype: Vec<String> = vec!["b".into(); names.len()];
         let typdelim: Vec<String> = vec![",".into(); names.len()];
 
+        // Added columns defaults
+        let typowner: Vec<i32> = vec![10; names.len()];
+        let typlen: Vec<i32> = vec![-1; names.len()];
+        let typbyval: Vec<bool> = vec![false; names.len()];
+        let typispreferred: Vec<bool> = vec![false; names.len()];
+        let typisdefined: Vec<bool> = vec![true; names.len()];
+        let zeros_i32: Vec<i32> = vec![0; names.len()];
+        let typalign: Vec<String> = vec!["i".into(); names.len()];
+        let typstorage: Vec<String> = vec!["p".into(); names.len()];
+        let typnotnull: Vec<bool> = vec![false; names.len()];
+        let typndims: Vec<i32> = vec![0; names.len()];
+        let typcollation: Vec<i32> = vec![0; names.len()];
+        let empty_txt: Vec<Option<String>> = vec![None; names.len()];
+        let empty_txt_s: Vec<String> = vec![String::new(); names.len()];
+
         DataFrame::new(vec![
             Series::new("typname".into(), names).into(),
             Series::new("oid".into(), oids).into(),
@@ -63,6 +100,27 @@ impl SystemTable for PgType {
             Series::new("typcategory".into(), typcategory).into(),
             Series::new("typtype".into(), typtype).into(),
             Series::new("typdelim".into(), typdelim).into(),
+            Series::new("typowner".into(), typowner).into(),
+            Series::new("typlen".into(), typlen).into(),
+            Series::new("typbyval".into(), typbyval).into(),
+            Series::new("typispreferred".into(), typispreferred).into(),
+            Series::new("typisdefined".into(), typisdefined).into(),
+            Series::new("typsubscript".into(), zeros_i32.clone()).into(),
+            Series::new("typinput".into(), zeros_i32.clone()).into(),
+            Series::new("typoutput".into(), zeros_i32.clone()).into(),
+            Series::new("typreceive".into(), zeros_i32.clone()).into(),
+            Series::new("typsend".into(), zeros_i32.clone()).into(),
+            Series::new("typmodin".into(), zeros_i32.clone()).into(),
+            Series::new("typmodout".into(), zeros_i32.clone()).into(),
+            Series::new("typanalyze".into(), zeros_i32.clone()).into(),
+            Series::new("typalign".into(), typalign).into(),
+            Series::new("typstorage".into(), typstorage).into(),
+            Series::new("typnotnull".into(), typnotnull).into(),
+            Series::new("typndims".into(), typndims).into(),
+            Series::new("typcollation".into(), typcollation).into(),
+            Series::new("typdefaultbin".into(), empty_txt.clone()).into(),
+            Series::new("typdefault".into(), empty_txt_s).into(),
+            Series::new("typacl".into(), empty_txt).into(),
         ]).ok()
     }
 }

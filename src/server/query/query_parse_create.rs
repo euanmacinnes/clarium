@@ -285,16 +285,31 @@ pub fn parse_create(s: &str) -> Result<Command> {
         });
     }
     if up.starts_with("SCRIPT ") {
-        // CREATE SCRIPT name AS 'code'
+        // CREATE SCRIPT [SCALAR|AGGREGATE|TVF|PACKAGE] <db>/<schema>/<name> AS 'code'
         let after = &rest[7..];
         let parts: Vec<&str> = after.splitn(2, " AS ").collect();
-        if parts.len() != 2 { anyhow::bail!("Invalid CREATE SCRIPT syntax. Use: CREATE SCRIPT <path> AS '<code>'"); }
-        let name = parts[0].trim();
+        if parts.len() != 2 { anyhow::bail!("Invalid CREATE SCRIPT syntax. Use: CREATE SCRIPT [SCALAR|AGGREGATE|TVF|PACKAGE] <db>/<schema>/<name> AS '<code>'"); }
+        let mut name_part = parts[0].trim();
         let code = parts[1].trim();
+        // Optional kind prefix
+        let mut kind: Option<crate::server::query::ScriptCreateKind> = None;
+        let mut np_up = name_part.to_uppercase();
+        for (kw, k) in [
+            ("SCALAR", crate::server::query::ScriptCreateKind::Scalar),
+            ("AGGREGATE", crate::server::query::ScriptCreateKind::Aggregate),
+            ("TVF", crate::server::query::ScriptCreateKind::Tvf),
+            ("PACKAGE", crate::server::query::ScriptCreateKind::Package),
+        ] {
+            if np_up.starts_with(kw) {
+                name_part = name_part[kw.len()..].trim_start();
+                kind = Some(k);
+                break;
+            }
+        }
         // strip single quotes around code if present
         let code_s = if code.starts_with('\'') && code.ends_with('\'') && code.len() >= 2 { &code[1..code.len()-1] } else { code };
-        if name.is_empty() { anyhow::bail!("Invalid CREATE SCRIPT: missing name"); }
-        return Ok(Command::CreateScript { path: name.to_string(), code: code_s.to_string() });
+        if name_part.is_empty() { anyhow::bail!("Invalid CREATE SCRIPT: missing name"); }
+        return Ok(Command::CreateScript { kind, path: name_part.to_string(), code: code_s.to_string() });
     }
     if up.starts_with("SCHEMA ") {
         let path = rest[7..].trim();

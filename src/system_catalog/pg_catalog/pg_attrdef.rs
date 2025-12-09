@@ -6,6 +6,7 @@ use crate::storage::SharedStore;
 pub struct PgAttrDef;
 
 const COLS: &[ColumnDef] = &[
+    ColumnDef { name: "oid", coltype: ColType::Integer },
     ColumnDef { name: "adrelid", coltype: ColType::Integer },
     ColumnDef { name: "adnum", coltype: ColType::Integer },
     ColumnDef { name: "adbin", coltype: ColType::Text },
@@ -18,6 +19,7 @@ impl SystemTable for PgAttrDef {
     fn build(&self, _store: &SharedStore) -> Option<DataFrame> {
         // Schema-only empty for now
         DataFrame::new(vec![
+            Series::new("oid".into(), Vec::<i32>::new()).into(),
             Series::new("adrelid".into(), Vec::<i32>::new()).into(),
             Series::new("adnum".into(), Vec::<i32>::new()).into(),
             Series::new("adbin".into(), Vec::<String>::new()).into(),

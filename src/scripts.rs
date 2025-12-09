@@ -14,6 +14,8 @@ use polars::prelude::{DataType, Series, DataFrame, NamedFrom};
 use std::cell::RefCell;
 use std::hash::Hash;
 use tracing::debug;
+use std::io::Write as _;
+use std::fs::OpenOptions;
 
 #[derive(Clone, Default)]
 pub struct ScriptRegistry {
@@ -174,27 +176,60 @@ impl ScriptRegistry {
         let tvfs = dir.join("tvfs");
         let load_dir = |folder: &Path, kind: ScriptKind| -> Result<()> {
             if !folder.exists() { return Ok(()); }
-            for ent in fs::read_dir(folder)? {
-                let ent = ent?;
+            let rd = match fs::read_dir(folder) {
+                Ok(rd) => rd,
+                Err(e) => {
+                    tracing::error!(target: "clarium::udf", "[UDF LOAD] Failed to read directory '{}': {}", folder.display(), e);
+                    return Ok(());
+                }
+            };
+            for ent_res in rd {
+                let ent = match ent_res {
+                    Ok(e) => e,
+                    Err(e) => { tracing::error!(target: "clarium::udf", "[UDF LOAD] Failed to read a directory entry in '{}': {}", folder.display(), e); continue; }
+                };
                 let p = ent.path();
                 if p.is_file() && p.extension().and_then(|e| e.to_str()).unwrap_or("").eq_ignore_ascii_case("lua") {
                     let name = p.file_stem().and_then(|s| s.to_str()).unwrap_or("").to_string();
-                    let code = fs::read_to_string(&p)?;
+                    let code = match fs::read_to_string(&p) {
+                        Ok(c) => c,
+                        Err(e) => { 
+                            tracing::error!(target: "clarium::udf", "[UDF LOAD] Failed to read Lua script '{}': {}", p.display(), e);
+                            // Write adjacent .log with details
+                            let _ = write_script_error_log_adjacent(&p, "read", &name, &format!("Failed to read Lua script: {}", e));
+                            continue; 
+                        }
+                    };
                     // Load under unqualified name
-                    self.load_script_text(&name, &code)?;
+                    if let Err(e) = self.load_script_text(&name, &code) {
+                        tracing::error!(target: "clarium::udf", "[UDF LOAD] Failed to register script '{}': {}", name, e);
+                        let _ = write_script_error_log_adjacent(&p, "register", &name, &format!("Failed to register script in registry: {}", e));
+                        // Do not attempt to set metadata if we couldn't register
+                        continue;
+                    }
                     // Also expose all globally provided functions under pg_catalog.<name>
                     // so clients using schema-qualified calls can resolve them.
                     let qualified = format!("pg_catalog.{}", name);
-                    self.load_script_text(&qualified, &code)?;
+                    if let Err(e) = self.load_script_text(&qualified, &code) {
+                        tracing::error!(target: "clarium::udf", "[UDF LOAD] Failed to register qualified script '{}': {}", qualified, e);
+                    }
                     // Try sidecar .meta.json
                     let mut applied_meta = false;
                     let sidecar = p.with_extension("meta.json");
                     if sidecar.exists() {
-                        if let Ok(txt) = fs::read_to_string(&sidecar) {
-                            if let Ok(meta) = Self::parse_meta_json(&txt, &kind) {
-                                self.set_meta(&name, meta.clone());
-                                self.set_meta(&qualified, meta);
-                                applied_meta = true;
+                        match fs::read_to_string(&sidecar) {
+                            Ok(txt) => {
+                                match Self::parse_meta_json(&txt, &kind) {
+                                    Ok(meta) => { self.set_meta(&name, meta.clone()); self.set_meta(&qualified, meta); applied_meta = true; }
+                                    Err(e) => { 
+                                        tracing::error!(target: "clarium::udf", "[UDF LOAD] Invalid meta sidecar for '{}': {}", p.display(), e);
+                                        let _ = write_script_error_log_adjacent(&p, "meta", &name, &format!("Invalid .meta.json sidecar '{}': {}", sidecar.display(), e));
+                                    }
+                                }
+                            }
+                            Err(e) => { 
+                                tracing::error!(target: "clarium::udf", "[UDF LOAD] Failed to read meta sidecar for '{}': {}", p.display(), e);
+                                let _ = write_script_error_log_adjacent(&p, "meta", &name, &format!("Failed to read .meta.json sidecar '{}': {}", sidecar.display(), e));
                             }
                         }
                     }
@@ -208,10 +243,12 @@ impl ScriptRegistry {
                     }
                     // Try to read metadata via meta function in a fresh Lua state
                     if !applied_meta {
-                        if let Ok(meta) = self.fetch_meta_via_lua(&name, &kind) {
-                            self.set_meta(&name, meta.clone());
-                            self.set_meta(&qualified, meta);
-                            applied_meta = true;
+                        match self.fetch_meta_via_lua(&name, &kind) {
+                            Ok(meta) => { self.set_meta(&name, meta.clone()); self.set_meta(&qualified, meta); applied_meta = true; }
+                            Err(e) => { 
+                                tracing::error!(target: "clarium::udf", "[UDF LOAD] Failed to fetch meta via Lua for '{}': {}", name, e);
+                                let _ = write_script_error_log_adjacent(&p, "meta", &name, &format!("Failed to fetch meta via Lua: {}", e));
+                            }
                         }
                     }
                     // default meta when not provided
@@ -285,12 +322,27 @@ impl ScriptRegistry {
         use mlua::Lua;
         let snapshot: std::collections::HashMap<String, String> = { self.inner.lock().clone() };
         let lua = Lua::new();
-        for (_n, code) in snapshot.iter() { lua.load(code.as_str()).exec()?; }
+        for (n, code) in snapshot.iter() {
+            if let Err(e) = lua.load(code.as_str()).exec() {
+                // Do not abort metadata fetch for other scripts; log and continue
+                tracing::error!(target: "clarium::udf", "[UDF META] Failed to load script '{}' while fetching meta for '{}': {}", n, name, e);
+                // Attempt to write an adjacent .log for the failing script if we can resolve its file
+                let _ = write_script_error_log_for_name(n, "meta-load", &format!("Failed to load script while fetching meta for '{}': {}", name, e));
+                continue;
+            }
+        }
         let globals = lua.globals();
         let meta_fn: Option<mlua::Function> = globals.get(format!("{}__meta", name).as_str()).ok();
         let mut meta = ScriptMeta { kind: default_kind.clone(), returns: Vec::new(), nullable: true, version: 0, tvf_columns: Vec::new() };
         if let Some(mf) = meta_fn {
-            let v: mlua::Value = mf.call(())?;
+            let v: mlua::Value = match mf.call(()) {
+                Ok(v) => v,
+                Err(e) => {
+                    tracing::error!(target: "clarium::udf", "[UDF META] '{}'__meta() call failed: {}", name, e);
+                    let _ = write_script_error_log_for_name(name, "meta-call", &format!("'{}__meta' call failed: {}", name, e));
+                    return Ok(meta);
+                }
+            };
             // Expect a table with fields: kind, returns (array of strings), nullable (bool)
             if let mlua::Value::Table(t) = v {
                 if let Ok(k) = t.get::<_, String>("kind") { meta.kind = if k.eq_ignore_ascii_case("aggregate") { ScriptKind::Aggregate } else if k.eq_ignore_ascii_case("constraint") { ScriptKind::Constraint } else { ScriptKind::Scalar }; }
@@ -704,9 +756,18 @@ impl ScriptRegistry {
                 let snapshot: std::collections::HashMap<String, String> = { self.inner.lock().clone() };
                 debug!("[UDF LUA] with_prepared_lua: creating new Lua VM and loading {} scripts", snapshot.len());
                 let lua = Lua::new();
+                // Configure Lua package.path to include packages from all known roots
+                if let Err(e) = configure_lua_package_paths(&lua) {
+                    tracing::debug!(target: "clarium::udf", "[UDF LUA] configure package paths failed: {}", e);
+                }
                 for (n, code) in snapshot.iter() { 
                     debug!("[UDF LUA] with_prepared_lua: loading script '{}' into Lua VM", n);
-                    lua.load(code.as_str()).exec()?; 
+                    if let Err(e) = lua.load(code.as_str()).exec() {
+                        // Do not abort the whole VM build; log and continue with remaining scripts
+                        tracing::error!(target: "clarium::udf", "[UDF LUA] Failed to load script '{}' into Lua VM: {}", n, e);
+                        let _ = write_script_error_log_for_name(n, "vm-load", &format!("Failed to load script into Lua VM: {}", e));
+                        continue;
+                    }
                 }
                 debug!("[UDF LUA] with_prepared_lua: all scripts loaded, caching Lua VM with stamp={}", stamp);
                 *cell.borrow_mut() = Some(PreparedLua { stamp, lua });
@@ -951,9 +1012,76 @@ fn lua_to_json(v: mlua::Value) -> Result<serde_json::Value> {
     Ok(j)
 }
 
+/// Write an error log file adjacent to the given script path.
+/// The log file name will be `<script_stem>.error.log` and will contain stage, function name,
+/// timestamp (unix seconds), and the full error message.
+fn write_script_error_log_adjacent(script_path: &Path, stage: &str, func_name: &str, err_msg: &str) -> Result<()> {
+    let stem = script_path.file_stem().and_then(|s| s.to_str()).unwrap_or("script");
+    let log_path = script_path.with_file_name(format!("{}.error.log", stem));
+    // Compose log content
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)?;
+    let _ = writeln!(file, "--- clarium lua script error ---");
+    let _ = writeln!(file, "time_unix={} stage={} function={} file={}", ts, stage, func_name, script_path.display());
+    let _ = writeln!(file, "error: {}", err_msg);
+    let _ = writeln!(file, "");
+    Ok(())
+}
+
+/// Resolve a script path by function name (handles schema-qualified names) and write an adjacent error log.
+fn write_script_error_log_for_name(func_name: &str, stage: &str, err_msg: &str) -> Result<()> {
+    // Strip schema qualification if present (e.g., "pg_catalog.name" -> "name")
+    let base = func_name.rsplit('.').next().unwrap_or(func_name);
+    if let Some((path, _kind)) = find_function_script_in_global_scripts(base) {
+        let _ = write_script_error_log_adjacent(&path, stage, base, err_msg);
+    }
+    Ok(())
+}
+
 /// Compute the scripts directory for a given database and schema under root.
 pub fn scripts_dir_for(root: &Path, db: &str, schema: &str) -> PathBuf {
     root.join(db).join(schema).join("scripts")
+}
+
+/// Configure Lua `package.path` and `package.cpath` to include known packages folders.
+/// Adds entries for both global scripts roots and extra per-database roots:
+/// - <root>/packages/?.lua
+/// - <root>/packages/?/init.lua
+fn configure_lua_package_paths(lua: &mlua::Lua) -> Result<()> {
+    use std::path::PathBuf;
+    // Build list of unique package roots
+    let mut roots: Vec<PathBuf> = Vec::new();
+    for r in global_scripts_roots() { roots.push(r); }
+    for r in extra_script_roots() { roots.push(r); }
+    // Deduplicate
+    let mut uniq: Vec<PathBuf> = Vec::new();
+    for r in roots.into_iter() {
+        if !uniq.iter().any(|x| x == &r) { uniq.push(r); }
+    }
+    // Read existing package.path
+    let pkg: mlua::Table = lua.globals().get("package")?;
+    let cur_path: String = pkg.get("path").unwrap_or_else(|_| String::new());
+    let mut path = cur_path;
+    // Windows backslashes; Lua accepts both, but we follow OS paths
+    for root in uniq.iter() {
+        let p1 = root.join("packages").join("?.lua");
+        let p2 = root.join("packages").join("?").join("init.lua");
+        let s1 = p1.to_string_lossy().replace("\\", "/");
+        let s2 = p2.to_string_lossy().replace("\\", "/");
+        if !path.is_empty() { path.push(';'); }
+        path.push_str(&s1);
+        path.push(';');
+        path.push_str(&s2);
+    }
+    pkg.set("path", path)?;
+    // Leave cpath unchanged for now
+    Ok(())
 }
 
 /// Return a list of candidate global scripts roots to auto-load on startup.
@@ -977,7 +1105,7 @@ pub fn global_scripts_roots() -> Vec<PathBuf> {
 }
 
 /// Check if a function's script file exists under any global scripts root.
-/// Looks in subfolders `scalars`, `aggregates`, and `constraints` for `<name>.lua` (case-insensitive logical name).
+/// Looks in subfolders `scalars`, `aggregates`, `constraints`, and `tvfs` for `<name>.lua` (case-insensitive logical name).
 fn function_exists_in_global_scripts(name: &str) -> bool {
     let lname = name.to_ascii_lowercase();
     for root in global_scripts_roots() {
@@ -990,6 +1118,12 @@ fn function_exists_in_global_scripts(name: &str) -> bool {
         // constraints/<name>.lua
         let p3 = root.join("constraints").join(format!("{}.lua", lname));
         if p3.exists() { return true; }
+        // tvfs/<name>.lua
+        let p4 = root.join("tvfs").join(format!("{}.lua", lname));
+        if p4.exists() { return true; }
+        // packages/<name>.lua
+        let p5 = root.join("packages").join(format!("{}.lua", lname));
+        if p5.exists() { return true; }
     }
     false
 }
@@ -1004,6 +1138,10 @@ fn find_function_script_in_global_scripts(name: &str) -> Option<(PathBuf, Script
         if p2.exists() { return Some((p2, ScriptKind::Aggregate)); }
         let p3 = root.join("constraints").join(format!("{}.lua", lname));
         if p3.exists() { return Some((p3, ScriptKind::Constraint)); }
+        let p4 = root.join("tvfs").join(format!("{}.lua", lname));
+        if p4.exists() { return Some((p4, ScriptKind::Tvf)); }
+        let p5 = root.join("packages").join(format!("{}.lua", lname));
+        if p5.exists() { return Some((p5, ScriptKind::Scalar)); }
     }
     None
 }
@@ -1018,6 +1156,7 @@ fn candidate_udf_script_paths(name: &str) -> Vec<PathBuf> {
         v.push(root.join("scalars").join(format!("{}.lua", lname)));
         v.push(root.join("aggregates").join(format!("{}.lua", lname)));
         v.push(root.join("constraints").join(format!("{}.lua", lname)));
+        v.push(root.join("tvfs").join(format!("{}.lua", lname)));
     }
     v
 }

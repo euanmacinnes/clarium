@@ -111,7 +111,7 @@ pub enum Command {
     UserDelete { username: String, scope_db: Option<String> },
     UserAlter { username: String, new_password: Option<String>, is_admin: Option<bool>, perms: Option<Vec<String>>, scope_db: Option<String> },
     // Scripts
-    CreateScript { path: String, code: String },
+    CreateScript { kind: Option<ScriptCreateKind>, path: String, code: String },
     DropScript { path: String },
     RenameScript { from: String, to: String },
     LoadScript { path: Option<String> },
@@ -214,6 +214,14 @@ pub enum Command {
     DeleteFilePathCmd { filestore: String, logical_path: String },
     CreateTreeCmd { filestore: String, prefix: Option<String> },
     CommitTreeCmd { filestore: String, tree_id: String, parents: Vec<String>, branch: Option<String>, author_name: Option<String>, author_email: Option<String>, message: Option<String>, tags: Vec<String> },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ScriptCreateKind {
+    Scalar,
+    Aggregate,
+    Tvf,
+    Package,
 }
 
 #[derive(Debug, Clone)]

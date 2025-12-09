@@ -14,6 +14,26 @@ const COLS: &[ColumnDef] = &[
     ColumnDef { name: "contype", coltype: ColType::Text },
     ColumnDef { name: "conkey", coltype: ColType::Text }, // array string like {1,2}
     ColumnDef { name: "conindid", coltype: ColType::Integer },
+    // added per reconciliation
+    ColumnDef { name: "connamespace", coltype: ColType::Integer },
+    ColumnDef { name: "condeferrable", coltype: ColType::Boolean },
+    ColumnDef { name: "condeferred", coltype: ColType::Boolean },
+    ColumnDef { name: "convalidated", coltype: ColType::Boolean },
+    ColumnDef { name: "contypid", coltype: ColType::Integer },
+    ColumnDef { name: "conparentid", coltype: ColType::Integer },
+    ColumnDef { name: "confrelid", coltype: ColType::Integer },
+    ColumnDef { name: "confupdtype", coltype: ColType::Text },
+    ColumnDef { name: "confdeltype", coltype: ColType::Text },
+    ColumnDef { name: "confmatchtype", coltype: ColType::Text },
+    ColumnDef { name: "conislocal", coltype: ColType::Boolean },
+    ColumnDef { name: "coninhcount", coltype: ColType::Integer },
+    ColumnDef { name: "connoinherit", coltype: ColType::Boolean },
+    ColumnDef { name: "confkey", coltype: ColType::Text },
+    ColumnDef { name: "conpfeqop", coltype: ColType::Text },
+    ColumnDef { name: "conppeqop", coltype: ColType::Text },
+    ColumnDef { name: "conffeqop", coltype: ColType::Text },
+    ColumnDef { name: "conexclop", coltype: ColType::Text },
+    ColumnDef { name: "conbin", coltype: ColType::Text },
 ];
 
 impl SystemTable for PgConstraint {
@@ -28,8 +48,41 @@ impl SystemTable for PgConstraint {
         let mut conkey: Vec<String> = Vec::new();
         let mut conindid: Vec<i32> = Vec::new();
         let mut oid: Vec<i32> = Vec::new();
+        // added fields
+        let mut connamespace: Vec<i32> = Vec::new();
+        let mut condeferrable: Vec<bool> = Vec::new();
+        let mut condeferred: Vec<bool> = Vec::new();
+        let mut convalidated: Vec<bool> = Vec::new();
+        let mut contypid: Vec<i32> = Vec::new();
+        let mut conparentid: Vec<i32> = Vec::new();
+        let mut confrelid: Vec<i32> = Vec::new();
+        let mut confupdtype: Vec<String> = Vec::new();
+        let mut confdeltype: Vec<String> = Vec::new();
+        let mut confmatchtype: Vec<String> = Vec::new();
+        let mut conislocal: Vec<bool> = Vec::new();
+        let mut coninhcount: Vec<i32> = Vec::new();
+        let mut connoinherit: Vec<bool> = Vec::new();
+        let mut confkey: Vec<String> = Vec::new();
+        let mut conpfeqop: Vec<String> = Vec::new();
+        let mut conppeqop: Vec<String> = Vec::new();
+        let mut conffeqop: Vec<String> = Vec::new();
+        let mut conexclop: Vec<String> = Vec::new();
+        let mut conbin: Vec<Option<String>> = Vec::new();
 
         let mut constraint_oid = 20000i32;
+
+        // namespace OIDs mapping similar to pg_class
+        let pg_catalog_oid: i32 = 11;
+        let information_schema_oid: i32 = 13211;
+        let public_oid: i32 = 2200;
+        let ns_oid_for = |schema: &str| -> i32 {
+            match schema {
+                "pg_catalog" => pg_catalog_oid,
+                "information_schema" => information_schema_oid,
+                "public" => public_oid,
+                _ => public_oid,
+            }
+        };
 
         for m in metas.iter() {
             let table_oid = get_or_assign_table_oid(&m.dir, &m.db, &m.schema, &m.table);
@@ -61,6 +114,26 @@ impl SystemTable for PgConstraint {
                     conkey.push(conkey_str);
                     conindid.push(0);
                     oid.push(constraint_oid);
+                    // fill added columns for PK defaults
+                    connamespace.push(ns_oid_for(&m.schema));
+                    condeferrable.push(false);
+                    condeferred.push(false);
+                    convalidated.push(true);
+                    contypid.push(0);
+                    conparentid.push(0);
+                    confrelid.push(0);
+                    confupdtype.push(String::new());
+                    confdeltype.push(String::new());
+                    confmatchtype.push(String::new());
+                    conislocal.push(true);
+                    coninhcount.push(0);
+                    connoinherit.push(false);
+                    confkey.push("{}".to_string());
+                    conpfeqop.push("{}".to_string());
+                    conppeqop.push("{}".to_string());
+                    conffeqop.push("{}".to_string());
+                    conexclop.push("{}".to_string());
+                    conbin.push(None);
                     constraint_oid += 1;
                 }
             }
@@ -74,6 +147,25 @@ impl SystemTable for PgConstraint {
             Series::new("contype".into(), contype).into(),
             Series::new("conkey".into(), conkey).into(),
             Series::new("conindid".into(), conindid).into(),
+            Series::new("connamespace".into(), connamespace).into(),
+            Series::new("condeferrable".into(), condeferrable).into(),
+            Series::new("condeferred".into(), condeferred).into(),
+            Series::new("convalidated".into(), convalidated).into(),
+            Series::new("contypid".into(), contypid).into(),
+            Series::new("conparentid".into(), conparentid).into(),
+            Series::new("confrelid".into(), confrelid).into(),
+            Series::new("confupdtype".into(), confupdtype).into(),
+            Series::new("confdeltype".into(), confdeltype).into(),
+            Series::new("confmatchtype".into(), confmatchtype).into(),
+            Series::new("conislocal".into(), conislocal).into(),
+            Series::new("coninhcount".into(), coninhcount).into(),
+            Series::new("connoinherit".into(), connoinherit).into(),
+            Series::new("confkey".into(), confkey).into(),
+            Series::new("conpfeqop".into(), conpfeqop).into(),
+            Series::new("conppeqop".into(), conppeqop).into(),
+            Series::new("conffeqop".into(), conffeqop).into(),
+            Series::new("conexclop".into(), conexclop).into(),
+            Series::new("conbin".into(), conbin).into(),
         ]).ok()
     }
 }

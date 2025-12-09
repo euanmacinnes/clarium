@@ -14,6 +14,35 @@ const COLS: &[ColumnDef] = &[
     ColumnDef { name: "oid", coltype: ColType::Integer },
     ColumnDef { name: "relnamespace", coltype: ColType::Integer },
     ColumnDef { name: "relpartbound", coltype: ColType::Text },
+    // added per reconciliation
+    ColumnDef { name: "reltype", coltype: ColType::Integer },
+    ColumnDef { name: "reloftype", coltype: ColType::Integer },
+    ColumnDef { name: "relowner", coltype: ColType::Integer },
+    ColumnDef { name: "relam", coltype: ColType::Integer },
+    ColumnDef { name: "relfilenode", coltype: ColType::Integer },
+    ColumnDef { name: "reltablespace", coltype: ColType::Integer },
+    ColumnDef { name: "relpages", coltype: ColType::Integer },
+    ColumnDef { name: "reltuples", coltype: ColType::Text },
+    ColumnDef { name: "relallvisible", coltype: ColType::Integer },
+    ColumnDef { name: "reltoastrelid", coltype: ColType::Integer },
+    ColumnDef { name: "relhasindex", coltype: ColType::Boolean },
+    ColumnDef { name: "relisshared", coltype: ColType::Boolean },
+    ColumnDef { name: "relpersistence", coltype: ColType::Text },
+    ColumnDef { name: "relnatts", coltype: ColType::Integer },
+    ColumnDef { name: "relchecks", coltype: ColType::Integer },
+    ColumnDef { name: "relhasrules", coltype: ColType::Boolean },
+    ColumnDef { name: "relhastriggers", coltype: ColType::Boolean },
+    ColumnDef { name: "relhassubclass", coltype: ColType::Boolean },
+    ColumnDef { name: "relrowsecurity", coltype: ColType::Boolean },
+    ColumnDef { name: "relforcerowsecurity", coltype: ColType::Boolean },
+    ColumnDef { name: "relispopulated", coltype: ColType::Boolean },
+    ColumnDef { name: "relreplident", coltype: ColType::Text },
+    ColumnDef { name: "relispartition", coltype: ColType::Boolean },
+    ColumnDef { name: "relrewrite", coltype: ColType::Integer },
+    ColumnDef { name: "relfrozenxid", coltype: ColType::Text },
+    ColumnDef { name: "relminmxid", coltype: ColType::Text },
+    ColumnDef { name: "relacl", coltype: ColType::Text },
+    ColumnDef { name: "reloptions", coltype: ColType::Text },
 ];
 
 impl SystemTable for PgClass {
@@ -88,6 +117,15 @@ fn build_pg_class_df(store: &SharedStore) -> Option<polars::prelude::DataFrame> 
         relnamespace.push(ns_oid_for(&g.schema));
         relpartbound.push(None);
     }
+    let rows = relname.len();
+    // Defaults for added columns
+    let zeros_i32: Vec<i32> = vec![0; rows];
+    let falses: Vec<bool> = vec![false; rows];
+    let empty_txt: Vec<Option<String>> = vec![None; rows];
+    let empty_txt_s: Vec<String> = vec![String::new(); rows];
+    let relpersistence: Vec<String> = vec!["p".into(); rows];
+    let relreplident: Vec<String> = vec!["n".into(); rows];
+
     DataFrame::new(vec![
         Series::new("relname".into(), relname).into(),
         Series::new("nspname".into(), nspname).into(),
@@ -95,6 +133,34 @@ fn build_pg_class_df(store: &SharedStore) -> Option<polars::prelude::DataFrame> 
         Series::new("oid".into(), oid).into(),
         Series::new("relnamespace".into(), relnamespace).into(),
         Series::new("relpartbound".into(), relpartbound).into(),
+        Series::new("reltype".into(), zeros_i32.clone()).into(),
+        Series::new("reloftype".into(), zeros_i32.clone()).into(),
+        Series::new("relowner".into(), vec![10; rows]).into(),
+        Series::new("relam".into(), zeros_i32.clone()).into(),
+        Series::new("relfilenode".into(), zeros_i32.clone()).into(),
+        Series::new("reltablespace".into(), zeros_i32.clone()).into(),
+        Series::new("relpages".into(), zeros_i32.clone()).into(),
+        Series::new("reltuples".into(), empty_txt_s.clone()).into(),
+        Series::new("relallvisible".into(), zeros_i32.clone()).into(),
+        Series::new("reltoastrelid".into(), zeros_i32.clone()).into(),
+        Series::new("relhasindex".into(), falses.clone()).into(),
+        Series::new("relisshared".into(), falses.clone()).into(),
+        Series::new("relpersistence".into(), relpersistence).into(),
+        Series::new("relnatts".into(), zeros_i32.clone()).into(),
+        Series::new("relchecks".into(), zeros_i32.clone()).into(),
+        Series::new("relhasrules".into(), falses.clone()).into(),
+        Series::new("relhastriggers".into(), falses.clone()).into(),
+        Series::new("relhassubclass".into(), falses.clone()).into(),
+        Series::new("relrowsecurity".into(), falses.clone()).into(),
+        Series::new("relforcerowsecurity".into(), falses.clone()).into(),
+        Series::new("relispopulated".into(), falses.clone()).into(),
+        Series::new("relreplident".into(), relreplident).into(),
+        Series::new("relispartition".into(), falses.clone()).into(),
+        Series::new("relrewrite".into(), zeros_i32.clone()).into(),
+        Series::new("relfrozenxid".into(), empty_txt_s.clone()).into(),
+        Series::new("relminmxid".into(), empty_txt_s).into(),
+        Series::new("relacl".into(), empty_txt.clone()).into(),
+        Series::new("reloptions".into(), empty_txt).into(),
     ]).ok()
 }
 

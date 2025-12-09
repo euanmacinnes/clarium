@@ -195,8 +195,8 @@ fn show_scripts(store: &SharedStore) -> Result<Value> {
                     let sname = sch_ent.file_name().to_string_lossy().to_string();
                     let sdir = scripts_dir_for(Path::new(&root), &dbname, &sname);
                     if sdir.exists() {
-                        // look in scalars and aggregates
-                        for sub in ["scalars", "aggregates"] {
+                        // look in scalars, aggregates, constraints, tvfs, packages
+                        for sub in ["scalars", "aggregates", "constraints", "tvfs", "packages"] {
                             let subd = sdir.join(sub);
                             if subd.exists() {
                                 if let Ok(listing) = fs::read_dir(&subd) {
@@ -204,8 +204,14 @@ fn show_scripts(store: &SharedStore) -> Result<Value> {
                                         let p = f.path();
                                         if p.extension().and_then(|e| e.to_str()).unwrap_or("").eq_ignore_ascii_case("lua") {
                                             let name = p.file_stem().and_then(|s| s.to_str()).unwrap_or("").to_string();
-                                            let kind = if sub == "aggregates" { "aggregate" } else { "scalar" };
-                                            out.push(serde_json::json!({"db": dbname, "schema": sname, "name": name, "kind": kind}));
+                                            let kind = match sub { 
+                                                "aggregates" => "aggregate",
+                                                "constraints" => "constraint",
+                                                "tvfs" => "tvf",
+                                                "packages" => "package",
+                                                _ => "scalar",
+                                            };
+                                            out.push(serde_json::json!({"db": dbname, "schema": sname, "name": name, "kind": kind, "folder": sub}));
                                         }
                                     }
                                 }

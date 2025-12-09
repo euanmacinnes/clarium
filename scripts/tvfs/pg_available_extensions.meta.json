@@ -1,0 +1,8 @@
+{
+  "kind": "tvf",
+  "columns": [
+    { "name": "name", "type": "text" },
+    { "name": "default_version", "type": "text" },
+    { "name": "comment", "type": "text" }
+  ]
+}

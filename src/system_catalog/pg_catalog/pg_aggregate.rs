@@ -22,6 +22,24 @@ const COLS: &[ColumnDef] = &[
     ColumnDef { name: "aggsortop", coltype: ColType::Integer },
     ColumnDef { name: "aggtranstype", coltype: ColType::Integer },
     ColumnDef { name: "agginitval", coltype: ColType::Text },
+    // added per reconciliation
+    ColumnDef { name: "aggnumdirectargs", coltype: ColType::Integer },
+    ColumnDef { name: "aggtransfn", coltype: ColType::Integer },
+    ColumnDef { name: "aggfinalfn", coltype: ColType::Integer },
+    ColumnDef { name: "aggcombinefn", coltype: ColType::Integer },
+    ColumnDef { name: "aggserialfn", coltype: ColType::Integer },
+    ColumnDef { name: "aggdeserialfn", coltype: ColType::Integer },
+    ColumnDef { name: "aggmtransfn", coltype: ColType::Integer },
+    ColumnDef { name: "aggminvtransfn", coltype: ColType::Integer },
+    ColumnDef { name: "aggmfinalfn", coltype: ColType::Integer },
+    ColumnDef { name: "aggfinalextra", coltype: ColType::Boolean },
+    ColumnDef { name: "aggmfinalextra", coltype: ColType::Boolean },
+    ColumnDef { name: "aggfinalmodify", coltype: ColType::Text },
+    ColumnDef { name: "aggmfinalmodify", coltype: ColType::Text },
+    ColumnDef { name: "aggtransspace", coltype: ColType::Integer },
+    ColumnDef { name: "aggmtranstype", coltype: ColType::Integer },
+    ColumnDef { name: "aggmtransspace", coltype: ColType::Integer },
+    ColumnDef { name: "aggminitval", coltype: ColType::Text },
 ];
 
 impl SystemTable for PgAggregate {
@@ -35,6 +53,23 @@ impl SystemTable for PgAggregate {
             Series::new("aggsortop".into(), Vec::<i32>::new()).into(),
             Series::new("aggtranstype".into(), Vec::<i32>::new()).into(),
             Series::new("agginitval".into(), Vec::<String>::new()).into(),
+            Series::new("aggnumdirectargs".into(), Vec::<i32>::new()).into(),
+            Series::new("aggtransfn".into(), Vec::<i32>::new()).into(),
+            Series::new("aggfinalfn".into(), Vec::<i32>::new()).into(),
+            Series::new("aggcombinefn".into(), Vec::<i32>::new()).into(),
+            Series::new("aggserialfn".into(), Vec::<i32>::new()).into(),
+            Series::new("aggdeserialfn".into(), Vec::<i32>::new()).into(),
+            Series::new("aggmtransfn".into(), Vec::<i32>::new()).into(),
+            Series::new("aggminvtransfn".into(), Vec::<i32>::new()).into(),
+            Series::new("aggmfinalfn".into(), Vec::<i32>::new()).into(),
+            Series::new("aggfinalextra".into(), Vec::<bool>::new()).into(),
+            Series::new("aggmfinalextra".into(), Vec::<bool>::new()).into(),
+            Series::new("aggfinalmodify".into(), Vec::<String>::new()).into(),
+            Series::new("aggmfinalmodify".into(), Vec::<String>::new()).into(),
+            Series::new("aggtransspace".into(), Vec::<i32>::new()).into(),
+            Series::new("aggmtranstype".into(), Vec::<i32>::new()).into(),
+            Series::new("aggmtransspace".into(), Vec::<i32>::new()).into(),
+            Series::new("aggminitval".into(), Vec::<String>::new()).into(),
         ]).ok()
     }
 }

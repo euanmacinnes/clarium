@@ -2,19 +2,27 @@ use anyhow::Result;
 use serde_json::Value;
 use std::path::Path;
 
-use crate::server::query::Command;
+use crate::server::query::{Command, ScriptCreateKind};
 use crate::scripts::{get_script_registry, scripts_dir_for};
 use crate::storage::SharedStore;
 
 pub fn execute_scripts(store: &SharedStore, cmd: Command) -> Result<Value> {
     match cmd {
-        Command::CreateScript { path, code } => {
+        Command::CreateScript { kind, path, code } => {
             use std::fs;
             let root = { let g = store.0.lock(); g.root_path().clone() };
             // Expect path in form db/schema/name[.lua]
             let parts: Vec<&str> = path.split('/').collect();
             if parts.len() != 3 { anyhow::bail!("SCRIPT path must be <db>/<schema>/<name>"); }
-            let dir = scripts_dir_for(Path::new(&root), parts[0], parts[1]);
+            let base_dir = scripts_dir_for(Path::new(&root), parts[0], parts[1]);
+            // choose subfolder based on kind (default scalar)
+            let subfolder = match kind.unwrap_or(ScriptCreateKind::Scalar) {
+                ScriptCreateKind::Scalar => "scalars",
+                ScriptCreateKind::Aggregate => "aggregates",
+                ScriptCreateKind::Tvf => "tvfs",
+                ScriptCreateKind::Package => "packages",
+            };
+            let dir = base_dir.join(subfolder);
             fs::create_dir_all(&dir)?;
             let mut fname = parts[2].to_string();
             if !fname.ends_with(".lua") { fname.push_str(".lua"); }
@@ -23,6 +31,8 @@ pub fn execute_scripts(store: &SharedStore, cmd: Command) -> Result<Value> {
             if let Some(reg) = get_script_registry() {
                 let name_no_ext = parts[2].split('.').next().unwrap_or(parts[2]);
                 let text = code;
+                // For packages we don't register a global function, but loading into registry
+                // is harmless and allows direct calls if the package defines a global.
                 let _ = reg.load_script_text(name_no_ext, &text);
             }
             Ok(serde_json::json!({"status":"ok"}))

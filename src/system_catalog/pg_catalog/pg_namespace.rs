@@ -8,6 +8,9 @@ pub struct PgNamespace;
 const COLS: &[ColumnDef] = &[
     ColumnDef { name: "oid", coltype: ColType::Integer },
     ColumnDef { name: "nspname", coltype: ColType::Text },
+    // added per reconciliation
+    ColumnDef { name: "nspowner", coltype: ColType::Integer },
+    ColumnDef { name: "nspacl", coltype: ColType::Text },
 ];
 
 impl SystemTable for PgNamespace {
@@ -18,9 +21,13 @@ impl SystemTable for PgNamespace {
         // Provide minimal pg_namespace with OIDs for pg_catalog, information_schema and public
         let nspname: Vec<String> = vec!["pg_catalog".into(), "information_schema".into(), "public".into()];
         let oid: Vec<i32> = vec![11, 13211, 2200];
+        let nspowner: Vec<i32> = vec![10; oid.len()];
+        let nspacl: Vec<Option<String>> = vec![None; oid.len()];
         DataFrame::new(vec![
             Series::new("oid".into(), oid).into(),
             Series::new("nspname".into(), nspname).into(),
+            Series::new("nspowner".into(), nspowner).into(),
+            Series::new("nspacl".into(), nspacl).into(),
         ]).ok()
     }
 }

@@ -283,6 +283,11 @@ impl PgSession {
 /// query (from --query or stdin) against a local store, or starts the interactive
 /// interpreter which can connect to a remote clarium server.
 fn main() -> Result<()> {
+    // Initialize tracing subscriber so script load errors are visible on the command line
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
+
     let mut args: Vec<String> = env::args().collect();
     let program = args.remove(0);
 
@@ -301,6 +306,10 @@ fn main() -> Result<()> {
     let mut gen_out_dir: Option<String> = None;
     let mut gen_overwrite: bool = false;
     let mut gen_dry_run: bool = false;
+
+    // System tables checker flags
+    let mut check_system_tables: bool = false;
+    let mut check_strict: bool = false;
 
     let mut i = 0;
     while i < args.len() {
@@ -349,6 +358,9 @@ fn main() -> Result<()> {
             }
             "--overwrite" => { gen_overwrite = true; i += 1; continue; }
             "--dry-run" => { gen_dry_run = true; i += 1; continue; }
+            // --- System tables checker flags ---
+            "--check-system-tables" => { check_system_tables = true; i += 1; continue; }
+            "--strict" => { check_strict = true; i += 1; continue; }
             "-h" | "--help" => {
                 print_usage(&program);
                 return Ok(());
@@ -394,6 +406,32 @@ fn main() -> Result<()> {
             }
             Err(e) => {
                 eprintln!("[viewgen] error: {}", e);
+                std::process::exit(1);
+            }
+        }
+    }
+
+    // Command-argument-gated: check system tables vs registry and exit
+    if check_system_tables {
+        let root = gen_out_dir.unwrap_or_else(|| {
+            if cfg!(windows) { "scripts\\system_views".to_string() } else { "scripts/system_views".to_string() }
+        });
+        let opts = clarium::tools::tablecheck::CheckOptions {
+            root_dir: std::path::PathBuf::from(&root),
+            strict: check_strict,
+        };
+        match clarium::tools::tablecheck::check_system_tables(&opts) {
+            Ok(diff_count) => {
+                eprintln!("[tablecheck] scanned '{}' and found {} difference(s){}",
+                    root,
+                    diff_count,
+                    if check_strict && diff_count > 0 { " [STRICT]" } else { "" }
+                );
+                if check_strict && diff_count > 0 { std::process::exit(3); }
+                return Ok(());
+            }
+            Err(e) => {
+                eprintln!("[tablecheck] error: {}", e);
                 std::process::exit(1);
             }
         }
