@@ -90,7 +90,12 @@ impl Store {
         debug!(target: "clarium::storage", "create_table: schema path='{}' exists={} table='{}'", schema_path.display(), schema_path.exists(), table);
         if !schema_path.exists() {
             let mut meta = serde_json::Map::new();
-            if !table.ends_with(".time") { meta.insert("tableType".into(), serde_json::json!("regular")); }
+            // Always set explicit tableType at creation time
+            if table.ends_with(".time") {
+                meta.insert("tableType".into(), serde_json::json!("time"));
+            } else {
+                meta.insert("tableType".into(), serde_json::json!("regular"));
+            }
             fs::write(&schema_path, serde_json::to_string_pretty(&serde_json::Value::Object(meta))?)?;
             debug!(target: "clarium::storage", "create_table: wrote initial schema.json for table='{}'", table);
         }

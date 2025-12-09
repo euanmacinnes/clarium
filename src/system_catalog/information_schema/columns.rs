@@ -3,6 +3,7 @@ use crate::system_catalog::registry::{SystemTable, ColumnDef, ColType};
 use crate::system_catalog::registry;
 use crate::storage::SharedStore;
 use std::path::PathBuf;
+use crate::tprintln;
 
 pub struct IColumns;
 
@@ -46,35 +47,36 @@ impl SystemTable for IColumns {
                                     let sj = tp.join("schema.json");
                                     let mut tname = tentry.file_name().to_string_lossy().to_string();
                                     if tname.ends_with(".time") {
+                                        // presentation: strip suffix for users, but do NOT infer type from this
                                         tname.truncate(tname.len() - 5);
                                     }
-                                    // Build columns either from schema.json or synthesize minimal for data-only tables
+                                    // Build columns strictly from schema.json (nested format) and tableType flag
                                     let mut cols: Vec<(String, String)> = Vec::new();
+                                    let mut is_time_table = false;
                                     if sj.exists() {
-                                        // parse schema.json
                                         if let Ok(text) = std::fs::read_to_string(&sj) {
                                             if let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) {
-                                                let mut is_time_table = false;
                                                 if let Some(serde_json::Value::String(tt)) = json.get("tableType") { is_time_table = tt.eq_ignore_ascii_case("time"); }
-                                                if let serde_json::Value::Object(obj) = json {
-                                                    for (k, v) in obj.into_iter() {
-                                                        if k == "PRIMARY" || k == "primaryKey" || k == "partitions" || k == "locks" || k == "tableType" { continue; }
-                                                        if let serde_json::Value::String(s) = v {
-                                                            cols.push((k, s));
-                                                        } else if let serde_json::Value::Object(m) = v {
-                                                            if let Some(serde_json::Value::String(t)) = m.get("type") {
-                                                                cols.push((k, t.clone()));
-                                                            }
+                                                if let Some(cols_obj) = json.get("columns").and_then(|x| x.as_object()) {
+                                                    for (k, v) in cols_obj.iter() {
+                                                        if let Some(s) = v.as_str() { cols.push((k.clone(), s.to_string())); }
+                                                    }
+                                                } else {
+                                                    // Older flat schemas: upgrade minimal read (backfill via startup migration elsewhere)
+                                                    if let Some(obj) = json.as_object() {
+                                                        for (k, v) in obj.iter() {
+                                                            if matches!(k.as_str(), "PRIMARY" | "primaryKey" | "partitions" | "locks" | "tableType") { continue; }
+                                                            if let Some(s) = v.as_str() { cols.push((k.clone(), s.to_string())); }
                                                         }
                                                     }
-                                                }
-                                                // Only register _time for time tables per schema.json single source of truth
-                                                if is_time_table && !cols.iter().any(|(n, _)| n == "_time") {
-                                                    cols.insert(0, ("_time".into(), "int64".into()));
                                                 }
                                             }
                                         }
                                     }
+                                    if is_time_table && !cols.iter().any(|(n, _)| n == "_time") {
+                                        cols.insert(0, ("_time".into(), "int64".into()));
+                                    }
+                                    tprintln!("[IColumns] schema='{}' table='{}' sj_exists={} time_table={} cols={} src='{}'", schema_name, tname, sj.exists(), is_time_table, cols.len(), tp.display());
                                     if !cols.is_empty() {
                                         let mut ord = 1i32;
                                         for (cname, ctype) in cols {
@@ -135,6 +137,11 @@ fn map_dtype(dtype: &str) -> (&'static str, &'static str) {
         "int64" | "i64" => ("bigint", "int8"),
         "int32" | "i32" | "int" | "integer" => ("integer", "int4"),
         "float" | "float64" | "f64" | "double" => ("double precision", "float8"),
+        // Represent vectors (List(Float64)/List(Int64) or logical 'vector')
+        // Default: Postgres float8[]; When feature "pgvector_type" is enabled, map to "vector".
+        "list" | "vector" | "list<float64>" | "list<int64>" => {
+            if cfg!(feature = "pgvector_type") { ("vector", "vector") } else { ("double precision[]", "_float8") }
+        }
         "bool" | "boolean" => ("boolean", "bool"),
         "timestamp" | "datetime" => ("timestamp", "timestamp"),
         other => {

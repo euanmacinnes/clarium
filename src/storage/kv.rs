@@ -435,7 +435,11 @@ fn kv_registry_for_root(root: &Path) -> Arc<KvStoresRegistry> {
 impl SharedStore {
     pub fn new(root: impl AsRef<Path>) -> anyhow::Result<Self> {
         let root_path = root.as_ref().to_path_buf();
+        // Create the underlying store
         let s = Self(Arc::new(parking_lot::Mutex::new(crate::storage::Store::new(&root_path)?)));
+        // One-time schema migration on startup for this root: upgrade legacy schema.json files
+        // to nested { columns: {...}, locks: [...] } and ensure explicit tableType.
+        let _ = crate::storage::schema::migrate_all_schemas_for_root(&root_path);
         // Ensure a registry exists for this root (idempotent)
         let _ = kv_registry_for_root(&root_path);
         Ok(s)

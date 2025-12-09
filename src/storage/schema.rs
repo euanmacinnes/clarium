@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
 use polars::prelude::*;
 use crate::tprintln;
 use super::Store;
@@ -82,6 +83,11 @@ pub(crate) fn save_schema_with_locks(store: &Store, table: &str, schema: &HashMa
     for (k, dt) in schema.iter() { cols.insert(k.clone(), dtype_to_str(dt)); }
     root.insert("columns".into(), serde_json::json!(cols));
     root.insert("locks".into(), serde_json::json!(locks.iter().cloned().collect::<Vec<_>>()));
+    // Preserve or set tableType explicitly (no directory-name inference elsewhere)
+    if !root.contains_key("tableType") {
+        let tt = if table.ends_with(".time") { "time" } else { "regular" };
+        root.insert("tableType".into(), serde_json::json!(tt));
+    }
     std::fs::write(&p, serde_json::to_string_pretty(&serde_json::Value::Object(root))?)?;
     Ok(())
 }
@@ -148,4 +154,59 @@ impl Store {
         std::fs::write(&p, serde_json::to_string_pretty(&Value::Object(obj))?)?;
         Ok(())
     }
+}
+
+// --- Schema migration utilities ---
+
+/// Migrate all `schema.json` files under the provided root to the new nested format
+/// with explicit `tableType`. Returns the number of files updated.
+pub(crate) fn migrate_all_schemas_for_root(root: &Path) -> anyhow::Result<usize> {
+    let mut updated = 0usize;
+    if !root.exists() { return Ok(0); }
+    // Walk: root/db/schema/table/(schema.json)
+    for db_ent in std::fs::read_dir(root).unwrap_or_else(|_| std::fs::ReadDir::from(std::fs::read_dir(root).unwrap())) {
+        if let Ok(db) = db_ent { let dbp = db.path(); if !dbp.is_dir() { continue; }
+            for sch_ent in std::fs::read_dir(&dbp).unwrap_or_else(|_| std::fs::read_dir(&dbp).unwrap()) {
+                if let Ok(sch) = sch_ent { let schp = sch.path(); if !schp.is_dir() { continue; }
+                    for tab_ent in std::fs::read_dir(&schp).unwrap_or_else(|_| std::fs::read_dir(&schp).unwrap()) {
+                        if let Ok(tab) = tab_ent { let tabp = tab.path(); if !tabp.is_dir() { continue; }
+                            let sj = tabp.join("schema.json");
+                            if !sj.exists() { continue; }
+                            if let Ok(text) = std::fs::read_to_string(&sj) {
+                                if let Ok(mut v) = serde_json::from_str::<serde_json::Value>(&text) {
+                                    let mut changed = false;
+                                    let mut obj = v.as_object().cloned().unwrap_or_default();
+                                    // Ensure tableType
+                                    if !obj.contains_key("tableType") {
+                                        let tt = if tabp.file_name().and_then(|s| s.to_str()).map(|s| s.ends_with(".time")).unwrap_or(false) { "time" } else { "regular" };
+                                        obj.insert("tableType".into(), serde_json::json!(tt));
+                                        changed = true;
+                                    }
+                                    // Ensure nested columns
+                                    let has_nested = obj.get("columns").and_then(|x| x.as_object()).is_some();
+                                    if !has_nested {
+                                        // Derive from flat entries: collect string values except known metadata keys
+                                        let mut cols: serde_json::Map<String, serde_json::Value> = serde_json::Map::new();
+                                        for (k, val) in obj.clone().into_iter() {
+                                            if matches!(k.as_str(), "columns" | "locks" | "PRIMARY" | "primaryKey" | "partitions" | "tableType") { continue; }
+                                            if let Some(s) = val.as_str() { cols.insert(k, serde_json::json!(s)); }
+                                        }
+                                        obj.insert("columns".into(), serde_json::Value::Object(cols));
+                                        changed = true;
+                                    }
+                                    if changed {
+                                        if std::fs::write(&sj, serde_json::to_string_pretty(&serde_json::Value::Object(obj))?).is_ok() {
+                                            updated += 1;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if updated > 0 { tprintln!("[SCHEMA] migrate_all_schemas_for_root: updated {} schema.json files", updated); }
+    Ok(updated)
 }
