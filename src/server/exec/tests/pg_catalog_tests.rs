@@ -504,17 +504,54 @@ fn test_system_views_registry_execute_limit_1() {
 
     // Iterate all registered system views (loaded from .view files) and attempt to execute their SQL with LIMIT 1
     let views = crate::system_views::list_views();
+    // Track per-view results instead of failing fast on the first error
+    let mut failures: Vec<(String, String)> = Vec::new();
     for v in views {
-        let mut sql = v.sql.trim().to_string();
-        if sql.is_empty() { continue; }
-        if !sql.to_ascii_lowercase().contains(" limit ") {
-            sql = format!("{} LIMIT 1", sql.trim_end_matches(';'));
+        // Build a unique label for display
+        let label = format!("{}.{}", v.schema, v.name);
+        let exec_one = || -> Result<(), String> {
+            let mut sql = v.sql.trim().to_string();
+            if sql.is_empty() { return Ok(()); }
+            if !sql.to_ascii_lowercase().contains(" limit ") {
+                sql = format!("{} LIMIT 1", sql.trim_end_matches(';'));
+            }
+            match query::parse(&sql) {
+                Ok(Command::Select(sel)) => {
+                    run_select(&shared, &sel)
+                        .map(|_| ())
+                        .map_err(|e| format!("execution error: {}", e))
+                }
+                Ok(other) => Err(format!("unexpected parsed command for view (expected SELECT): {:?}", other)),
+                Err(e) => Err(format!("parse error: {}", e)),
+            }
+        };
+
+        // Catch any panic inside execution to ensure all views are exercised
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(exec_one));
+        match outcome {
+            Ok(Ok(())) => {
+                println!("[system view] {label}: ok");
+            }
+            Ok(Err(msg)) => {
+                println!("[system view] {label}: FAILED - {msg}");
+                failures.push((label, msg));
+            }
+            Err(_) => {
+                println!("[system view] {label}: FAILED - panicked");
+                failures.push((label, "panicked".to_string()));
+            }
         }
-        if let Ok(Command::Select(sel)) = query::parse(&sql) {
-            let _ = run_select(&shared, &sel).expect(&format!("System view failed to execute: {}.{}", v.schema, v.name));
-        } else {
-            panic!("Failed to parse system view: {}.{}", v.schema, v.name);
+    }
+
+    if !failures.is_empty() {
+        // Summarize all failures at the end so the test fails once with details
+        let mut msg = String::new();
+        use std::fmt::Write as _;
+        let _ = writeln!(&mut msg, "{} system view(s) failed:", failures.len());
+        for (lbl, err) in failures {
+            let _ = writeln!(&mut msg, "  - {} => {}", lbl, err);
         }
+        panic!("{}", msg);
     }
 }
 

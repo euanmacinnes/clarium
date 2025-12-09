@@ -379,7 +379,12 @@ impl ScriptRegistry {
                         DataType::Float64 => "float64",
                         DataType::String => "string",
                         DataType::Null => "null",
-                        DataType::Datetime(_, _) => "datetime",
+                        DataType::Datetime(_, _) => "timestamp",
+                        DataType::Date => "date",
+                        DataType::Time => "time",
+                        DataType::Duration(polars::prelude::TimeUnit::Nanoseconds) => "interval(ns)",
+                        DataType::Duration(polars::prelude::TimeUnit::Microseconds) => "interval(us)",
+                        DataType::Duration(polars::prelude::TimeUnit::Milliseconds) => "interval(ms)",
                         DataType::List(inner) => {
                             if matches!(**inner, DataType::Float64) { "vector" } else { "list" }
                         }
@@ -573,9 +578,110 @@ impl ScriptRegistry {
 
     fn json_values_to_series(name: &str, vals: &Vec<serde_json::Value>, hint: Option<DataType>) -> Result<Series> {
         // Detect vectors (array of numbers) and other types
-        let inferred = if let Some(dt) = hint { dt } else { Self::infer_dtype(vals) };
+        let inferred = if let Some(dt) = hint { if matches!(dt, DataType::Null) { Self::infer_dtype(vals) } else { dt } } else { Self::infer_dtype(vals) };
         use serde_json::Value as JV;
         let s = match inferred {
+            DataType::Datetime(_, _) => {
+                // Build epoch milliseconds then cast to Datetime[ms]
+                let mut vms: Vec<Option<i64>> = Vec::with_capacity(vals.len());
+                for x in vals {
+                    let ms = match x {
+                        JV::Null => None,
+                        JV::Number(n) => {
+                            if let Some(i) = n.as_i64() {
+                                // Heuristic: if looks like seconds (< 1e12), convert to ms
+                                let abs = i.unsigned_abs();
+                                let as_ms = if abs < 1_000_000_000_000 { i.saturating_mul(1000) } else { i };
+                                Some(as_ms)
+                            } else if let Some(f) = n.as_f64() {
+                                Some((f * 1000.0).round() as i64)
+                            } else { None }
+                        }
+                        JV::String(s) => {
+                            if let Some(ms) = crate::server::query::query_common::parse_iso8601_to_ms(s) { Some(ms) }
+                            else if let Ok(i) = s.parse::<i64>() { Some(i) } else { None }
+                        }
+                        _ => None,
+                    };
+                    vms.push(ms);
+                }
+                let s = Series::new(name.into(), vms);
+                s.cast(&DataType::Datetime(polars::prelude::TimeUnit::Milliseconds, None)).map_err(|e| anyhow!(e.to_string()))?
+            }
+            DataType::Date => {
+                // Polars Date = days since epoch (Int32)
+                let mut vdays: Vec<Option<i32>> = Vec::with_capacity(vals.len());
+                for x in vals {
+                    let d = match x {
+                        JV::Null => None,
+                        JV::Number(n) => {
+                            if let Some(i) = n.as_i64() {
+                                // Heuristic: if large (ms), convert to days
+                                let days = if i.abs() > 10_000 { i / 86_400_000 } else { i };
+                                Some(days as i32)
+                            } else { None }
+                        }
+                        JV::String(s) => {
+                            if let Ok(nd) = chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d") {
+                                let epoch = chrono::NaiveDate::from_ymd_opt(1970, 1, 1).unwrap();
+                                Some((nd - epoch).num_days() as i32)
+                            } else if let Some(ms) = crate::server::query::query_common::parse_iso8601_to_ms(s) {
+                                Some((ms / 86_400_000) as i32)
+                            } else { None }
+                        }
+                        _ => None,
+                    };
+                    vdays.push(d);
+                }
+                Series::new(name.into(), vdays)
+            }
+            DataType::Time => {
+                // Polars Time = nanoseconds since midnight (Int64)
+                let mut vns: Vec<Option<i64>> = Vec::with_capacity(vals.len());
+                for x in vals {
+                    let ns = match x {
+                        JV::Null => None,
+                        JV::Number(n) => {
+                            if let Some(i) = n.as_i64() {
+                                // Treat as milliseconds if small; else assume already nanoseconds
+                                let v = if i < 86_400_000 { i * 1_000_000 } else { i };
+                                Some(v)
+                            } else if let Some(f) = n.as_f64() {
+                                // seconds → ns
+                                Some((f * 1_000_000_000.0).round() as i64)
+                            } else { None }
+                        }
+                        JV::String(s) => {
+                            if let Some(ns) = Self::parse_time_str_to_ns(s) { Some(ns) }
+                            else if let Ok(i) = s.parse::<i64>() { Some(i) } else { None }
+                        }
+                        _ => None,
+                    };
+                    vns.push(ns);
+                }
+                let s = Series::new(name.into(), vns);
+                s.cast(&DataType::Time).map_err(|e| anyhow!(e.to_string()))?
+            }
+            DataType::Duration(tu) => {
+                // Build integer values in the same base unit, prefer ms
+                let mut vals_i64: Vec<Option<i64>> = Vec::with_capacity(vals.len());
+                for x in vals {
+                    let ms = match x {
+                        JV::Null => None,
+                        JV::Number(n) => n.as_i64().or_else(|| n.as_f64().map(|f| f.round() as i64)),
+                        JV::String(s) => {
+                            if let Some(ms) = Self::parse_iso8601_duration_to_ms(s) { Some(ms) }
+                            else if let Ok(i) = s.parse::<i64>() { Some(i) } else { None }
+                        }
+                        _ => None,
+                    };
+                    // Convert ms to the requested unit
+                    let v = ms.map(|m| match tu { polars::prelude::TimeUnit::Nanoseconds => m.saturating_mul(1_000_000), polars::prelude::TimeUnit::Microseconds => m.saturating_mul(1_000), polars::prelude::TimeUnit::Milliseconds => m });
+                    vals_i64.push(v);
+                }
+                let s = Series::new(name.into(), vals_i64);
+                s.cast(&DataType::Duration(tu)).map_err(|e| anyhow!(e.to_string()))?
+            }
             DataType::Boolean => {
                 let mut v: Vec<Option<bool>> = Vec::with_capacity(vals.len());
                 for x in vals { v.push(match x { JV::Bool(b)=>Some(*b), JV::Null=>None, JV::Number(n)=>Some(n.as_i64().unwrap_or(0)!=0), JV::String(s)=>Some(!s.is_empty()), _=>None }); }
@@ -645,6 +751,59 @@ impl ScriptRegistry {
             }
         }
         DataType::Null
+    }
+}
+
+impl ScriptRegistry {
+    fn parse_time_str_to_ns(s: &str) -> Option<i64> {
+        // Accept HH:MM, HH:MM:SS, HH:MM:SS.mmm[uuu][nnn]
+        let t = s.trim();
+        let parts: Vec<&str> = t.split(':').collect();
+        if parts.len() < 2 { return None; }
+        let h: i64 = parts[0].parse().ok()?;
+        let m: i64 = parts[1].parse().ok()?;
+        let mut sec_f: f64 = 0.0;
+        if parts.len() >= 3 {
+            sec_f = parts[2].parse::<f64>().ok().unwrap_or(0.0);
+        }
+        let total_ns = (((h * 60 + m) as f64 * 60.0) + sec_f) * 1_000_000_000.0;
+        Some(total_ns.round() as i64)
+    }
+
+    fn parse_iso8601_duration_to_ms(s: &str) -> Option<i64> {
+        // Minimal ISO8601 duration parser supporting PnDTnHnMnS with fractional seconds
+        let mut txt = s.trim();
+        if txt.is_empty() { return None; }
+        if !txt.starts_with('P') && !txt.starts_with('p') { return None; }
+        txt = &txt[1..];
+        let mut in_time = false;
+        let mut num = String::new();
+        let mut total_ms: f64 = 0.0;
+        for ch in txt.chars() {
+            if ch == 'T' || ch == 't' { in_time = true; continue; }
+            if ch.is_ascii_digit() || ch == '.' || ch == ',' {
+                let c = if ch == ',' { '.' } else { ch };
+                num.push(c);
+                continue;
+            }
+            if !num.is_empty() {
+                let val: f64 = num.parse().unwrap_or(0.0);
+                match ch {
+                    'D' | 'd' => { total_ms += val * 86_400_000.0; }
+                    'H' | 'h' => { total_ms += val * 3_600_000.0; }
+                    'M' | 'm' => {
+                        if in_time { total_ms += val * 60_000.0; } else { /* months unsupported */ }
+                    }
+                    'S' | 's' => { total_ms += val * 1000.0; }
+                    'W' | 'w' => { total_ms += val * 7.0 * 86_400_000.0; }
+                    _ => {}
+                }
+                num.clear();
+            }
+        }
+        // If dangling number without designator, ignore
+        let ms = total_ms.round() as i64;
+        if ms == 0 { None } else { Some(ms) }
     }
 }
 
@@ -975,8 +1134,16 @@ fn str_to_dtype(s: &str) -> Result<DataType> {
         "utf8" | "string" | "str" | "text" => DataType::String,
         "vector" => DataType::List(Box::new(DataType::Float64)),
         "null" => DataType::Null,
-        // datetime types could be specified as datetime[ms]
+        // timestamp / datetime family
+        "timestamp" | "timestamptz" | "timestampz" => DataType::Datetime(polars::prelude::TimeUnit::Milliseconds, None),
         v if v.starts_with("datetime") => DataType::Datetime(polars::prelude::TimeUnit::Milliseconds, None),
+        // date/time
+        "date" => DataType::Date,
+        "time" => DataType::Time,
+        // interval/duration (store as Duration[ms])
+        "interval" | "duration" => DataType::Duration(polars::prelude::TimeUnit::Milliseconds),
+        // any → leave to inference (we'll treat as no hint)
+        "any" => DataType::Null,
         _ => return Err(anyhow!(format!("Unknown data type hint: {}", s))),
     })
 }
