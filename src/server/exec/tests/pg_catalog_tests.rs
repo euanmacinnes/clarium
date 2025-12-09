@@ -496,44 +496,24 @@ fn test_all_system_tables_return_df() {
 }
 
 #[test]
-fn test_system_view_sql_files_execute_limit_1() {
-    use std::fs;
-    use std::path::PathBuf;
+fn test_system_views_registry_execute_limit_1() {
     use crate::server::query::{self, Command};
     let tmp = tempfile::tempdir().unwrap();
     let _store = Store::new(tmp.path()).unwrap();
     let shared = SharedStore::new(tmp.path()).unwrap();
 
-    // Locate system view SQL directory relative to project root
-    let mut root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    root.push("scripts");
-    root.push("system_views");
-    if !root.exists() { return; }
-
-    fn gather_sql_files(dir: &PathBuf, out: &mut Vec<PathBuf>) {
-        if let Ok(rd) = fs::read_dir(dir) {
-            for e in rd.flatten() {
-                let p = e.path();
-                if p.is_dir() { gather_sql_files(&p, out); }
-                else if p.extension().and_then(|s| s.to_str()).map(|x| x.eq_ignore_ascii_case("sql")).unwrap_or(false) {
-                    out.push(p);
-                }
-            }
+    // Iterate all registered system views (loaded from .view files) and attempt to execute their SQL with LIMIT 1
+    let views = crate::system_views::list_views();
+    for v in views {
+        let mut sql = v.sql.trim().to_string();
+        if sql.is_empty() { continue; }
+        if !sql.to_ascii_lowercase().contains(" limit ") {
+            sql = format!("{} LIMIT 1", sql.trim_end_matches(';'));
         }
-    }
-
-    let mut files: Vec<PathBuf> = Vec::new();
-    gather_sql_files(&root, &mut files);
-    for f in files {
-        let sql = fs::read_to_string(&f).unwrap_or_default();
-        if sql.trim().is_empty() { continue; }
-        // If the SQL already contains a LIMIT, use as-is; else append LIMIT 1
-        let needs_limit = !sql.to_ascii_lowercase().contains(" limit ");
-        let run_sql = if needs_limit { format!("{} LIMIT 1", sql.trim_end_matches(';')) } else { sql.clone() };
-        if let Ok(Command::Select(sel)) = query::parse(&run_sql) {
-            let _ = run_select(&shared, &sel).expect(&format!("System view SQL failed to execute: {}", f.display()));
+        if let Ok(Command::Select(sel)) = query::parse(&sql) {
+            let _ = run_select(&shared, &sel).expect(&format!("System view failed to execute: {}.{}", v.schema, v.name));
         } else {
-            panic!("Failed to parse system view SQL: {}", f.display());
+            panic!("Failed to parse system view: {}.{}", v.schema, v.name);
         }
     }
 }

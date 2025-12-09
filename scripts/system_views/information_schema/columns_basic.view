@@ -1,0 +1,11 @@
+{
+  "schema": "information_schema",
+  "name": "columns_basic",
+  "columns": [
+    { "name": "table_schema", "data_type": "text", "udt_name": "text" },
+    { "name": "table_name", "data_type": "text", "udt_name": "text" },
+    { "name": "column_name", "data_type": "text", "udt_name": "text" },
+    { "name": "data_type", "data_type": "text", "udt_name": "text" }
+  ],
+  "definition_sql": "SELECT table_schema, table_name, column_name, data_type FROM information_schema.columns"
+}

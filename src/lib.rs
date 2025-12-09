@@ -4,6 +4,7 @@ pub mod security;
 pub mod scripts;
 pub mod system;
 pub mod system_catalog;
+pub mod system_paths;
 pub mod ident;
 pub mod error;
 pub mod lua_bc;

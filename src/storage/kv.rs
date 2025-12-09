@@ -440,8 +440,18 @@ impl SharedStore {
         // One-time schema migration on startup for this root: upgrade legacy schema.json files
         // to nested { columns: {...}, locks: [...] } and ensure explicit tableType.
         let _ = crate::storage::schema::migrate_all_schemas_for_root(&root_path);
-        // Load system view SQLs into in-memory registry and persist manifest
+        // Seed and load system views (.view JSON format with column schemas)
         crate::system_views::load_system_views_for_root(&root_path);
+        // Seed UDF scripts into <root>/.system/udf from repo scripts if missing
+        crate::system_views::seed_udf_into_root(&root_path);
+        // Initialize global ScriptRegistry once and load seeded UDFs so they are available for queries
+        if let Ok(reg) = crate::scripts::ScriptRegistry::new() {
+            crate::scripts::init_script_registry_once(reg.clone());
+            let udf_root = crate::system_paths::udf_root(&root_path);
+            let _ = crate::scripts::load_all_scripts_for_schema(&reg, &udf_root);
+            // Also load global defaults from repo scripts to keep compatibility
+            let _ = crate::scripts::load_global_default_scripts(&reg);
+        }
         // Ensure a registry exists for this root (idempotent)
         let _ = kv_registry_for_root(&root_path);
         Ok(s)
