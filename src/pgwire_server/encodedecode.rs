@@ -2,7 +2,6 @@ use polars::prelude::AnyValue;
 use polars::datatypes::TimeUnit;
 
 use crate::pgwire_server::inline::*;
-use crate::pgwire_server::oids::*;
 
 pub fn encode_element_binary(buf: &mut Vec<u8>, inner_oid: i32, av: &AnyValue<'_>) {
     match (inner_oid, av) {

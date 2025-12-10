@@ -1,5 +1,5 @@
 use std::collections::{HashMap, HashSet};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use polars::prelude::*;
 use crate::tprintln;
 use super::Store;
@@ -173,7 +173,7 @@ pub(crate) fn migrate_all_schemas_for_root(root: &Path) -> anyhow::Result<usize>
                             let sj = tabp.join("schema.json");
                             if !sj.exists() { continue; }
                             if let Ok(text) = std::fs::read_to_string(&sj) {
-                                if let Ok(mut v) = serde_json::from_str::<serde_json::Value>(&text) {
+                                if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
                                     let mut changed = false;
                                     let mut obj = v.as_object().cloned().unwrap_or_default();
                                     // Ensure tableType

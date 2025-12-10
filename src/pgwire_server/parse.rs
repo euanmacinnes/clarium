@@ -1,20 +1,11 @@
-use anyhow::{anyhow, Result, bail};
-use std::net::SocketAddr;
-use std::sync::atomic::{AtomicU64, Ordering};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tracing::{error, info, debug, warn};
+use anyhow::{anyhow, Result};
+use tokio::io::AsyncReadExt;
+use tracing::debug;
 use crate::pgwire_server::structs::*;
 use crate::pgwire_server::misc::*;
 use crate::pgwire_server::send::*;
-use crate::tprintln;
 
-use crate::{storage::SharedStore, server::exec};
-use crate::server::query::{self, Command};
-use crate::server::exec::exec_select::handle_select;
-use polars::prelude::{AnyValue, DataFrame, DataType, TimeUnit};
-use crate::ident::{DEFAULT_DB, DEFAULT_SCHEMA};
 use regex::Regex;
-use std::collections::HashMap;
 
 pub fn parse_insert(q: &str) -> Option<InsertStmt> {
     // Very small parser: INSERT INTO db (a,b,...) VALUES (x,y,...)

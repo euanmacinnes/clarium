@@ -4,9 +4,9 @@
 //! - SELECT: delegates to existing query engine and streams rows
 //! - INSERT: basic INSERT INTO <db>(col, ...) VALUES (...)
 
-use anyhow::{anyhow, Result, bail};
+use anyhow::{anyhow, Result};
 use std::net::SocketAddr;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::Ordering;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tracing::{error, info, debug, warn};
 use crate::pgwire_server::encodedecode::*;
@@ -23,9 +23,8 @@ use crate::tprintln;
 use crate::{storage::SharedStore, server::exec};
 use crate::server::query::{self, Command};
 use crate::server::exec::exec_select::handle_select;
-use polars::prelude::{AnyValue, DataFrame, DataType, TimeUnit};
+use polars::prelude::AnyValue;
 use crate::ident::{DEFAULT_DB, DEFAULT_SCHEMA};
-use regex::Regex;
 use std::collections::HashMap;
 
 pub mod encodedecode;

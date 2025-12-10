@@ -1,4 +1,4 @@
-use polars::prelude::{AnyValue, DataFrame, DataType, TimeUnit};
+use polars::prelude::AnyValue;
 use anyhow::Result;
 use crate::pgwire_server::{send::send_ready_with_status, structs::ConnState};
 

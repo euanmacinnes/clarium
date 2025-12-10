@@ -153,7 +153,7 @@ fn parse_create_table_columns(stmt: &str, default_schema: Option<&str>) -> Optio
     let after_table = s[pos_table + " TABLE ".len()..].trim();
 
     // Name goes up to the first '(' or whitespace if no parens (but CREATE TABLE requires parens)
-    let mut name_end = after_table.find('(').unwrap_or_else(|| after_table.len());
+    let name_end = after_table.find('(').unwrap_or_else(|| after_table.len());
     // Trim trailing whitespace before '('
     let name_part = after_table[..name_end].trim();
     let name_clean = name_part.trim_matches('"').trim_matches('`');

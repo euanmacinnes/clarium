@@ -293,7 +293,7 @@ pub fn parse_create(s: &str) -> Result<Command> {
         let code = parts[1].trim();
         // Optional kind prefix
         let mut kind: Option<crate::server::query::ScriptCreateKind> = None;
-        let mut np_up = name_part.to_uppercase();
+        let np_up = name_part.to_uppercase();
         for (kw, k) in [
             ("SCALAR", crate::server::query::ScriptCreateKind::Scalar),
             ("AGGREGATE", crate::server::query::ScriptCreateKind::Aggregate),

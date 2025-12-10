@@ -46,7 +46,7 @@ impl Store {
             for p in files {
                 // Read available columns from parquet without pre-filtering. We will project
                 // and synthesize missing requested columns after stacking.
-                let mut reader = ParquetReader::new(std::fs::File::open(&p)?);
+                let reader = ParquetReader::new(std::fs::File::open(&p)?);
                 let mut df = reader.finish()?;
                 if (t0.is_some() || t1.is_some()) && is_time_table {
                     if df.get_column_names().iter().any(|c| c.as_str() == "_time") {
