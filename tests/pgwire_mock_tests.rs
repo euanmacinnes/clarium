@@ -120,6 +120,34 @@ async fn pgwire_extended_protocol_prepared_select_add() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn pgwire_extended_protocol_parameter_passing() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (srv, host, port) = start_pgwire_ephemeral(&tmp).await;
+    struct Guard(JoinHandle<()>);
+    impl Drop for Guard { fn drop(&mut self) { self.0.abort(); } }
+    let _g = Guard(srv);
+
+    wait_until_connectable(&host, port, 3_000).await.expect("server reachable");
+
+    let mut cfg = tokio_postgres::Config::new();
+    cfg.host(&host).port(port).user("tester").dbname("default");
+    let (client, connection) = cfg.connect(tokio_postgres::NoTls).await.expect("connect");
+    tokio::spawn(async move { let _ = connection.await; });
+
+    // Numeric parameters
+    let stmt = client.prepare("SELECT $1::int4 + $2::int4 AS s").await.expect("prepare");
+    let row = client.query_one(&stmt, &[&10i32, &32i32]).await.expect("execute");
+    let sum: i32 = row.get(0);
+    assert_eq!(sum, 42);
+
+    // Text parameters
+    let stmt2 = client.prepare("SELECT $1::text || '-' || $2::text AS s").await.expect("prepare");
+    let row2 = client.query_one(&stmt2, &[&"alpha", &"beta"]).await.expect("execute");
+    let s: String = row2.get(0);
+    assert_eq!(s, "alpha-beta");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn pgwire_sqlalchemy_like_inspection_queries() {
     let tmp = tempfile::tempdir().unwrap();
     let (srv, host, port) = start_pgwire_ephemeral(&tmp).await;
@@ -157,4 +185,95 @@ async fn pgwire_sqlalchemy_like_inspection_queries() {
         .simple_query("SELECT name, default_version, comment FROM pg_available_extensions()")
         .await
         .expect("pg_available_extensions()");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn pgwire_simple_protocol_ddl_lifecycle() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (srv, host, port) = start_pgwire_ephemeral(&tmp).await;
+    struct Guard(JoinHandle<()>);
+    impl Drop for Guard { fn drop(&mut self) { self.0.abort(); } }
+    let _g = Guard(srv);
+
+    wait_until_connectable(&host, port, 3_000).await.expect("server reachable");
+
+    let mut cfg = tokio_postgres::Config::new();
+    cfg.host(&host).port(port).user("tester").dbname("default");
+    let (client, connection) = cfg.connect(tokio_postgres::NoTls).await.expect("connect");
+    tokio::spawn(async move { let _ = connection.await; });
+
+    // Create table
+    let msgs = client.simple_query("CREATE TABLE t_ddlt(a int, b text)").await.expect("create table");
+    assert!(msgs.iter().any(|m| matches!(m, tokio_postgres::SimpleQueryMessage::CommandComplete(_))), "expected CommandComplete for CREATE TABLE");
+
+    // Insert rows
+    let msgs = client.simple_query("INSERT INTO t_ddlt VALUES (1,'x'), (2,'y'), (3,'z')").await.expect("insert");
+    assert!(msgs.iter().any(|m| matches!(m, tokio_postgres::SimpleQueryMessage::CommandComplete(_))), "expected CommandComplete for INSERT");
+
+    // Update
+    let msgs = client.simple_query("UPDATE t_ddlt SET b = 'yy' WHERE a = 2").await.expect("update");
+    assert!(msgs.iter().any(|m| matches!(m, tokio_postgres::SimpleQueryMessage::CommandComplete(_))), "expected CommandComplete for UPDATE");
+
+    // Select count
+    let rows = client.simple_query("SELECT COUNT(*) FROM t_ddlt").await.expect("count");
+    let mut cnt = None;
+    for m in rows { if let tokio_postgres::SimpleQueryMessage::Row(r) = m { cnt = r.get(0).map(|s| s.parse::<i64>().unwrap()); } }
+    assert_eq!(cnt, Some(3));
+
+    // Create view
+    let msgs = client.simple_query("CREATE VIEW v_ddlt AS SELECT * FROM t_ddlt WHERE a > 1").await.expect("create view");
+    assert!(msgs.iter().any(|m| matches!(m, tokio_postgres::SimpleQueryMessage::CommandComplete(_))), "expected CommandComplete for CREATE VIEW");
+
+    // Show schemas
+    let _ = client.simple_query("SHOW SCHEMAS").await.expect("show schemas");
+
+    // Drop table
+    let msgs = client.simple_query("DROP TABLE t_ddlt").await.expect("drop table");
+    assert!(msgs.iter().any(|m| matches!(m, tokio_postgres::SimpleQueryMessage::CommandComplete(_))), "expected CommandComplete for DROP TABLE");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn pgwire_binary_results_and_types() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (srv, host, port) = start_pgwire_ephemeral(&tmp).await;
+    struct Guard(JoinHandle<()>);
+    impl Drop for Guard { fn drop(&mut self) { self.0.abort(); } }
+    let _g = Guard(srv);
+
+    wait_until_connectable(&host, port, 3_000).await.expect("server reachable");
+
+    let mut cfg = tokio_postgres::Config::new();
+    cfg.host(&host).port(port).user("tester").dbname("default");
+    let (client, connection) = cfg.connect(tokio_postgres::NoTls).await.expect("connect");
+    tokio::spawn(async move { let _ = connection.await; });
+
+    // Build a table with multiple types to ensure proper schema typing and allow binary results
+    client.simple_query("CREATE TABLE t_types(i4 int4, i8 int8, f8 double precision, b boolean, s text)").await.expect("create table");
+    client.simple_query("INSERT INTO t_types VALUES (42, 42000000000, 3.14159, true, 'hello')").await.expect("insert");
+
+    // Prepare a select; tokio-postgres will typically request binary for supported types.
+    let stmt = client
+        .prepare("SELECT i4, i8, f8, b, s FROM t_types WHERE i4 = $1::int4")
+        .await
+        .expect("prepare");
+
+    // OIDs should match (int4=23, int8=20, float8=701, bool=16, text=25)
+    let oids: Vec<u32> = stmt.columns().iter().map(|c| c.type_().oid()).collect();
+    assert_eq!(oids, vec![23, 20, 701, 16, 25], "unexpected OIDs: {:?}", oids);
+
+    let row = client.query_one(&stmt, &[&42i32]).await.expect("execute");
+    // If binary results engaged, tokio-postgres decodes to native types
+    let v_i4: i32 = row.get(0);
+    let v_i8: i64 = row.get(1);
+    let v_f8: f64 = row.get(2);
+    let v_b: bool = row.get(3);
+    let v_s: String = row.get(4);
+    assert_eq!(v_i4, 42);
+    assert_eq!(v_i8, 42000000000);
+    assert!((v_f8 - 3.14159).abs() < 1e-6);
+    assert!(v_b);
+    assert_eq!(v_s, "hello");
+
+    // Cleanup
+    let _ = client.simple_query("DROP TABLE t_types").await;
 }
