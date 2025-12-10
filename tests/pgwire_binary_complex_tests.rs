@@ -1,4 +1,4 @@
-use std::io::{Read, Cursor};
+use std::io::{Read, Write, Cursor};
 use std::net::TcpListener;
 use std::time::Duration;
 use tokio::task::JoinHandle;

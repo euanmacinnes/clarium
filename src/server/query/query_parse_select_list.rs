@@ -4,16 +4,69 @@ use crate::server::query::*;
 
 pub fn parse_select_list(s: &str) -> Result<Vec<SelectItem>> {
     let mut items = Vec::new();
-    // split on commas at top-level only (ignore commas inside parentheses)
+    // Split on commas at top-level only, ignoring commas inside parentheses or quotes.
+    // Handles SQL-style escaped quotes within string/identifier literals: '' and "".
     let mut parts: Vec<String> = Vec::new();
     let mut buf = String::new();
-    let mut depth: i32 = 0;
-    for ch in s.chars() {
-        match ch {
-            '(' => { depth += 1; buf.push(ch); }
-            ')' => { depth -= 1; buf.push(ch); }
-            ',' if depth == 0 => { parts.push(buf.trim().to_string()); buf.clear(); }
-            _ => buf.push(ch),
+    let mut depth: i32 = 0; // parentheses nesting depth
+    let bytes = s.as_bytes();
+    let mut i: usize = 0;
+    let n = bytes.len();
+    let mut in_single = false; // inside single-quoted string literal
+    let mut in_double = false; // inside double-quoted identifier/literal
+    while i < n {
+        let b = bytes[i];
+        if in_single {
+            // End or escaped end of single-quoted string
+            if b == b'\'' {
+                if i + 1 < n && bytes[i + 1] == b'\'' {
+                    // Escaped single quote: append one and skip the next
+                    buf.push('\'');
+                    i += 2;
+                    continue;
+                } else {
+                    in_single = false;
+                    buf.push('\'');
+                    i += 1;
+                    continue;
+                }
+            } else {
+                buf.push(b as char);
+                i += 1;
+                continue;
+            }
+        }
+        if in_double {
+            if b == b'"' {
+                if i + 1 < n && bytes[i + 1] == b'"' {
+                    // Escaped double quote
+                    buf.push('"');
+                    i += 2;
+                    continue;
+                } else {
+                    in_double = false;
+                    buf.push('"');
+                    i += 1;
+                    continue;
+                }
+            } else {
+                buf.push(b as char);
+                i += 1;
+                continue;
+            }
+        }
+
+        match b {
+            b'\'' => { in_single = true; buf.push('\''); i += 1; }
+            b'"' => { in_double = true; buf.push('"'); i += 1; }
+            b'(' => { depth += 1; buf.push('('); i += 1; }
+            b')' => { depth -= 1; buf.push(')'); i += 1; }
+            b',' if depth == 0 => {
+                parts.push(buf.trim().to_string());
+                buf.clear();
+                i += 1;
+            }
+            _ => { buf.push(b as char); i += 1; }
         }
     }
     if !buf.is_empty() { parts.push(buf.trim().to_string()); }
