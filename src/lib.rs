@@ -18,16 +18,15 @@ pub mod tools;
 #[cfg(any(test, debug_assertions))]
 #[macro_export]
 macro_rules! tprintln {
-    ($($arg:tt)*) => {
-        eprintln!($($arg)*);
-    };
+    ($($arg:tt)*) => ( eprintln!($($arg)*) );
 }
 
 // In non-test builds, provide a no-op tprintln! so calls compile without effect.
 #[cfg(not(any(test, debug_assertions)))]
 #[macro_export]
 macro_rules! tprintln {
-    ($($arg:tt)*) => {
+    ($($arg:tt)*) => ({
+        // Preserve formatting checks in release without producing code
         if false { let _ = format!($($arg)*); }
-    };
+    });
 }
