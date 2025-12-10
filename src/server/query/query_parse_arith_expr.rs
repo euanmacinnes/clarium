@@ -287,100 +287,6 @@ pub fn parse_arith_expr(tokens: &[String]) -> Result<ArithExpr> {
         if i >= bytes.len() { break; }
         let c = bytes[i] as char;
         match c {
-            // PostgreSQL ARRAY[...] constructor
-            'A' | 'a' => {
-                // Fast-path check for token starting with "ARRAY" followed by optional spaces and a '['
-                let up_tail = src[i..].to_uppercase();
-                if up_tail.starts_with("ARRAY") {
-                    // position just after the word ARRAY
-                    let mut j = i + 5;
-                    while j < bytes.len() && bytes[j].is_ascii_whitespace() { j += 1; }
-                    if j < bytes.len() && (bytes[j] as char) == '[' {
-                        // parse until matching closing ']' at depth 1, respecting quotes and parentheses within
-                        let mut k = j + 1;
-                        let mut depth_br = 1i32;
-                        let mut depth_paren = 0i32;
-                        let mut in_str = false;
-                        let mut str_ch = '\'';
-                        let mut inner = String::new();
-                        while k < bytes.len() {
-                            let ch = src[k..].chars().next().unwrap();
-                            let ch_len = ch.len_utf8();
-                            if in_str {
-                                if ch == str_ch {
-                                    // handle escaped '' inside single quotes
-                                    if ch == '\'' && k + ch_len < src.len() && &src[k..k+2] == "''" {
-                                        inner.push('\'');
-                                        k += 2; // consume both quotes
-                                        continue;
-                                    }
-                                    in_str = false;
-                                }
-                                inner.push(ch);
-                                k += ch_len;
-                                continue;
-                            }
-                            match ch {
-                                '\'' | '"' => { in_str = true; str_ch = ch; inner.push(ch); k += ch_len; }
-                                '(' => { depth_paren += 1; inner.push(ch); k += ch_len; }
-                                ')' => { depth_paren -= 1; inner.push(ch); k += ch_len; }
-                                '[' => { depth_br += 1; inner.push(ch); k += ch_len; }
-                                ']' => {
-                                    depth_br -= 1;
-                                    if depth_br == 0 { k += ch_len; break; }
-                                    inner.push(ch); k += ch_len;
-                                }
-                                _ => { inner.push(ch); k += ch_len; }
-                            }
-                        }
-                        if depth_br != 0 { anyhow::bail!("Unclosed ARRAY constructor"); }
-                        // Split inner by commas at top level (not inside parens/brackets/quotes)
-                        let mut parts: Vec<String> = Vec::new();
-                        {
-                            let mut buf = String::new();
-                            let mut d_b = 0i32; let mut d_p = 0i32; let mut ins = false; let mut qch = '\'';
-                            let inner_bytes = inner.as_bytes();
-                            let mut t = 0usize;
-                            while t < inner.len() {
-                                let ch = inner[t..].chars().next().unwrap();
-                                let ch_len = ch.len_utf8();
-                                if ins {
-                                    if ch == qch {
-                                        // handle '' escape
-                                        if ch == '\'' && t + ch_len < inner.len() && &inner[t..t+2] == "''" {
-                                            buf.push('\''); t += 2; continue;
-                                        }
-                                        ins = false;
-                                    }
-                                    buf.push(ch); t += ch_len; continue;
-                                }
-                                match ch {
-                                    '\'' | '"' => { ins = true; qch = ch; buf.push(ch); }
-                                    '(' => { d_p += 1; buf.push(ch); }
-                                    ')' => { d_p -= 1; buf.push(ch); }
-                                    '[' => { d_b += 1; buf.push(ch); }
-                                    ']' => { d_b -= 1; buf.push(ch); }
-                                    ',' if d_b == 0 && d_p == 0 => { parts.push(buf.trim().to_string()); buf.clear(); }
-                                    _ => buf.push(ch),
-                                }
-                                t += ch_len;
-                            }
-                            if !buf.trim().is_empty() { parts.push(buf.trim().to_string()); }
-                        }
-                        let mut elems: Vec<ArithExpr> = Vec::new();
-                        for p in parts.into_iter() {
-                            if p.is_empty() { continue; }
-                            if let Some(e) = super_parse_arith(&p) { elems.push(e); } else { anyhow::bail!("Invalid ARRAY element: {}", p); }
-                        }
-                        crate::tprintln!("[PARSE] ARRAY constructor with {} element(s)", elems.len());
-                        toks.push(ATok::Val(ArithExpr::Call { name: "array".to_string(), args: elems }));
-                        i = k; // position after closing ']'
-                        continue;
-                    }
-                }
-                // fall through to default identifier handling if not ARRAY[
-                // no special handling here; the next branch below will process identifier
-            }
             '(' => {
                 // Parenthesized expression: parse until matching ')' and treat as a grouped sub-expression
                 let mut depth: i32 = 0; let mut j = i;
@@ -616,6 +522,93 @@ pub fn parse_arith_expr(tokens: &[String]) -> Result<ArithExpr> {
                     }
                     // Handle identifiers and f-strings
                     let name = &src[i..j];
+                    // Special-case PostgreSQL ARRAY constructor: ARRAY [ ... ]
+                    // Only trigger if the identifier is exactly ARRAY and it's immediately followed by a '[' (after optional spaces)
+                    if name.eq_ignore_ascii_case("ARRAY") {
+                        let mut j2 = j;
+                        while j2 < bytes.len() && bytes[j2].is_ascii_whitespace() { j2 += 1; }
+                        if j2 < bytes.len() && (bytes[j2] as char) == '[' {
+                            // parse until matching closing ']' at depth 1, respecting quotes and parentheses within
+                            let mut k = j2 + 1;
+                            let mut depth_br = 1i32;
+                            let mut depth_paren = 0i32;
+                            let mut in_str = false;
+                            let mut str_ch = '\'';
+                            let mut inner = String::new();
+                            while k < bytes.len() {
+                                let ch = src[k..].chars().next().unwrap();
+                                let ch_len = ch.len_utf8();
+                                if in_str {
+                                    if ch == str_ch {
+                                        // handle escaped '' inside single quotes
+                                        if ch == '\'' && k + ch_len < src.len() && &src[k..k+2] == "''" {
+                                            inner.push('\'');
+                                            k += 2; // consume both quotes
+                                            continue;
+                                        }
+                                        in_str = false;
+                                    }
+                                    inner.push(ch);
+                                    k += ch_len;
+                                    continue;
+                                }
+                                match ch {
+                                    '\'' | '"' => { in_str = true; str_ch = ch; inner.push(ch); k += ch_len; }
+                                    '(' => { depth_paren += 1; inner.push(ch); k += ch_len; }
+                                    ')' => { depth_paren -= 1; inner.push(ch); k += ch_len; }
+                                    '[' => { depth_br += 1; inner.push(ch); k += ch_len; }
+                                    ']' => {
+                                        depth_br -= 1;
+                                        if depth_br == 0 { k += ch_len; break; }
+                                        inner.push(ch); k += ch_len;
+                                    }
+                                    _ => { inner.push(ch); k += ch_len; }
+                                }
+                            }
+                            if depth_br != 0 { anyhow::bail!("Unclosed ARRAY constructor"); }
+                            // Split inner by commas at top level (not inside parens/brackets/quotes)
+                            let mut parts: Vec<String> = Vec::new();
+                            {
+                                let mut buf = String::new();
+                                let mut d_b = 0i32; let mut d_p = 0i32; let mut ins = false; let mut qch = '\'';
+                                let mut t = 0usize;
+                                while t < inner.len() {
+                                    let ch = inner[t..].chars().next().unwrap();
+                                    let ch_len = ch.len_utf8();
+                                    if ins {
+                                        if ch == qch {
+                                            // handle '' escape
+                                            if ch == '\'' && t + ch_len < inner.len() && &inner[t..t+2] == "''" {
+                                                buf.push('\''); t += 2; continue;
+                                            }
+                                            ins = false;
+                                        }
+                                        buf.push(ch); t += ch_len; continue;
+                                    }
+                                    match ch {
+                                        '\'' | '"' => { ins = true; qch = ch; buf.push(ch); }
+                                        '(' => { d_p += 1; buf.push(ch); }
+                                        ')' => { d_p -= 1; buf.push(ch); }
+                                        '[' => { d_b += 1; buf.push(ch); }
+                                        ']' => { d_b -= 1; buf.push(ch); }
+                                        ',' if d_b == 0 && d_p == 0 => { parts.push(buf.trim().to_string()); buf.clear(); }
+                                        _ => buf.push(ch),
+                                    }
+                                    t += ch_len;
+                                }
+                                if !buf.trim().is_empty() { parts.push(buf.trim().to_string()); }
+                            }
+                            let mut elems: Vec<ArithExpr> = Vec::new();
+                            for p in parts.into_iter() {
+                                if p.is_empty() { continue; }
+                                if let Some(e) = super_parse_arith(&p) { elems.push(e); } else { anyhow::bail!("Invalid ARRAY element: {}", p); }
+                            }
+                            crate::tprintln!("[PARSE] ARRAY constructor with {} element(s)", elems.len());
+                            toks.push(ATok::Val(ArithExpr::Call { name: "array".to_string(), args: elems }));
+                            i = k; // position after closing ']'
+                            continue;
+                        }
+                    }
                     // Support alias."identifier.with.dots" and alias.'identifier.with.dots'
                     // If the parsed name ends with a dot, and the next char is a quote, consume the quoted part and combine
                     if name.ends_with('.') {
@@ -858,30 +851,40 @@ pub fn parse_arith_expr(tokens: &[String]) -> Result<ArithExpr> {
                         }
                         if parts.is_empty() { parts.push(ArithExpr::Term(ArithTerm::Str(String::new()))); }
                         let base = if parts.len() == 1 { parts.remove(0) } else { ArithExpr::Concat(parts) };
-                        // Optional slice suffix
+                        // Optional slice or single-index suffix
                         let mut ii = p; while ii < bytes.len() && bytes[ii].is_ascii_whitespace() { ii += 1; }
                         if ii < bytes.len() && (bytes[ii] as char) == '[' {
                             let mut k2 = ii + 1; let mut inside2 = String::new(); let mut closed2 = false;
                             while k2 < bytes.len() { let ch2 = bytes[k2] as char; k2 += 1; if ch2 == ']' { closed2 = true; break; } inside2.push(ch2); }
                             if !closed2 { anyhow::bail!("Unclosed slice bracket"); }
-                            let parts2: Vec<String> = inside2.split(':').map(|p| p.trim().to_string()).collect();
-                            if parts2.len() < 2 || parts2.len() > 3 { anyhow::bail!("Slice must have one or two ':' separators"); }
-                            fn parse_bound2(txt: &str) -> Option<StrSliceBound> {
-                                if txt.is_empty() { return None; }
-                                if let Ok(v) = txt.parse::<i64>() { return Some(StrSliceBound::Index(v)); }
-                                let t = txt.trim();
-                                let (include, lit_txt) = if t.starts_with("-'") && t.ends_with("'") { (false, &t[1..]) } else { (true, t) };
-                                if lit_txt.starts_with('\'') && lit_txt.ends_with('\'') {
-                                    let inner = &lit_txt[1..lit_txt.len()-1];
-                                    return Some(StrSliceBound::Pattern { expr: Box::new(ArithExpr::Term(ArithTerm::Str(inner.to_string()))), include });
+                            if inside2.contains(':') {
+                                let parts2: Vec<String> = inside2.split(':').map(|p| p.trim().to_string()).collect();
+                                if parts2.len() < 2 || parts2.len() > 3 { anyhow::bail!("Slice must have one or two ':' separators"); }
+                                fn parse_bound2(txt: &str) -> Option<StrSliceBound> {
+                                    if txt.is_empty() { return None; }
+                                    if let Ok(v) = txt.parse::<i64>() { return Some(StrSliceBound::Index(v)); }
+                                    let t = txt.trim();
+                                    let (include, lit_txt) = if t.starts_with("-'") && t.ends_with("'") { (false, &t[1..]) } else { (true, t) };
+                                    if lit_txt.starts_with('\'') && lit_txt.ends_with('\'') {
+                                        let inner = &lit_txt[1..lit_txt.len()-1];
+                                        return Some(StrSliceBound::Pattern { expr: Box::new(ArithExpr::Term(ArithTerm::Str(inner.to_string()))), include });
+                                    }
+                                    Some(StrSliceBound::Pattern { expr: Box::new(ArithExpr::Term(ArithTerm::Col { name: t.to_string(), previous: false })), include: true })
                                 }
-                                Some(StrSliceBound::Pattern { expr: Box::new(ArithExpr::Term(ArithTerm::Col { name: t.to_string(), previous: false })), include: true })
+                                let start_b = parse_bound2(&parts2[0]);
+                                let stop_b = parse_bound2(&parts2[1]);
+                                let step_v = if parts2.len() == 3 { let p = parts2[2].trim(); if p.is_empty() { None } else { Some(p.parse::<i64>().map_err(|_| anyhow::anyhow!("Invalid step"))?) } } else { None };
+                                let slice_expr = ArithExpr::Slice { base: Box::new(base), start: start_b, stop: stop_b, step: step_v };
+                                toks.push(ATok::Val(slice_expr));
+                            } else {
+                                // Single-index: map to array_at(base, idx)
+                                if let Some(idx_expr) = super_parse_arith(&inside2) {
+                                    let call = ArithExpr::Call { name: "array_at".to_string(), args: vec![base, idx_expr] };
+                                    toks.push(ATok::Val(call));
+                                } else {
+                                    anyhow::bail!("Invalid index expression inside []");
+                                }
                             }
-                            let start_b = parse_bound2(&parts2[0]);
-                            let stop_b = parse_bound2(&parts2[1]);
-                            let step_v = if parts2.len() == 3 { let p = parts2[2].trim(); if p.is_empty() { None } else { Some(p.parse::<i64>().map_err(|_| anyhow::anyhow!("Invalid step"))?) } } else { None };
-                            let slice_expr = ArithExpr::Slice { base: Box::new(base), start: start_b, stop: stop_b, step: step_v };
-                            toks.push(ATok::Val(slice_expr));
                             i = k2; // after ']'
                         } else {
                             toks.push(ATok::Val(base));
@@ -900,24 +903,33 @@ pub fn parse_arith_expr(tokens: &[String]) -> Result<ArithExpr> {
                                 let mut k2 = ii2 + 1; let mut inside2 = String::new(); let mut closed2 = false;
                                 while k2 < bytes.len() { let ch2 = bytes[k2] as char; k2 += 1; if ch2 == ']' { closed2 = true; break; } inside2.push(ch2); }
                                 if !closed2 { anyhow::bail!("Unclosed slice bracket"); }
-                                let parts2: Vec<String> = inside2.split(':').map(|p| p.trim().to_string()).collect();
-                                if parts2.len() < 2 || parts2.len() > 3 { anyhow::bail!("Slice must have one or two ':' separators"); }
-                                fn parse_bound2(txt: &str) -> Option<StrSliceBound> {
-                                    if txt.is_empty() { return None; }
-                                    if let Ok(v) = txt.parse::<i64>() { return Some(StrSliceBound::Index(v)); }
-                                    let t = txt.trim();
-                                    let (include, lit_txt) = if t.starts_with("-'") && t.ends_with("'") { (false, &t[1..]) } else { (true, t) };
-                                    if lit_txt.starts_with('\'') && lit_txt.ends_with('\'') {
-                                        let inner = &lit_txt[1..lit_txt.len()-1];
-                                        return Some(StrSliceBound::Pattern { expr: Box::new(ArithExpr::Term(ArithTerm::Str(inner.to_string()))), include });
+                                if inside2.contains(':') {
+                                    let parts2: Vec<String> = inside2.split(':').map(|p| p.trim().to_string()).collect();
+                                    if parts2.len() < 2 || parts2.len() > 3 { anyhow::bail!("Slice must have one or two ':' separators"); }
+                                    fn parse_bound2(txt: &str) -> Option<StrSliceBound> {
+                                        if txt.is_empty() { return None; }
+                                        if let Ok(v) = txt.parse::<i64>() { return Some(StrSliceBound::Index(v)); }
+                                        let t = txt.trim();
+                                        let (include, lit_txt) = if t.starts_with("-'") && t.ends_with("'") { (false, &t[1..]) } else { (true, t) };
+                                        if lit_txt.starts_with('\'') && lit_txt.ends_with('\'') {
+                                            let inner = &lit_txt[1..lit_txt.len()-1];
+                                            return Some(StrSliceBound::Pattern { expr: Box::new(ArithExpr::Term(ArithTerm::Str(inner.to_string()))), include });
+                                        }
+                                        Some(StrSliceBound::Pattern { expr: Box::new(ArithExpr::Term(ArithTerm::Col { name: t.to_string(), previous: false })), include: true })
                                     }
-                                    Some(StrSliceBound::Pattern { expr: Box::new(ArithExpr::Term(ArithTerm::Col { name: t.to_string(), previous: false })), include: true })
+                                    let start_b = parse_bound2(&parts2[0]);
+                                    let stop_b = parse_bound2(&parts2[1]);
+                                    let step_v = if parts2.len() == 3 { let p = parts2[2].trim(); if p.is_empty() { None } else { Some(p.parse::<i64>().map_err(|_| anyhow::anyhow!("Invalid step"))?) } } else { None };
+                                    let slice_expr = ArithExpr::Slice { base: Box::new(func_expr), start: start_b, stop: stop_b, step: step_v };
+                                    toks.push(ATok::Val(slice_expr));
+                                } else {
+                                    if let Some(idx_expr) = super_parse_arith(&inside2) {
+                                        let call = ArithExpr::Call { name: "array_at".to_string(), args: vec![func_expr, idx_expr] };
+                                        toks.push(ATok::Val(call));
+                                    } else {
+                                        anyhow::bail!("Invalid index expression inside []");
+                                    }
                                 }
-                                let start_b = parse_bound2(&parts2[0]);
-                                let stop_b = parse_bound2(&parts2[1]);
-                                let step_v = if parts2.len() == 3 { let p = parts2[2].trim(); if p.is_empty() { None } else { Some(p.parse::<i64>().map_err(|_| anyhow::anyhow!("Invalid step"))?) } } else { None };
-                                let slice_expr = ArithExpr::Slice { base: Box::new(func_expr), start: start_b, stop: stop_b, step: step_v };
-                                toks.push(ATok::Val(slice_expr));
                                 i = k2; // after ']'
                             } else {
                                 toks.push(ATok::Val(func_expr));

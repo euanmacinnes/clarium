@@ -527,6 +527,62 @@ pub fn build_arith_expr(a: &ArithExpr, ctx: &crate::server::data_context::DataCo
                 );
             }
 
+            // Built-in: array_at(base, idx)
+            // Pythonic 0-based (negatives allowed) single element access on arrays (List).
+            // Returns element as String (or NULL) for dtype-agnostic safety.
+            if name_lc == "array_at" && args.len() == 2 {
+                let base_e = build_arith_expr(&args[0], ctx).alias("__base");
+                let idx_e = build_arith_expr(&args[1], ctx).alias("__idx");
+                let struct_expr = polars::lazy::dsl::as_struct(vec![base_e, idx_e]);
+                use polars::prelude::AnyValue;
+                return struct_expr.map(
+                    move |col: Column| {
+                        let s = col.as_materialized_series();
+                        let sc = s.struct_()?;
+                        let fields = sc.fields_as_series();
+                        if fields.len() != 2 { return Ok(Series::new("array_at".into(), Vec::<Option<String>>::new()).into_column()); }
+                        let nrows = sc.len();
+                        let mut out: Vec<Option<String>> = Vec::with_capacity(nrows);
+                        for i in 0..nrows {
+                            let bav = fields[0].get(i).unwrap_or(AnyValue::Null);
+                            let iav = fields[1].get(i).unwrap_or(AnyValue::Null);
+                            // determine index as i64 (fallback NULL if not numeric)
+                            let mut idx_opt: Option<i64> = None;
+                            match iav {
+                                AnyValue::Int64(v) => idx_opt = Some(v),
+                                AnyValue::Int32(v) => idx_opt = Some(v as i64),
+                                AnyValue::UInt64(v) => idx_opt = Some(v as i64),
+                                AnyValue::UInt32(v) => idx_opt = Some(v as i64),
+                                AnyValue::Float64(v) => idx_opt = Some(v as i64),
+                                AnyValue::Float32(v) => idx_opt = Some(v as i64),
+                                AnyValue::String(s) => if let Ok(v) = s.parse::<i64>() { idx_opt = Some(v); },
+                                AnyValue::StringOwned(ref s) => if let Ok(v) = s.parse::<i64>() { idx_opt = Some(v); },
+                                _ => {}
+                            }
+                            let val_opt = match (bav, idx_opt) {
+                                (AnyValue::List(inner), Some(mut idx)) => {
+                                    let n = inner.len() as i64;
+                                    if idx < 0 { idx += n; }
+                                    if idx < 0 || idx >= n {
+                                        None
+                                    } else {
+                                        let av = inner.get(idx as usize).unwrap_or(AnyValue::Null);
+                                        match av {
+                                            AnyValue::Null => None,
+                                            _ => Some(av.to_string()),
+                                        }
+                                    }
+                                }
+                                _ => None,
+                            };
+                            out.push(val_opt);
+                        }
+                        Ok(Series::new("array_at".into(), out).into_column())
+                    },
+                    |_schema, _field| Ok(Field::new("array_at".into(), DataType::String))
+                );
+            }
+
             // Built-in: array_length(arr, dim)
             if name_lc == "array_length" && (args.len() == 1 || args.len() == 2) {
                 let arr_expr = build_arith_expr(&args[0], ctx);

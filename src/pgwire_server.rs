@@ -608,6 +608,22 @@ async fn handle_bind(socket: &mut tokio::net::TcpStream, state: &mut ConnState) 
         }
     }
 
+    // Helper: canonicalize array text parameters to Postgres brace form {..}
+    fn canonicalize_array_text_param(s: &str) -> Option<String> {
+        let t = s.trim();
+        if t.is_empty() { return Some("{}".to_string()); }
+        // Already brace literal
+        if t.starts_with('{') && t.ends_with('}') { return Some(t.to_string()); }
+        // ARRAY[...] constructor
+        let up = t.to_ascii_uppercase();
+        if up.starts_with("ARRAY[") && t.ends_with(']') {
+            let inside = &t[6..t.len()-1];
+            // naive pass-through; server side will parse robustly where needed
+            return Some(format!("{{{}}}", inside));
+        }
+        None
+    }
+
     for pidx in 0..n_params {
         let sz = r_i32(&buf, &mut i)?;
         if sz < 0 {
@@ -618,7 +634,16 @@ async fn handle_bind(socket: &mut tokio::net::TcpStream, state: &mut ConnState) 
         let fmt = effective_formats.get(pidx).cloned().unwrap_or(0);
         if fmt == 0 {
             // text parameter
-            params.push(Some(String::from_utf8_lossy(&bytes).into_owned()));
+            let mut val = String::from_utf8_lossy(&bytes).into_owned();
+            // If this parameter has an array OID, try to canonicalize to brace notation
+            if let Some(oid) = stmt_param_types.get(pidx) {
+                if crate::pgwire_server::inline::is_array_oid(*oid) {
+                    if let Some(canon) = canonicalize_array_text_param(&val) {
+                        val = canon;
+                    }
+                }
+            }
+            params.push(Some(val));
         } else {
             // binary parameter
             let oid = stmt_param_types.get(pidx).cloned().unwrap_or(0);
