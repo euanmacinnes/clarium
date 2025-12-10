@@ -161,19 +161,16 @@ async fn run_check(dsn: &str, sql: &str) -> Result<()> {
     let mut row_count = 0usize;
     let mut printed = 0usize;
     for m in msgs {
-        match m {
-            tokio_postgres::SimpleQueryMessage::Row(r) => {
-                row_count += 1;
-                if printed < 5 {
-                    let mut parts: Vec<String> = Vec::new();
-                    for i in 0..r.len() {
-                        parts.push(r.get(i).unwrap_or("").to_string());
-                    }
-                    println!("  row {}: {}", printed, parts.join(", "));
-                    printed += 1;
+        if let tokio_postgres::SimpleQueryMessage::Row(r) = m {
+            row_count += 1;
+            if printed < 5 {
+                let mut parts: Vec<String> = Vec::new();
+                for i in 0..r.len() {
+                    parts.push(r.get(i).unwrap_or("").to_string());
                 }
+                println!("  row {}: {}", printed, parts.join(", "));
+                printed += 1;
             }
-            _ => {}
         }
     }
     println!("Query returned {} row(s)", row_count);
