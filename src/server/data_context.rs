@@ -826,6 +826,10 @@ impl DataContext {
                 if let Some(df) = crate::server::exec::exec_vector_tvf::try_vector_tvf(store, call)? {
                     return Self::prefix_columns_tvf(df, alias.as_deref());
                 }
+                // Array TVFs (e.g., unnest(array_literal))
+                if let Some(df) = crate::server::exec::exec_array_tvf::try_array_tvf(store, call)? {
+                    return Self::prefix_columns_tvf(df, alias.as_deref());
+                }
                 // Try Lua UDF TVFs via registry
                 if let Some(reg) = crate::scripts::get_script_registry() {
                     let reg_snapshot = reg.snapshot().ok();

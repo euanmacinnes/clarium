@@ -196,7 +196,11 @@ pub async fn send_data_row_binary(socket: &mut tokio::net::TcpStream, anyvalues:
             }
         } else {
             // text format
-            let s = match anyvalue_to_opt_string(av) { Some(s) => s, None => String::new() };
+            // Render arrays (List) using PostgreSQL brace notation for better client compatibility
+            let s = match av {
+                AnyValue::List(series) => format_pg_array_text(series),
+                _ => match anyvalue_to_opt_string(av) { Some(s) => s, None => String::new() },
+            };
             let bytes = s.as_bytes();
             payload.extend_from_slice(&(bytes.len() as i32).to_be_bytes());
             payload.extend_from_slice(bytes);

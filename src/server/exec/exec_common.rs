@@ -283,6 +283,21 @@ pub fn build_arith_expr(a: &ArithExpr, ctx: &crate::server::data_context::DataCo
                     // For now, treat it similarly - cast to integer representation
                     inner.cast(DataType::Int32)
                 }
+                SqlType::Array(inner_ty) => {
+                    // Map inner SqlType to Polars DataType, then cast to List(inner)
+                    let inner_dt: DataType = match inner_ty.as_ref() {
+                        SqlType::Boolean => DataType::Boolean,
+                        SqlType::SmallInt | SqlType::Integer | SqlType::BigInt => DataType::Int64,
+                        SqlType::Real | SqlType::Double | SqlType::Numeric(_) => DataType::Float64,
+                        SqlType::Text | SqlType::Varchar(_) | SqlType::Char(_) | SqlType::Uuid | SqlType::Json | SqlType::Jsonb | SqlType::Interval | SqlType::TimeTz => DataType::String,
+                        SqlType::Bytea => DataType::Binary,
+                        SqlType::Time => DataType::Time,
+                        SqlType::Date | SqlType::Timestamp | SqlType::TimestampTz => DataType::Datetime(TimeUnit::Milliseconds, None),
+                        // For registry pseudo-types and nested arrays, fall back to strings
+                        _ => DataType::String,
+                    };
+                    inner.cast(DataType::List(Box::new(inner_dt)))
+                }
             }
         }
         ArithExpr::BinOp { left, op, right } => {
@@ -408,6 +423,143 @@ pub fn build_arith_expr(a: &ArithExpr, ctx: &crate::server::data_context::DataCo
                             // Unsupported field, fall through to UDF path
                         }
                     }
+                }
+            }
+
+            // Built-in: ARRAY[...] constructor encoded as Call { name: "array", args: [e1, e2, ...] }
+            // For now, build a List(String) per row by stringifying elements safely.
+            // Users can cast the resulting array to a specific typed array via ::typename[] if needed.
+            if name_lc == "array" {
+                // Build each argument expression; then use as_struct to get per-row values in a single closure
+                let mut arg_exprs: Vec<Expr> = Vec::with_capacity(args.len());
+                for (i, a) in args.iter().enumerate() {
+                    let fname = format!("__arg{}", i);
+                    arg_exprs.push(build_arith_expr(a, ctx).alias(&fname));
+                }
+                let struct_expr = polars::lazy::dsl::as_struct(arg_exprs);
+                use polars::prelude::AnyValue;
+                return struct_expr.map(
+                    move |col: Column| {
+                        let s = col.as_materialized_series();
+                        let sc = s.struct_()?;
+                        let fields = sc.fields_as_series();
+                        let nrows = sc.len();
+                        // Build a Series of type List(String) where each row is a list of the argument strings
+                        let mut out_elems: Vec<Series> = Vec::with_capacity(nrows);
+                        for i in 0..nrows {
+                            let mut row_vals: Vec<String> = Vec::with_capacity(fields.len());
+                            for f in &fields {
+                                let av = f.get(i).unwrap_or(AnyValue::Null);
+                                let s = match av {
+                                    AnyValue::Null => String::new(),
+                                    _ => av.to_string(),
+                                };
+                                row_vals.push(s);
+                            }
+                            let row_series = Series::new("__e".into(), row_vals);
+                            out_elems.push(row_series);
+                        }
+                        Ok(Series::new("array".into(), out_elems).into_column())
+                    },
+                    |_schema, _field| Ok(Field::new("array".into(), DataType::List(Box::new(DataType::String))))
+                );
+            }
+
+            // Built-in: array_concat(a, b)
+            // Concatenate arrays or append/prepend scalars. Output is List(String) for dtype-agnostic safety.
+            if name_lc == "array_concat" && args.len() == 2 {
+                let l = build_arith_expr(&args[0], ctx).alias("__l");
+                let r = build_arith_expr(&args[1], ctx).alias("__r");
+                let struct_expr = polars::lazy::dsl::as_struct(vec![l, r]);
+                use polars::prelude::AnyValue;
+                return struct_expr.map(
+                    move |col: Column| {
+                        let s = col.as_materialized_series();
+                        let sc = s.struct_()?;
+                        let fields = sc.fields_as_series();
+                        let nrows = sc.len();
+                        if fields.len() != 2 { return Ok(Series::new("array_concat".into(), Vec::<Series>::new()).into_column()); }
+                        let left = &fields[0];
+                        let right = &fields[1];
+                        let mut out_rows: Vec<Series> = Vec::with_capacity(nrows);
+                        for i in 0..nrows {
+                            // Helper to collect a value (list or scalar) into strings
+                            let mut row_vals: Vec<String> = Vec::new();
+                            let lav = left.get(i).unwrap_or(AnyValue::Null);
+                            match lav {
+                                AnyValue::List(inner) => {
+                                    let m = inner.len();
+                                    for j in 0..m {
+                                        let v = inner.get(j).unwrap_or(AnyValue::Null);
+                                        let s = match v { AnyValue::Null => String::new(), _ => v.to_string() };
+                                        row_vals.push(s);
+                                    }
+                                }
+                                AnyValue::Null => { /* nothing */ }
+                                _ => {
+                                    // treat as scalar prepend
+                                    let s = lav.to_string();
+                                    row_vals.push(s);
+                                }
+                            }
+                            let rav = right.get(i).unwrap_or(AnyValue::Null);
+                            match rav {
+                                AnyValue::List(inner) => {
+                                    let m = inner.len();
+                                    for j in 0..m {
+                                        let v = inner.get(j).unwrap_or(AnyValue::Null);
+                                        let s = match v { AnyValue::Null => String::new(), _ => v.to_string() };
+                                        row_vals.push(s);
+                                    }
+                                }
+                                AnyValue::Null => { /* nothing */ }
+                                _ => {
+                                    // treat as scalar append
+                                    let s = rav.to_string();
+                                    row_vals.push(s);
+                                }
+                            }
+                            out_rows.push(Series::new("__e".into(), row_vals));
+                        }
+                        Ok(Series::new("array_concat".into(), out_rows).into_column())
+                    },
+                    |_schema, _field| Ok(Field::new("array_concat".into(), DataType::List(Box::new(DataType::String))))
+                );
+            }
+
+            // Built-in: array_length(arr, dim)
+            if name_lc == "array_length" && (args.len() == 1 || args.len() == 2) {
+                let arr_expr = build_arith_expr(&args[0], ctx);
+                // Only dimension 1 is supported; other dims return NULL (graceful) for now
+                let dim_ok = if args.len() == 2 {
+                    // Evaluate second argument as Int64 constant if possible; else accept 1 as default
+                    match &args[1] {
+                        ArithExpr::Term(ArithTerm::Number(n)) => (*n as i64) == 1,
+                        _ => true,
+                    }
+                } else { true };
+                if dim_ok {
+                    // Compute length via map over column AnyValue
+                    return arr_expr.map(
+                        move |col: Column| {
+                            let s = col.as_materialized_series();
+                            let len = s.len();
+                            let mut out: Vec<Option<i64>> = Vec::with_capacity(len);
+                            for i in 0..len {
+                                match s.get(i) {
+                                    Ok(polars::prelude::AnyValue::List(inner)) => {
+                                        out.push(Some(inner.len() as i64));
+                                    }
+                                    Ok(polars::prelude::AnyValue::Null) | Err(_) => out.push(None),
+                                    _ => out.push(None),
+                                }
+                            }
+                            Ok(Series::new("array_length".into(), out).into_column())
+                        },
+                        |_schema, _field| Ok(Field::new("array_length".into(), DataType::Int64))
+                    );
+                } else {
+                    return lit(polars::prelude::Null {});
                 }
             }
 
@@ -812,12 +964,13 @@ pub fn build_arith_expr(a: &ArithExpr, ctx: &crate::server::data_context::DataCo
             }
         }
         ArithExpr::Slice { base, start, stop, step } => {            
-            let base_e = build_arith_expr(base, ctx).cast(DataType::String);
+            // Build base expression without forcing a cast; we will branch on dtype at runtime.
+            let base_e = build_arith_expr(base, ctx);
             let start_b = start.clone();
             let stop_b = stop.clone();
             let step_v = *step;
 
-            // Python-like slicing over Unicode scalar values
+            // Python-like slicing over Unicode scalar values (0-based with negative indices).
             fn python_slice(s: &str, start: Option<i64>, stop: Option<i64>, step: Option<i64>) -> String {
                 let chars: Vec<char> = s.chars().collect();
                 let len = chars.len() as i64;
@@ -851,9 +1004,7 @@ pub fn build_arith_expr(a: &ArithExpr, ctx: &crate::server::data_context::DataCo
                 if step > 0 {
                     let mut i = start_idx;
                     while i < stop_idx && i < len {
-                        if i >= 0 {
-                            out.push(chars[i as usize]);
-                        }
+                        if i >= 0 { out.push(chars[i as usize]); }
                         i += step;
                     }
                 } else {
@@ -868,21 +1019,88 @@ pub fn build_arith_expr(a: &ArithExpr, ctx: &crate::server::data_context::DataCo
 
             base_e.map(
                 move |col: Column| {
+                    use polars::prelude::AnyValue;
                     let s = col.as_materialized_series();
-                    let ca = s.str()?;
-                    let out = ca.apply(|opt_val| {
-                        opt_val.map(|val| {
-                            // Only integer indices are supported now
-                            let s_i = match &start_b { Some(StrSliceBound::Index(v)) => Some(*v), _ => None };
-                            let e_i = match &stop_b { Some(StrSliceBound::Index(v)) => Some(*v), _ => None };
-                            let step_i = step_v;
-                            std::borrow::Cow::Owned(python_slice(val, s_i, e_i, step_i))
-                        })
-                    });
-                    Ok(out.into_column())
+                    match s.dtype() {
+                        DataType::String => {
+                            // String slicing as before
+                            let ca = s.str()?;
+                            let out = ca.apply(|opt_val| {
+                                opt_val.map(|val| {
+                                    let s_i = match &start_b { Some(StrSliceBound::Index(v)) => Some(*v), _ => None };
+                                    let e_i = match &stop_b { Some(StrSliceBound::Index(v)) => Some(*v), _ => None };
+                                    let step_i = step_v;
+                                    std::borrow::Cow::Owned(python_slice(val, s_i, e_i, step_i))
+                                })
+                            });
+                            Ok(out.into_column())
+                        }
+                        DataType::List(_inner) => {
+                            // Array/List slicing with Pythonic semantics (0-based, negatives, step). Output List(String) for robustness.
+                            let len = s.len();
+                            let mut out_elems: Vec<Series> = Vec::with_capacity(len);
+                            for i in 0..len {
+                                match s.get(i) {
+                                    Ok(AnyValue::List(inner)) => {
+                                        let n = inner.len() as i64;
+                                        let step = step_v.unwrap_or(1);
+                                        if step == 0 { out_elems.push(Series::new("__e".into(), Vec::<String>::new())); continue; }
+                                        let mut start_idx: i64 = if step > 0 { 0 } else { n - 1 };
+                                        let mut stop_idx: i64 = if step > 0 { n } else { -n - 1 };
+                                        if let Some(StrSliceBound::Index(mut st)) = start_b { if st < 0 { st += n; } if st < 0 { st = 0; } if st > n { st = n; } start_idx = st; }
+                                        if let Some(StrSliceBound::Index(mut sp)) = stop_b {
+                                            if sp < 0 { sp += n; }
+                                            if step > 0 { if sp < 0 { sp = 0; } }
+                                            else if sp < -1 { sp = -1; }
+                                            if sp > n { sp = n; }
+                                            stop_idx = sp;
+                                        }
+                                        let mut row_vals: Vec<String> = Vec::new();
+                                        if step > 0 {
+                                            let mut j = start_idx;
+                                            while j < stop_idx && j < n {
+                                                if j >= 0 {
+                                                    let av = inner.get(j as usize).unwrap_or(AnyValue::Null);
+                                                    let s = match av { AnyValue::Null => String::new(), _ => av.to_string() };
+                                                    row_vals.push(s);
+                                                }
+                                                j += step;
+                                            }
+                                        } else {
+                                            let mut j = start_idx;
+                                            while j > stop_idx && j >= 0 {
+                                                if j < n {
+                                                    let av = inner.get(j as usize).unwrap_or(AnyValue::Null);
+                                                    let s = match av { AnyValue::Null => String::new(), _ => av.to_string() };
+                                                    row_vals.push(s);
+                                                }
+                                                j += step; // step negative
+                                            }
+                                        }
+                                        out_elems.push(Series::new("__e".into(), row_vals));
+                                    }
+                                    _ => {
+                                        // Not a list at this row → push NULL list (empty)
+                                        out_elems.push(Series::new("__e".into(), Vec::<String>::new()));
+                                    }
+                                }
+                            }
+                            Ok(Series::new(col.name().to_string().into(), out_elems).into_column())
+                        }
+                        _ => {
+                            // Unsupported dtype: return NULLs (as strings) to avoid panics
+                            let len = s.len();
+                            let v: Vec<Option<String>> = (0..len).map(|_| None).collect();
+                            Ok(Series::new(col.name().to_string().into(), v).into_column())
+                        }
+                    }
                 },
                 |_schema, field| {
-                    Ok(Field::new(field.name().clone(), DataType::String))
+                    // Choose output dtype based on input
+                    match field.dtype() {
+                        DataType::List(_) => Ok(Field::new(field.name().clone(), DataType::List(Box::new(DataType::String)))),
+                        _ => Ok(Field::new(field.name().clone(), DataType::String)),
+                    }
                 }
             )
         }

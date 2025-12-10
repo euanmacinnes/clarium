@@ -117,6 +117,48 @@ pub fn parse_arith_expr(tokens: &[String]) -> Result<ArithExpr> {
         }
     }
 
+    // Detect top-level array/string concatenation operator: ||
+    // We map this to a built-in call `array_concat(left, right)` which at execution time
+    // handles list+list and list+scalar/scalar+list concatenation. For pure string
+    // concatenation, prefer CONCAT(...) which is already supported. This preserves
+    // unambiguous semantics for arrays while keeping matches thin in exec.
+    {
+        let chars: Vec<char> = src.chars().collect();
+        let mut depth: i32 = 0;
+        let mut in_str = false;
+        let n = chars.len();
+        let mut i = 0usize;
+        while i + 1 < n {
+            let ch = chars[i];
+            if in_str {
+                if ch == '\'' {
+                    if i + 1 < n && chars[i + 1] == '\'' { i += 2; continue; }
+                    in_str = false; i += 1; continue;
+                }
+                i += 1; continue;
+            }
+            match ch {
+                '\'' => { in_str = true; i += 1; continue; }
+                '(' | '[' => { depth += 1; i += 1; continue; }
+                ')' | ']' => { depth -= 1; i += 1; continue; }
+                '|' if i + 1 < n && chars[i + 1] == '|' => {
+                    if depth == 0 {
+                        let left = src[..i].trim();
+                        let right = src[i+2..].trim();
+                        if !left.is_empty() && !right.is_empty() {
+                            if let (Some(le), Some(re)) = (super_parse_arith(left), super_parse_arith(right)) {
+                                return Ok(ArithExpr::Call { name: "array_concat".to_string(), args: vec![le, re] });
+                            }
+                        }
+                        break;
+                    }
+                    i += 2; continue;
+                }
+                _ => { i += 1; continue; }
+            }
+        }
+    }
+
     let bytes = src.as_bytes();
     let mut i = 0usize;
 
@@ -245,6 +287,100 @@ pub fn parse_arith_expr(tokens: &[String]) -> Result<ArithExpr> {
         if i >= bytes.len() { break; }
         let c = bytes[i] as char;
         match c {
+            // PostgreSQL ARRAY[...] constructor
+            'A' | 'a' => {
+                // Fast-path check for token starting with "ARRAY" followed by optional spaces and a '['
+                let up_tail = src[i..].to_uppercase();
+                if up_tail.starts_with("ARRAY") {
+                    // position just after the word ARRAY
+                    let mut j = i + 5;
+                    while j < bytes.len() && bytes[j].is_ascii_whitespace() { j += 1; }
+                    if j < bytes.len() && (bytes[j] as char) == '[' {
+                        // parse until matching closing ']' at depth 1, respecting quotes and parentheses within
+                        let mut k = j + 1;
+                        let mut depth_br = 1i32;
+                        let mut depth_paren = 0i32;
+                        let mut in_str = false;
+                        let mut str_ch = '\'';
+                        let mut inner = String::new();
+                        while k < bytes.len() {
+                            let ch = src[k..].chars().next().unwrap();
+                            let ch_len = ch.len_utf8();
+                            if in_str {
+                                if ch == str_ch {
+                                    // handle escaped '' inside single quotes
+                                    if ch == '\'' && k + ch_len < src.len() && &src[k..k+2] == "''" {
+                                        inner.push('\'');
+                                        k += 2; // consume both quotes
+                                        continue;
+                                    }
+                                    in_str = false;
+                                }
+                                inner.push(ch);
+                                k += ch_len;
+                                continue;
+                            }
+                            match ch {
+                                '\'' | '"' => { in_str = true; str_ch = ch; inner.push(ch); k += ch_len; }
+                                '(' => { depth_paren += 1; inner.push(ch); k += ch_len; }
+                                ')' => { depth_paren -= 1; inner.push(ch); k += ch_len; }
+                                '[' => { depth_br += 1; inner.push(ch); k += ch_len; }
+                                ']' => {
+                                    depth_br -= 1;
+                                    if depth_br == 0 { k += ch_len; break; }
+                                    inner.push(ch); k += ch_len;
+                                }
+                                _ => { inner.push(ch); k += ch_len; }
+                            }
+                        }
+                        if depth_br != 0 { anyhow::bail!("Unclosed ARRAY constructor"); }
+                        // Split inner by commas at top level (not inside parens/brackets/quotes)
+                        let mut parts: Vec<String> = Vec::new();
+                        {
+                            let mut buf = String::new();
+                            let mut d_b = 0i32; let mut d_p = 0i32; let mut ins = false; let mut qch = '\'';
+                            let inner_bytes = inner.as_bytes();
+                            let mut t = 0usize;
+                            while t < inner.len() {
+                                let ch = inner[t..].chars().next().unwrap();
+                                let ch_len = ch.len_utf8();
+                                if ins {
+                                    if ch == qch {
+                                        // handle '' escape
+                                        if ch == '\'' && t + ch_len < inner.len() && &inner[t..t+2] == "''" {
+                                            buf.push('\''); t += 2; continue;
+                                        }
+                                        ins = false;
+                                    }
+                                    buf.push(ch); t += ch_len; continue;
+                                }
+                                match ch {
+                                    '\'' | '"' => { ins = true; qch = ch; buf.push(ch); }
+                                    '(' => { d_p += 1; buf.push(ch); }
+                                    ')' => { d_p -= 1; buf.push(ch); }
+                                    '[' => { d_b += 1; buf.push(ch); }
+                                    ']' => { d_b -= 1; buf.push(ch); }
+                                    ',' if d_b == 0 && d_p == 0 => { parts.push(buf.trim().to_string()); buf.clear(); }
+                                    _ => buf.push(ch),
+                                }
+                                t += ch_len;
+                            }
+                            if !buf.trim().is_empty() { parts.push(buf.trim().to_string()); }
+                        }
+                        let mut elems: Vec<ArithExpr> = Vec::new();
+                        for p in parts.into_iter() {
+                            if p.is_empty() { continue; }
+                            if let Some(e) = super_parse_arith(&p) { elems.push(e); } else { anyhow::bail!("Invalid ARRAY element: {}", p); }
+                        }
+                        crate::tprintln!("[PARSE] ARRAY constructor with {} element(s)", elems.len());
+                        toks.push(ATok::Val(ArithExpr::Call { name: "array".to_string(), args: elems }));
+                        i = k; // position after closing ']'
+                        continue;
+                    }
+                }
+                // fall through to default identifier handling if not ARRAY[
+                // no special handling here; the next branch below will process identifier
+            }
             '(' => {
                 // Parenthesized expression: parse until matching ')' and treat as a grouped sub-expression
                 let mut depth: i32 = 0; let mut j = i;

@@ -303,7 +303,7 @@ pub fn parse_type_name(s: &str) -> Option<(SqlType, usize)> {
         }
     }
 
-    let ty = match kw_lc.as_str() {
+    let mut ty = match kw_lc.as_str() {
         "bool" | "boolean" => SqlType::Boolean,
         "smallint" | "int2" => SqlType::SmallInt,
         "int" | "integer" | "int4" => SqlType::Integer,
@@ -340,6 +340,16 @@ pub fn parse_type_name(s: &str) -> Option<(SqlType, usize)> {
         x if x.ends_with(".regtype") || x == "regtype" => SqlType::Regtype,
         _ => return None,
     };
+    // Optional array suffix: [] (one-dimensional for now). Allow spaces before '['.
+    {
+        let bytes = s_trim.as_bytes();
+        let mut k = consumed_kw;
+        while k < bytes.len() && bytes[k].is_ascii_whitespace() { k += 1; }
+        if k + 1 < bytes.len() && bytes[k] as char == '[' && bytes[k+1] as char == ']' {
+            ty = SqlType::Array(Box::new(ty));
+            consumed_kw = k + 2;
+        }
+    }
     Some((ty, consumed_kw))
 }
 

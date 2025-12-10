@@ -122,6 +122,8 @@ pub enum SqlType {
     Regclass,
     // PostgreSQL regtype pseudo-type used in casts like oid::regtype::text
     Regtype,
+    // One-dimensional array type with an inner SqlType
+    Array(Box<SqlType>),
 }
 
 #[derive(Debug, Clone, PartialEq)]

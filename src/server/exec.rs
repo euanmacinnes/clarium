@@ -24,6 +24,7 @@ pub mod exec_graph_runtime; // Graph TVFs runtime (neighbors/paths)
 pub mod exec_alter;        // ALTER TABLE handling
 pub mod vector_utils;      // Shared vector parsing/extraction utilities
 pub mod exec_vector_tvf;   // Vector TVFs (nearest_neighbors, vector_search)
+pub mod exec_array_tvf;    // Array TVFs (unnest)
 pub mod filestore;         // FILESTORE implementation (config, paths, security, git backends)
 pub mod df_utils_json;   // JSON -> DataFrame conversion helpers for KV Json
 pub mod explain;         // EXPLAIN data model and renderers (skeleton)

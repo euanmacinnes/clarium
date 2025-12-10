@@ -47,6 +47,45 @@ pub fn anyvalue_to_opt_string(av: &AnyValue) -> Option<String> {
     }
 }
 
+/// Format a Polars List series (from `AnyValue::List`) into PostgreSQL array text notation.
+/// - Elements are separated by commas and wrapped in `{}` braces.
+/// - NULL elements are emitted as bare `NULL`.
+/// - Non-null elements are quoted with double quotes if they contain special characters
+///   (comma, brace, whitespace, quote, or backslash). Double quotes inside are escaped as `\"`.
+#[inline]
+pub fn format_pg_array_text(series: &polars::prelude::Series) -> String {
+    use polars::prelude::AnyValue;
+    let mut out = String::new();
+    out.push('{');
+    let n = series.len();
+    for i in 0..n {
+        if i > 0 { out.push(','); }
+        let av = series.get(i).unwrap_or(AnyValue::Null);
+        match av {
+            AnyValue::Null => out.push_str("NULL"),
+            _ => {
+                let s = anyvalue_to_opt_string(&av).unwrap_or_default();
+                let needs_quote = s.chars().any(|c| matches!(c, ',' | '{' | '}' | ' ' | '\\' | '"' | '\t' | '\n' | '\r')) || s.is_empty();
+                if needs_quote {
+                    out.push('"');
+                    for ch in s.chars() {
+                        match ch {
+                            '"' => { out.push_str("\\\""); }
+                            '\\' => { out.push_str("\\\\"); }
+                            _ => out.push(ch),
+                        }
+                    }
+                    out.push('"');
+                } else {
+                    out.push_str(&s);
+                }
+            }
+        }
+    }
+    out.push('}');
+    out
+}
+
 #[inline]
 pub async fn send_ready(socket: &mut tokio::net::TcpStream, state: &ConnState) -> Result<()> {
     let status = if state.in_tx {

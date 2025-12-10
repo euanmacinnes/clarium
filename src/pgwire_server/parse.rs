@@ -120,18 +120,52 @@ pub async fn handle_parse(socket: &mut tokio::net::TcpStream, state: &mut ConnSt
             // default to TEXT
             param_types = vec![PG_TYPE_TEXT; max_idx];
             // refine using explicit casts like $1::int8, $2::float8, etc.
-            let re_cast = Regex::new(r"\$([1-9][0-9]*)::([A-Za-z0-9_]+)")?;
+            // capture optional [] suffix and allow multi-word/base qualified names
+            let re_cast = Regex::new(r"\\$([1-9][0-9]*)::([A-Za-z0-9_\. ]+(?:\\[\\])?)")?;
             for cap in re_cast.captures_iter(&sql) {
                 let idx: usize = cap.get(1).and_then(|m| m.as_str().parse().ok()).unwrap_or(0);
-                let ty = cap.get(2).map(|m| m.as_str().to_ascii_lowercase()).unwrap_or_default();
-                let oid = match ty.as_str() {
-                    // integers
-                    "int" | "int4" | "integer" => 23,
-                    "int8" | "bigint" => 20,
-                    "float8" | "double" | "double precision" => 701,
-                    "text" | "varchar" | "character varying" => 25,
-                    "bool" | "boolean" => 16,
-                    _ => PG_TYPE_TEXT,
+                let mut ty_raw = cap.get(2).map(|m| m.as_str().to_string()).unwrap_or_default();
+                let ty_lc = ty_raw.to_ascii_lowercase();
+                // Strip pg_catalog. prefix and collapse spaces
+                let ty_norm = ty_lc.replace("pg_catalog.", "").replace("  ", " ");
+                let oid = {
+                    if ty_norm.ends_with("[]") {
+                        let inner = ty_norm.trim_end_matches("[]").trim();
+                        match inner {
+                            // arrays of common types
+                            "bool" | "boolean" => 1000,
+                            "int2" | "smallint" => 1005,
+                            "int" | "int4" | "integer" => 1007,
+                            "int8" | "bigint" => 1016,
+                            "real" | "float4" => 1021,
+                            "double precision" | "float8" => 1022,
+                            "text" | "varchar" | "character varying" | "bpchar" | "char" | "character" => 1009,
+                            "bytea" => 1001,
+                            "date" => 1182,
+                            "timestamp" | "timestamp without time zone" => 1115,
+                            "timestamptz" | "timestamp with time zone" => 1185,
+                            "time" | "time without time zone" => 1183,
+                            "numeric" | "decimal" => 1231,
+                            _ => PG_TYPE_TEXT,
+                        }
+                    } else {
+                        match ty_norm.as_str() {
+                            // scalars
+                            "int" | "int4" | "integer" => 23,
+                            "int8" | "bigint" => 20,
+                            "real" | "float4" => 700,
+                            "float8" | "double" | "double precision" => 701,
+                            "text" | "varchar" | "character varying" | "bpchar" | "char" | "character" => 25,
+                            "bool" | "boolean" => 16,
+                            "bytea" => 17,
+                            "date" => 1082,
+                            "timestamp" | "timestamp without time zone" => 1114,
+                            "timestamptz" | "timestamp with time zone" => 1184,
+                            "time" | "time without time zone" => 1083,
+                            "numeric" | "decimal" => 1700,
+                            _ => PG_TYPE_TEXT,
+                        }
+                    }
                 };
                 if idx > 0 && idx - 1 < param_types.len() { param_types[idx - 1] = oid; }
             }
