@@ -1,3 +1,9 @@
+use polars::prelude::AnyValue;
+use polars::datatypes::TimeUnit;
+
+use crate::pgwire_server::inline::*;
+use crate::pgwire_server::oids::*;
+
 pub fn encode_element_binary(buf: &mut Vec<u8>, inner_oid: i32, av: &AnyValue<'_>) {
     match (inner_oid, av) {
         (16, AnyValue::Boolean(b)) => { buf.extend_from_slice(&1i32.to_be_bytes()); buf.push(if *b {1} else {0}); }

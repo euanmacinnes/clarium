@@ -1,10 +1,33 @@
+use anyhow::{anyhow, Result, bail};
+use std::net::SocketAddr;
+use std::sync::atomic::{AtomicU64, Ordering};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tracing::{error, info, debug, warn};
+use crate::tprintln;
+
+use crate::{storage::SharedStore, server::exec};
+use crate::server::query::{self, Command};
+use crate::server::exec::exec_select::handle_select;
+use polars::prelude::{AnyValue, DataFrame, DataType, TimeUnit};
+use crate::ident::{DEFAULT_DB, DEFAULT_SCHEMA};
+use regex::Regex;
+use std::collections::HashMap;
 pub fn hex_dump_prefix(data: &[u8], max: usize) -> String {
     let take = data.len().min(max);
     data.iter().take(take).map(|b| format!("{:02X}", b)).collect::<Vec<_>>().join(" ")
 }
 
+pub const PG_TYPE_TEXT: i32 = 25; // use text for all columns for simplicity
+
+pub static CONN_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
+
 pub async fn read_i16(socket: &mut tokio::net::TcpStream) -> Result<i16> { let mut b = [0u8;2]; socket.read_exact(&mut b).await?; Ok(i16::from_be_bytes(b)) }
 pub async fn read_i32(socket: &mut tokio::net::TcpStream) -> Result<i32> { let mut b = [0u8;4]; socket.read_exact(&mut b).await?; Ok(i32::from_be_bytes(b)) }
+pub async fn read_u32(socket: &mut tokio::net::TcpStream) -> Result<u32> {
+    let mut b = [0u8; 4]; socket.read_exact(&mut b).await?; Ok(u32::from_be_bytes(b))
+}
+
+pub async fn write_i32(socket: &mut tokio::net::TcpStream, v: i32) -> Result<()> { socket.write_all(&v.to_be_bytes()).await.map_err(|e| e.into()) }
 pub async fn read_cstring(socket: &mut tokio::net::TcpStream) -> Result<String> {
     let mut buf: Vec<u8> = Vec::new();
     let mut byte = [0u8;1];
@@ -40,17 +63,13 @@ pub fn normalize_object_to_db(name: &str) -> String {
     s.to_string()
 }
 
-pub async fn read_u32(socket: &mut tokio::net::TcpStream) -> Result<u32> {
-    let mut b = [0u8; 4]; socket.read_exact(&mut b).await?; Ok(u32::from_be_bytes(b))
-}
+
 
 pub async fn write_msg_header(socket: &mut tokio::net::TcpStream, tag: u8, len: i32) -> Result<()> {
     socket.write_all(&[tag]).await?; write_i32(socket, len).await
 }
 
-pub async fn write_i32(socket: &mut tokio::net::TcpStream, v: i32) -> Result<()> { socket.write_all(&v.to_be_bytes()).await.map_err(|e| e.into()) }
-
-fn escape_sql_literal(s: &str) -> String {
+pub fn escape_sql_literal(s: &str) -> String {
     let mut out = String::with_capacity(s.len() + 2);
     out.push('\'');
     for ch in s.chars() { if ch == '\'' { out.push('\''); out.push('\''); } else { out.push(ch); } }
@@ -58,11 +77,12 @@ fn escape_sql_literal(s: &str) -> String {
     out
 }
 
-fn substitute_placeholders(sql: &str, params: &[Option<String>]) -> Result<String> {
+
+pub fn substitute_placeholders(sql: &str, params: &[Option<String>]) -> Result<String> {
     substitute_placeholders_typed(sql, params, None)
 }
 
-fn substitute_placeholders_typed(sql: &str, params: &[Option<String>], param_types: Option<&[i32]>) -> Result<String> {
+pub fn substitute_placeholders_typed(sql: &str, params: &[Option<String>], param_types: Option<&[i32]>) -> Result<String> {
     // Detect named placeholders of the form %(name)s
     let re_named = Regex::new(r"%\(([A-Za-z0-9_]+)\)s")?;
     let mut out = String::new();

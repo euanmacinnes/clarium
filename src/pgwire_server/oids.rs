@@ -1,3 +1,6 @@
+use polars::prelude::DataType;
+use crate::pgwire_server::misc::PG_TYPE_TEXT;
+
 pub fn map_polars_dtype_to_pg_oid(dt: &DataType) -> i32 {
     match dt {
         DataType::Boolean => 16,

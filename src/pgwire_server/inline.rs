@@ -1,4 +1,6 @@
 use polars::prelude::{AnyValue, DataFrame, DataType, TimeUnit};
+use anyhow::Result;
+use crate::pgwire_server::{send::send_ready_with_status, structs::ConnState};
 
 #[inline]
 pub fn is_array_oid(oid: i32) -> bool {

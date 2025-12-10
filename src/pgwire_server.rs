@@ -9,6 +9,15 @@ use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tracing::{error, info, debug, warn};
+use crate::pgwire_server::encodedecode::*;
+use crate::pgwire_server::inline::*;
+use crate::pgwire_server::misc::*;
+use crate::pgwire_server::oids::*;
+use crate::pgwire_server::parse::*;
+use crate::pgwire_server::security::*;
+use crate::pgwire_server::send::*;
+use crate::pgwire_server::structs::*;
+
 use crate::tprintln;
 
 use crate::{storage::SharedStore, server::exec};
@@ -19,14 +28,16 @@ use crate::ident::{DEFAULT_DB, DEFAULT_SCHEMA};
 use regex::Regex;
 use std::collections::HashMap;
 
-pub mod binary;
+pub mod encodedecode;
 pub mod inline;
+pub mod misc;
 pub mod oids;
+pub mod parse;
+pub mod security;
+pub mod send;
 pub mod structs;
 
-const PG_TYPE_TEXT: i32 = 25; // use text for all columns for simplicity
 
-static CONN_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 fn pgwire_trace_enabled() -> bool {
     std::env::var("CLARIUM_PGWIRE_TRACE").map(|v| {

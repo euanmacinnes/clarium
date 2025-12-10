@@ -1,14 +1,17 @@
 use std::collections::HashMap;
+use pub_fields::pub_fields;
 
 #[derive(Clone)]
-pub struct PreparedStatement {
+#[pub_fields]
+pub(crate) struct PreparedStatement {
     name: String,
     sql: String,
     param_types: Vec<i32>,
 }
 
 #[derive(Clone)]
-pub struct Portal {
+#[pub_fields]
+pub(crate) struct Portal {
     name: String,
     stmt_name: String,
     // Store raw text parameters (None for NULL)
@@ -17,7 +20,8 @@ pub struct Portal {
     result_formats: Vec<i16>,
 }
 
-pub struct ConnState {
+#[pub_fields]
+pub(crate) struct ConnState {
     current_database: String,
     current_schema: String,
     statements: HashMap<String, PreparedStatement>,
@@ -29,7 +33,8 @@ pub struct ConnState {
 }
 
 #[derive(Debug, Clone)]
-pub struct InsertStmt { database: String, columns: Vec<String>, values: Vec<InsertValue> }
+#[pub_fields]
+pub(crate) struct InsertStmt { database: String, columns: Vec<String>, values: Vec<InsertValue> }
 
 #[derive(Debug, Clone)]
-pub enum InsertValue { Null, Number(i64), String(String) }
+pub(crate) enum InsertValue { Null, Number(i64), String(String) }

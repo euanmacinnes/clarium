@@ -1,3 +1,22 @@
+use anyhow::{anyhow, Result, bail};
+use std::net::SocketAddr;
+use std::sync::atomic::{AtomicU64, Ordering};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tracing::{error, info, debug, warn};
+use crate::pgwire_server::inline::*;
+use crate::pgwire_server::misc::*;
+use crate::pgwire_server::encodedecode::*;
+use crate::tprintln;
+
+use crate::{storage::SharedStore, server::exec};
+use crate::server::query::{self, Command};
+use crate::server::exec::exec_select::handle_select;
+use polars::prelude::{AnyValue, DataFrame, DataType, TimeUnit};
+use crate::ident::{DEFAULT_DB, DEFAULT_SCHEMA};
+use regex::Regex;
+use std::collections::HashMap;
+use crate::pgwire_server::oids::*;
+
 pub async fn send_row_description(socket: &mut tokio::net::TcpStream, cols: &[String], oids: &[i32]) -> Result<()> {
     debug!(target: "pgwire", "sending RowDescription ({} columns): {:?}", cols.len(), cols);
     socket.write_all(b"T").await?;
@@ -148,8 +167,8 @@ pub async fn send_data_row_binary(socket: &mut tokio::net::TcpStream, anyvalues:
                     }
                 }
                 // arrays: one-dimensional arrays for common element types
-                (arr_oid, AnyValue::List(series)) if is_array_oid(*arr_oid) => {
-                    let inner_oid = array_elem_oid(*arr_oid);
+                (arr_oid, AnyValue::List(series)) if is_array_oid(arr_oid) => {
+                    let inner_oid = array_elem_oid(arr_oid);
                     let n = series.len();
                     // Build array binary payload into a temporary vec, then prefix with its length
                     let mut arr = Vec::new();
