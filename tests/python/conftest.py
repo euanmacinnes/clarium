@@ -169,6 +169,7 @@ def engine() -> Engine:
         future=True,
         connect_args={"connect_timeout": 2},  # fast-fail if pgwire isn't listening
         pool_pre_ping=True,
+        isolation_level="AUTOCOMMIT"
     )
 
     # Bounded wait in case the server is just starting up

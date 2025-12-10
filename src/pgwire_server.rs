@@ -14,7 +14,7 @@ use crate::tprintln;
 use crate::{storage::SharedStore, server::exec};
 use crate::server::query::{self, Command};
 use crate::server::exec::exec_select::handle_select;
-use polars::prelude::AnyValue;
+use polars::prelude::{AnyValue, DataFrame, DataType, TimeUnit, StringEncoding};
 use crate::ident::{DEFAULT_DB, DEFAULT_SCHEMA};
 use regex::Regex;
 
@@ -571,8 +571,9 @@ async fn handle_query(socket: &mut tokio::net::TcpStream, store: &SharedStore, _
                     match handle_select(store, &sel) {
                         Ok((df, _into)) => {
                             let cols: Vec<String> = df.get_column_names().into_iter().map(|s| s.to_string()).collect();
+                            let oids: Vec<i32> = df.get_columns().iter().map(|s| map_polars_dtype_to_pg_oid(s.dtype())).collect();
                             // Emit RowDescription with columns even if there are no rows
-                            send_row_description(socket, &cols).await?;
+                            send_row_description(socket, &cols, &oids).await?;
                             // Emit DataRow frames
                             for row_idx in 0..df.height() {
                                 let mut row: Vec<Option<String>> = Vec::with_capacity(cols.len());
@@ -601,8 +602,9 @@ async fn handle_query(socket: &mut tokio::net::TcpStream, store: &SharedStore, _
                                 serde_json::Value::Object(_) => to_table(vec![val.clone()])?,
                                 _ => to_table(vec![val.clone()])?,
                             };
-                            // Emit RowDescription even if empty
-                            send_row_description(socket, &cols).await?;
+                            // Emit RowDescription even if empty; infer OIDs heuristically from first row or default TEXT
+                            let oids: Vec<i32> = if let Some(first) = data.first() { first.iter().map(|v| v.as_deref().map(infer_literal_oid_from_value).unwrap_or(PG_TYPE_TEXT)).collect() } else { vec![PG_TYPE_TEXT; cols.len()] };
+                            send_row_description(socket, &cols, &oids).await?;
                             for row in data.iter() { send_data_row(socket, row).await?; }
                             let tag = format!("SELECT {}", data.len());
                             send_command_complete(socket, &tag).await?;
@@ -679,18 +681,68 @@ fn to_table(rows: Vec<serde_json::Value>) -> Result<(Vec<String>, Vec<Vec<Option
     Ok((cols, data))
 }
 
-async fn send_row_description(socket: &mut tokio::net::TcpStream, cols: &[String]) -> Result<()> {
+fn map_polars_dtype_to_pg_oid(dt: &DataType) -> i32 {
+    match dt {
+        DataType::Boolean => 16,
+        DataType::Int8 | DataType::Int16 => 21,
+        DataType::Int32 => 23,
+        DataType::Int64 => 20,
+        DataType::UInt8 | DataType::UInt16 | DataType::UInt32 | DataType::UInt64 => 20,
+        DataType::Float32 => 700,
+        DataType::Float64 => 701,
+        DataType::Binary => 17, // bytea
+        DataType::String | DataType::Categorical(_, _) => 25,
+        DataType::Date => 1082, // date
+        DataType::Datetime(_, tz) => if tz.is_some() { 1184 } else { 1114 }, // timestamptz or timestamp
+        DataType::Time => 1083, // time without tz
+        DataType::Duration(_) => 1186, // interval
+        DataType::Decimal(_, _) => 1700, // numeric/decimal
+        DataType::List(inner) => map_pg_array_oid(inner),
+        DataType::Struct(_) => 2249, // record
+        _ => PG_TYPE_TEXT,
+    }
+}
+
+fn map_pg_array_oid(inner: &DataType) -> i32 {
+    match inner.as_ref() {
+        DataType::Boolean => 1000, // bool[]
+        DataType::Int16 | DataType::Int8 => 1005, // int2[]
+        DataType::Int32 => 1007, // int4[]
+        DataType::Int64 | DataType::UInt64 | DataType::UInt32 | DataType::UInt16 | DataType::UInt8 => 1016, // int8[]
+        DataType::Float32 => 1021, // float4[]
+        DataType::Float64 => 1022, // float8[]
+        DataType::String | DataType::Categorical(_, _) => 1009, // text[]
+        DataType::Binary => 1001, // bytea[]
+        DataType::Date => 1182, // date[]
+        DataType::Datetime(_, tz) => if tz.is_some() { 1185 } else { 1115 }, // timestamptz[] or timestamp[]
+        DataType::Time => 1183, // time[]
+        DataType::Decimal(_, _) => 1231, // numeric[]
+        _ => 1009,
+    }
+}
+
+fn infer_literal_oid_from_value(s: &str) -> i32 {
+    // Very small heuristic for constant SELECTs in Describe
+    if s.eq_ignore_ascii_case("true") || s.eq_ignore_ascii_case("false") { return 16; }
+    if s.parse::<i32>().is_ok() { return 23; }
+    if s.parse::<i64>().is_ok() { return 20; }
+    if s.parse::<f64>().is_ok() { return 701; }
+    25
+}
+
+async fn send_row_description(socket: &mut tokio::net::TcpStream, cols: &[String], oids: &[i32]) -> Result<()> {
     debug!(target: "pgwire", "sending RowDescription ({} columns): {:?}", cols.len(), cols);
     socket.write_all(b"T").await?;
     // Build payload
     let mut payload = Vec::new();
     let n: i16 = cols.len() as i16;
     payload.extend_from_slice(&n.to_be_bytes());
-    for name in cols {
+    for (idx, name) in cols.iter().enumerate() {
         payload.extend_from_slice(name.as_bytes()); payload.push(0); // field name
         payload.extend_from_slice(&0i32.to_be_bytes()); // table oid
         payload.extend_from_slice(&0i16.to_be_bytes()); // attr number
-        payload.extend_from_slice(&PG_TYPE_TEXT.to_be_bytes()); // type oid
+        let oid = *oids.get(idx).unwrap_or(&PG_TYPE_TEXT);
+        payload.extend_from_slice(&oid.to_be_bytes()); // type oid
         payload.extend_from_slice(&(-1i16).to_be_bytes()); // type size (variable)
         payload.extend_from_slice(&0i32.to_be_bytes()); // type modifier
         payload.extend_from_slice(&0i16.to_be_bytes()); // text format
@@ -720,6 +772,74 @@ async fn send_data_row(socket: &mut tokio::net::TcpStream, row: &[Option<String>
     }
     let total_len = (payload.len() + 4) as i32;
     debug!(target: "pgwire", "DataRow payload_len={} total_frame_len={}", payload.len(), total_len);
+    write_i32(socket, total_len).await?;
+    socket.write_all(&payload).await?;
+    Ok(())
+}
+
+async fn send_data_row_binary(socket: &mut tokio::net::TcpStream, anyvalues: &[AnyValue<'_>], oids: &[i32], fmts: &[i16]) -> Result<()> {
+    // fmts: effective per-column result format code (0=text, 1=binary)
+    socket.write_all(b"D").await?;
+    let mut payload = Vec::new();
+    let n: i16 = anyvalues.len() as i16;
+    payload.extend_from_slice(&n.to_be_bytes());
+    for (i, av) in anyvalues.iter().enumerate() {
+        let fmt = *fmts.get(i).unwrap_or(&0);
+        if matches!(av, AnyValue::Null) {
+            payload.extend_from_slice(&(-1i32).to_be_bytes());
+            continue;
+        }
+        if fmt == 1 {
+            // binary
+            let oid = *oids.get(i).unwrap_or(&PG_TYPE_TEXT);
+            match (oid, av) {
+                (16, AnyValue::Boolean(b)) => { // bool
+                    payload.extend_from_slice(&1i32.to_be_bytes());
+                    payload.push(if *b { 1 } else { 0 });
+                }
+                (21, AnyValue::Int16(v)) => {
+                    payload.extend_from_slice(&2i32.to_be_bytes());
+                    payload.extend_from_slice(&v.to_be_bytes());
+                }
+                (23, AnyValue::Int32(v)) => {
+                    payload.extend_from_slice(&4i32.to_be_bytes());
+                    payload.extend_from_slice(&v.to_be_bytes());
+                }
+                (20, AnyValue::Int64(v)) => {
+                    payload.extend_from_slice(&8i32.to_be_bytes());
+                    payload.extend_from_slice(&v.to_be_bytes());
+                }
+                (700, AnyValue::Float32(f)) => {
+                    let bits = f.to_bits();
+                    payload.extend_from_slice(&4i32.to_be_bytes());
+                    payload.extend_from_slice(&bits.to_be_bytes());
+                }
+                (701, AnyValue::Float64(f)) => {
+                    let bits = f.to_bits();
+                    payload.extend_from_slice(&8i32.to_be_bytes());
+                    payload.extend_from_slice(&bits.to_be_bytes());
+                }
+                (17, AnyValue::Binary(b)) => {
+                    payload.extend_from_slice(&(b.len() as i32).to_be_bytes());
+                    payload.extend_from_slice(b);
+                }
+                // Fallback to text for other combos
+                _ => {
+                    let s = format!("{}", av);
+                    let bytes = s.as_bytes();
+                    payload.extend_from_slice(&(bytes.len() as i32).to_be_bytes());
+                    payload.extend_from_slice(bytes);
+                }
+            }
+        } else {
+            // text format
+            let s = match anyvalue_to_opt_string(av) { Some(s) => s, None => String::new() };
+            let bytes = s.as_bytes();
+            payload.extend_from_slice(&(bytes.len() as i32).to_be_bytes());
+            payload.extend_from_slice(bytes);
+        }
+    }
+    let total_len = (payload.len() + 4) as i32;
     write_i32(socket, total_len).await?;
     socket.write_all(&payload).await?;
     Ok(())
@@ -931,6 +1051,8 @@ async fn handle_parse(socket: &mut tokio::net::TcpStream, state: &mut ConnState)
                 let idx: usize = cap.get(1).and_then(|m| m.as_str().parse().ok()).unwrap_or(0);
                 let ty = cap.get(2).map(|m| m.as_str().to_ascii_lowercase()).unwrap_or_default();
                 let oid = match ty.as_str() {
+                    // integers
+                    "int" | "int4" | "integer" => 23,
                     "int8" | "bigint" => 20,
                     "float8" | "double" | "double precision" => 701,
                     "text" | "varchar" | "character varying" => 25,
@@ -1080,6 +1202,10 @@ fn escape_sql_literal(s: &str) -> String {
 }
 
 fn substitute_placeholders(sql: &str, params: &[Option<String>]) -> Result<String> {
+    substitute_placeholders_typed(sql, params, None)
+}
+
+fn substitute_placeholders_typed(sql: &str, params: &[Option<String>], param_types: Option<&[i32]>) -> Result<String> {
     // Detect named placeholders of the form %(name)s
     let re_named = Regex::new(r"%\(([A-Za-z0-9_]+)\)s")?;
     let mut out = String::new();
@@ -1128,9 +1254,20 @@ fn substitute_placeholders(sql: &str, params: &[Option<String>]) -> Result<Strin
                 .map_err(|_| anyhow!("invalid placeholder index"))?;
             let pos = idx.checked_sub(1).ok_or_else(|| anyhow!("parameter index underflow"))?;
             if pos >= params.len() { bail!("too few parameters: ${} referenced but only {} provided", idx, params.len()); }
+            // Decide quoting based on optional type hint
+            let want_raw = if let Some(tys) = param_types { match tys.get(pos).cloned().unwrap_or(0) {
+                16 | 20 | 21 | 23 | 700 | 701 => true, // bool and numeric types
+                _ => false,
+            }} else { false };
             match &params[pos] {
                 None => out.push_str("NULL"),
-                Some(v) => out.push_str(&escape_sql_literal(v)),
+                Some(v) => {
+                    if want_raw {
+                        out.push_str(v);
+                    } else {
+                        out.push_str(&escape_sql_literal(v));
+                    }
+                }
             }
             last = m.end();
         }
@@ -1169,19 +1306,22 @@ async fn describe_row_description(socket: &mut tokio::net::TcpStream, store: &Sh
                 match handle_select(store, &sel) {
                     Ok((df, _into)) => {
                         let cols: Vec<String> = df.get_column_names().into_iter().map(|s| s.to_string()).collect();
+                        let oids: Vec<i32> = df.get_columns().iter().map(|s| map_polars_dtype_to_pg_oid(s.dtype())).collect();
                         // Always send RowDescription for SELECT-like statements
-                        return send_row_description(socket, &cols).await;
+                        return send_row_description(socket, &cols, &oids).await;
                     }
                     Err(_) => {
                         // Fallback to legacy JSON path
                         match exec::execute_query_safe(store, &q_eff).await {
                             Ok(val) => {
-                                let (cols, _data) = match &val {
+                                let (cols, data) = match &val {
                                     serde_json::Value::Array(arr) => to_table(arr.clone())?,
                                     serde_json::Value::Object(_) => to_table(vec![val.clone()])?,
                                     _ => to_table(vec![val.clone()])?,
                                 };
-                                return send_row_description(socket, &cols).await;
+                                // Heuristic OIDs from first row literal strings
+                                let oids: Vec<i32> = if let Some(first) = data.first() { first.iter().map(|v| v.as_deref().map(infer_literal_oid_from_value).unwrap_or(PG_TYPE_TEXT)).collect() } else { vec![PG_TYPE_TEXT; cols.len()] };
+                                return send_row_description(socket, &cols, &oids).await;
                             }
                             Err(_) => return send_no_data(socket).await,
                         }
@@ -1192,12 +1332,13 @@ async fn describe_row_description(socket: &mut tokio::net::TcpStream, store: &Sh
                 // Could not parse; attempt legacy path
                 match exec::execute_query_safe(store, &q_eff).await {
                     Ok(val) => {
-                        let (cols, _data) = match &val {
+                        let (cols, data) = match &val {
                             serde_json::Value::Array(arr) => to_table(arr.clone())?,
                             serde_json::Value::Object(_) => to_table(vec![val.clone()])?,
                             _ => to_table(vec![val.clone()])?,
                         };
-                        return send_row_description(socket, &cols).await;
+                        let oids: Vec<i32> = if let Some(first) = data.first() { first.iter().map(|v| v.as_deref().map(infer_literal_oid_from_value).unwrap_or(PG_TYPE_TEXT)).collect() } else { vec![PG_TYPE_TEXT; cols.len()] };
+                        return send_row_description(socket, &cols, &oids).await;
                     }
                     Err(_) => return send_no_data(socket).await,
                 }
@@ -1239,7 +1380,7 @@ async fn handle_describe(socket: &mut tokio::net::TcpStream, store: &SharedStore
                 if let Some(stmt) = state.statements.get(&portal.stmt_name) {
                     // Perform substitution to allow parser to see final forms (aliases, literal exprs)
                     tprintln!("[pgwire] describe portal, substitute placeholders");
-                    let sql_eff = match substitute_placeholders(&stmt.sql, &portal.params) { Ok(s) => s, Err(_) => stmt.sql.clone() };
+                    let sql_eff = match substitute_placeholders_typed(&stmt.sql, &portal.params, Some(&stmt.param_types)) { Ok(s) => s, Err(_) => stmt.sql.clone() };
                     // ParameterDescription is optional for portal Describe; many servers send only RowDescription
                     tprintln!("[pgwire] describe portal, row description");
                     describe_row_description(socket, store, state, &sql_eff).await
@@ -1267,32 +1408,64 @@ async fn handle_execute(socket: &mut tokio::net::TcpStream, store: &SharedStore,
     let stmt = match state.statements.get(&portal.stmt_name) { Some(s) => s, None => { send_error(socket, "unknown statement").await?; state.in_error = true; return Ok(()); } };
 
     // Perform placeholder substitution and normalize with session defaults
-    let substituted = match substitute_placeholders(&stmt.sql, &portal.params) { Ok(s) => s, Err(e) => { send_error(socket, &format!("{}", e)).await?; state.in_error = true; return Ok(()); } };
+    let substituted = match substitute_placeholders_typed(&stmt.sql, &portal.params, Some(&stmt.param_types)) { Ok(s) => s, Err(e) => { send_error(socket, &format!("{}", e)).await?; state.in_error = true; return Ok(()); } };
     let q_trim = substituted.trim().trim_end_matches(';').trim();
     debug!("pgwire execute (portal='{}'): {}", portal_name, q_trim);
     let q_effective = exec::normalize_query_with_defaults(q_trim, &state.current_database, &state.current_schema);
     debug!(target: "pgwire", "execute effective SQL: {}", q_effective);
 
-    // Delegate execution to common server executor
+    // Try to run via parsed Select to obtain typed rows for binary/text encoding.
+    let parsed = query::parse(&q_effective);
+    let mut rows_sent: usize = 0;
+    if let Ok(Command::Select(sel)) = parsed {
+        if let Ok((df, _into)) = handle_select(store, &sel) {
+            let ncols = df.width();
+            let nrows = df.height();
+            // Determine per-column result format codes from portal.requested formats
+            let fmts: Vec<i16> = if portal.result_formats.is_empty() {
+                vec![0; ncols]
+            } else if portal.result_formats.len() == 1 {
+                vec![portal.result_formats[0]; ncols]
+            } else if portal.result_formats.len() == ncols {
+                portal.result_formats.clone()
+            } else { vec![0; ncols] };
+            // OIDs from schema
+            let oids: Vec<i32> = df.get_columns().iter().map(|s| map_polars_dtype_to_pg_oid(s.dtype())).collect();
+            // Send rows
+            for ridx in 0..nrows {
+                // Collect AnyValue per column
+                let mut avs: Vec<AnyValue> = Vec::with_capacity(ncols);
+                for s in df.get_columns() {
+                    avs.push(s.get(ridx));
+                }
+                // Use binary encoder with per-column format (falls back to text for unsupported combos)
+                send_data_row_binary(socket, &avs, &oids, &fmts).await?;
+                rows_sent += 1;
+            }
+            // Build CommandComplete
+            let tag = format!("SELECT {}", rows_sent);
+            debug!(target: "pgwire", "Execute CommandComplete tag='{}'", tag);
+            send_command_complete(socket, &tag).await?;
+            if let Err(e) = socket.flush().await { error!(target: "pgwire", "flush after Execute failed: {}", e); }
+            return Ok(());
+        }
+    }
+
+    // Fallback: Delegate execution to common server executor and send text rows only
     match exec::execute_query_safe(store, &q_effective).await {
         Ok(val) => {
             let upper = q_trim.chars().take(32).collect::<String>().to_uppercase();
             let is_select_like = upper.starts_with("SELECT") || upper.starts_with("WITH ");
-            // Only SELECT-like statements should return RowDescription/DataRow in extended Execute
             let (cols, data) = if is_select_like {
                 match &val {
                     serde_json::Value::Array(arr) => to_table(arr.clone())?,
                     serde_json::Value::Object(_) => to_table(vec![val.clone()])?,
                     _ => to_table(vec![val.clone()])?,
                 }
-            } else {
-                (Vec::new(), Vec::new())
-            };
+            } else { (Vec::new(), Vec::new()) };
             if is_select_like && (!data.is_empty() || !cols.is_empty()) {
-                // Note: RowDescription was already sent during Describe phase; only send DataRow here
                 for row in data.iter() { send_data_row(socket, row).await?; }
             }
-            // Build a generic CommandComplete tag consistent with simple query
             let tag = if upper.starts_with("SELECT") { format!("SELECT {}", data.len()) }
                 else if upper.starts_with("CALCULATE") { let saved = match &val { serde_json::Value::Object(m) => m.get("saved").and_then(|v| v.as_u64()).unwrap_or(0), _ => 0 }; format!("CALCULATE {}", saved) }
                 else if upper.starts_with("DELETE") { "DELETE".to_string() }
@@ -1303,7 +1476,6 @@ async fn handle_execute(socket: &mut tokio::net::TcpStream, store: &SharedStore,
                 else if data.is_empty() { "OK".to_string() } else { format!("OK {}", data.len()) };
             debug!(target: "pgwire", "Execute CommandComplete tag='{}'", tag);
             send_command_complete(socket, &tag).await?;
-            // Proactively flush after Execute to ensure client receives frames before Sync
             if let Err(e) = socket.flush().await { error!(target: "pgwire", "flush after Execute failed: {}", e); }
         }
         Err(e) => { send_mapped_error(socket, &e).await?; state.in_error = true; }
