@@ -1,10 +1,12 @@
 use tokio::task::JoinHandle;
+use tokio::sync::watch;
 
 // Reuse the same pgwire helper used in other tests
 mod common {
     use std::net::TcpListener;
     use std::time::Duration;
     use tokio::task::JoinHandle;
+    use tokio::sync::watch;
     use tempfile::TempDir;
 
     pub async fn start_pgwire_ephemeral(tmp: &TempDir) -> (JoinHandle<()>, String, u16) {
@@ -14,8 +16,9 @@ mod common {
         drop(listener);
         std::env::set_var("CLARIUM_PGWIRE_TRUST", "1");
         let bind = format!("127.0.0.1:{}", port);
+        let (_tx, rx) = watch::channel(false);
         let handle = tokio::spawn(async move {
-            if let Err(e) = clarium::pgwire_server::start_pgwire(shared, &bind).await {
+            if let Err(e) = clarium::pgwire_server::start_pgwire(shared, &bind, rx).await {
                 eprintln!("pgwire server task error: {e:?}");
             }
         });

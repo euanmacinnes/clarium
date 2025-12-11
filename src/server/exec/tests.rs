@@ -109,6 +109,7 @@ mod graph_tvf_neighbors_tests;
 mod graph_tvf_paths_tests;
 mod graphstore_gc_tests;
 mod graphstore_neighbors_tests;
+mod select_projection_alias_tests;
 mod ident_qualification_tests;
 mod column_name_resolution_tests;
 mod exec_helpers_qualify_tests;

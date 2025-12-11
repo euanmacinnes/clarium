@@ -3,6 +3,7 @@ use std::time::Duration;
 
 use tempfile::TempDir;
 use tokio::task::JoinHandle;
+use tokio::sync::watch;
 
 use clarium::storage::{Store, SharedStore};
 
@@ -23,9 +24,12 @@ async fn start_pgwire_ephemeral(tmp: &TempDir) -> (JoinHandle<()>, String, u16) 
 
     let bind = format!("127.0.0.1:{}", port);
 
+    // Shutdown channel required by start_pgwire; we abort the task in tests, but provide a receiver
+    let (_tx, rx) = watch::channel(false);
+
     let handle = tokio::spawn(async move {
         // start_pgwire runs an accept loop forever; we abort the task on drop
-        if let Err(e) = clarium::pgwire_server::start_pgwire(shared, &bind).await {
+        if let Err(e) = clarium::pgwire_server::start_pgwire(shared, &bind, rx).await {
             eprintln!("pgwire server task error: {e:?}");
         }
     });

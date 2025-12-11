@@ -2,6 +2,7 @@ use std::io::{Read, Write, Cursor};
 use std::net::TcpListener;
 use std::time::Duration;
 use tokio::task::JoinHandle;
+use tokio::sync::watch;
 
 // Helpers (minimal manual pgwire client)
 fn write_u32(buf: &mut Vec<u8>, v: u32) { buf.extend_from_slice(&v.to_be_bytes()); }
@@ -32,8 +33,9 @@ async fn start_pgwire_ephemeral(tmp: &tempfile::TempDir) -> (JoinHandle<()>, Str
     drop(listener);
     std::env::set_var("CLARIUM_PGWIRE_TRUST", "1");
     let bind = format!("127.0.0.1:{}", port);
+    let (_tx, rx) = watch::channel(false);
     let handle = tokio::spawn(async move {
-        if let Err(e) = clarium::pgwire_server::start_pgwire(shared, &bind).await { eprintln!("pgwire server task error: {e:?}"); }
+        if let Err(e) = clarium::pgwire_server::start_pgwire(shared, &bind, rx).await { eprintln!("pgwire server task error: {e:?}"); }
     });
     (handle, "127.0.0.1".to_string(), port)
 }
