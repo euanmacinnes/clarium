@@ -63,7 +63,7 @@ fn map_cmd_to_resource(ctx: &RequestContext, cmd: &Command) -> sec::model::Resou
         // Accept forms: db/schema/table, schema.table, table; fall back to ctx defaults
         let def_db = ctx.database.as_deref().unwrap_or(crate::ident::DEFAULT_DB);
         let def_schema = crate::ident::DEFAULT_SCHEMA;
-        let p = path.replace('\', "/");
+        let p = path.replace('\\', "/");
         let parts: Vec<&str> = p.split('/').collect();
         match parts.len() {
             3 => (parts[0].to_string(), parts[1].to_string(), parts[2].to_string()),
@@ -76,7 +76,7 @@ fn map_cmd_to_resource(ctx: &RequestContext, cmd: &Command) -> sec::model::Resou
     fn split_db_schema(ctx: &RequestContext, path: &str) -> (String, String) {
         // Accept forms: db/schema or schema; default db from ctx
         let def_db = ctx.database.as_deref().unwrap_or(crate::ident::DEFAULT_DB);
-        let p = path.replace('\', "/");
+        let p = path.replace('\\', "/");
         let parts: Vec<&str> = p.split('/').collect();
         match parts.len() {
             2 => (parts[0].to_string(), parts[1].to_string()),
@@ -89,12 +89,8 @@ fn map_cmd_to_resource(ctx: &RequestContext, cmd: &Command) -> sec::model::Resou
     let db_default = ctx.database.as_deref().unwrap_or(crate::ident::DEFAULT_DB);
     match cmd {
         // Data access
-        Command::Select(q) => {
-            if let Some(tbl) = &q.base_table {
-                // TableRef is formatted as db/schema/table at parse time
-                let (db, schema, table) = split_db_schema_table(ctx, &tbl.to_string());
-                return R::res_table(&db, &schema, &table);
-            }
+        Command::Select(_q) => {
+            // For now, enforce at database scope to avoid parser-specific table refs here
             R::res_database(db_default)
         }
         Command::Update { table, .. }
@@ -145,17 +141,6 @@ fn map_cmd_to_resource(ctx: &RequestContext, cmd: &Command) -> sec::model::Resou
         | Command::Calculate { .. }
         | Command::SelectUnion { .. }
         | Command::Explain { .. }
-        | Command::CreateFilestore { .. }
-        | Command::DropFilestore { .. }
-        | Command::FilestoreIngestFromBytes { .. }
-        | Command::FilestoreGetFileBytes { .. }
-        | Command::FilestoreUpdateFromBytes { .. }
-        | Command::FilestoreRenameFile { .. }
-        | Command::FilestoreDeleteFile { .. }
-        | Command::FilestoreListFiles { .. }
-        | Command::FilestoreHeadFile { .. }
-        | Command::FilestoreShow { .. }
-        | Command::FilestoreGit { .. }
         | _ => R::res_database(db_default),
     }
 }
@@ -182,5 +167,8 @@ pub fn enforce_authorize_sql(ctx: &RequestContext, cmd: &Command) -> anyhow::Res
     let res = map_cmd_to_resource(ctx, cmd);
     let c = sec::model::Context { request_id: ctx.request_id.clone(), ..Default::default() };
     let dec = sec::authorize(&user, action, &res, &c);
+    // Emit post-auth hook for auditing
+    let ev = sec::hooks::HookEvent { user: user.clone(), action, resource: res.clone(), ctx: c.clone(), decision: Some(dec.clone()) };
+    sec::hooks::emit_post_auth(&ev);
     if dec.allow { Ok(()) } else { Err(anyhow!(format!("unauthorized: user={} action={:?} resource={} reason={}", user.id, action, res.0, dec.reason.unwrap_or_else(|| "deny".into())))) }
 }

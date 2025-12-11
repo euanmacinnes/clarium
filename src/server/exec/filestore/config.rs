@@ -3,12 +3,8 @@ use serde::{Deserialize, Serialize};
 /// Global FILESTORE settings applied to all filestores unless overridden.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct GlobalFilestoreConfig {
-    pub acl_url: Option<String>,
-    pub acl_auth_header: Option<String>,
-    pub acl_timeout_ms: u64,
     pub acl_cache_ttl_allow_ms: u64,
     pub acl_cache_ttl_deny_ms: u64,
-    pub acl_fail_open: bool,
 
     pub git_remote: Option<String>,
     pub git_branch: Option<String>,
@@ -31,12 +27,8 @@ pub struct GlobalFilestoreConfig {
 impl Default for GlobalFilestoreConfig {
     fn default() -> Self {
         Self {
-            acl_url: None,
-            acl_auth_header: None,
-            acl_timeout_ms: 1500,
             acl_cache_ttl_allow_ms: 60_000,
             acl_cache_ttl_deny_ms: 10_000,
-            acl_fail_open: false,
 
             git_remote: None,
             git_branch: Some("main".to_string()),
@@ -56,14 +48,9 @@ impl Default for GlobalFilestoreConfig {
 pub struct FilestoreConfig {
     /// Enable/disable calling external ACL service entirely (dev bypass)
     pub security_check_enabled: bool,
-
-    // ACL overrides
-    pub acl_url: Option<String>,
-    pub acl_auth_header: Option<String>,
-    pub acl_timeout_ms: Option<u64>,
+    // ACL cache ttl overrides (local evaluator cache)
     pub acl_cache_ttl_allow_ms: Option<u64>,
     pub acl_cache_ttl_deny_ms: Option<u64>,
-    pub acl_fail_open: Option<bool>,
 
     // Git defaults at filestore root
     pub git_remote: Option<String>,
@@ -81,12 +68,8 @@ impl Default for FilestoreConfig {
     fn default() -> Self {
         Self {
             security_check_enabled: true,
-            acl_url: None,
-            acl_auth_header: None,
-            acl_timeout_ms: None,
             acl_cache_ttl_allow_ms: None,
             acl_cache_ttl_deny_ms: None,
-            acl_fail_open: None,
             git_remote: None,
             git_branch: None,
             git_mode: None,
@@ -110,14 +93,9 @@ pub struct FolderGitOverride {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct EffectiveConfig {
     pub security_check_enabled: bool,
-
-    // ACL
-    pub acl_url: Option<String>,
-    pub acl_auth_header: Option<String>,
-    pub acl_timeout_ms: u64,
+    // ACL cache ttl (local evaluator cache)
     pub acl_cache_ttl_allow_ms: u64,
     pub acl_cache_ttl_deny_ms: u64,
-    pub acl_fail_open: bool,
 
     // Git (possibly overridden by folder)
     pub git_remote: Option<String>,
@@ -134,14 +112,9 @@ impl EffectiveConfig {
     /// Build an effective config from Global + Filestore + optional Folder override.
     pub fn from_layers(global: &GlobalFilestoreConfig, fs: &FilestoreConfig, folder: Option<&FolderGitOverride>) -> Self {
         let security_check_enabled = fs.security_check_enabled;
-
-        // ACL precedence: fs override if Some, else global
-        let acl_url = fs.acl_url.clone().or_else(|| global.acl_url.clone());
-        let acl_auth_header = fs.acl_auth_header.clone().or_else(|| global.acl_auth_header.clone());
-        let acl_timeout_ms = fs.acl_timeout_ms.unwrap_or(global.acl_timeout_ms);
+        // ACL cache precedence: fs override if Some, else global
         let acl_cache_ttl_allow_ms = fs.acl_cache_ttl_allow_ms.unwrap_or(global.acl_cache_ttl_allow_ms);
         let acl_cache_ttl_deny_ms = fs.acl_cache_ttl_deny_ms.unwrap_or(global.acl_cache_ttl_deny_ms);
-        let acl_fail_open = fs.acl_fail_open.unwrap_or(global.acl_fail_open);
 
         // Git precedence: start with global, overlay filestore, then folder
         let mut git_remote = fs.git_remote.clone().or_else(|| global.git_remote.clone());
@@ -162,12 +135,8 @@ impl EffectiveConfig {
 
         Self {
             security_check_enabled,
-            acl_url,
-            acl_auth_header,
-            acl_timeout_ms,
             acl_cache_ttl_allow_ms,
             acl_cache_ttl_deny_ms,
-            acl_fail_open,
             git_remote,
             git_branch,
             git_mode,

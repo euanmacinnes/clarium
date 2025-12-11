@@ -50,6 +50,9 @@ fn pgwire_trace_enabled() -> bool {
 
 pub async fn start_pgwire(store: SharedStore, bind: &str) -> Result<()> {
     let addr: SocketAddr = bind.parse()?;
+    // Ensure DDL installer runs and physical checks are performed once at startup
+    // Best-effort: continue serving even if installer reports errors; they are logged.
+    let _ = crate::tools::installer::ensure_installed(&store).await;
     let listener = tokio::net::TcpListener::bind(addr).await?;
     info!("pgwire listening on {}", addr);
     loop {

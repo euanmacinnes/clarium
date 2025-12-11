@@ -220,7 +220,17 @@ pub async fn check_acl(
         v2_dec.allow,
         corr
     );
-    let mut decision = if v2_dec.allow { AclDecision::allow(v2_dec.reason.unwrap_or_else(|| "allow".into())) } else { AclDecision::deny(v2_dec.reason.unwrap_or_else(|| "deny".into())) };
+    let mut decision = if v2_dec.allow { AclDecision::allow(v2_dec.reason.clone().unwrap_or_else(|| "allow".into())) } else { AclDecision::deny(v2_dec.reason.clone().unwrap_or_else(|| "deny".into())) };
+
+    // Emit post-auth hook event for auditing
+    let ev = sec::hooks::HookEvent {
+        user: v2_user.clone(),
+        action: v2_action,
+        resource: v2_res.clone(),
+        ctx: v2_ctx.clone(),
+        decision: Some(sec::api::Decision { allow: v2_dec.allow, reason: v2_dec.reason.clone() }),
+    };
+    sec::hooks::emit_post_auth(&ev);
 
     // No shadow evaluation needed; v2 is the source of truth now.
 

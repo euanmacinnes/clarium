@@ -35,8 +35,7 @@ pub fn show_filestores_df(store: &SharedStore, database: &str) -> Result<DataFra
     let mut git_branch: Vec<String> = Vec::with_capacity(n);
     let mut git_mode: Vec<String> = Vec::with_capacity(n);
     let mut git_push_backend: Vec<String> = Vec::with_capacity(n);
-    let mut acl_url: Vec<String> = Vec::with_capacity(n);
-    let mut acl_fail_open: Vec<bool> = Vec::with_capacity(n);
+    // remote ACL fields removed; only local evaluator cache remains
     let mut lfs_patterns: Vec<String> = Vec::with_capacity(n);
     let mut config_version: Vec<i64> = Vec::with_capacity(n);
     let mut created_at: Vec<i64> = Vec::with_capacity(n);
@@ -48,8 +47,6 @@ pub fn show_filestores_df(store: &SharedStore, database: &str) -> Result<DataFra
         git_branch.push(e.config.git_branch.clone().unwrap_or_default());
         git_mode.push(e.config.git_mode.clone().unwrap_or_else(|| "plumbing_only".to_string()));
         git_push_backend.push(e.config.git_push_backend.clone().unwrap_or_else(|| "auto".to_string()));
-        acl_url.push(e.config.acl_url.clone().unwrap_or_default());
-        acl_fail_open.push(e.config.acl_fail_open.unwrap_or(false));
         lfs_patterns.push(e.config.lfs_patterns.clone().unwrap_or_default());
         config_version.push(e.config_version as i64);
         created_at.push(e.created_at);
@@ -62,8 +59,6 @@ pub fn show_filestores_df(store: &SharedStore, database: &str) -> Result<DataFra
         Series::new("git_branch".into(), git_branch).into(),
         Series::new("git_mode".into(), git_mode).into(),
         Series::new("git_push_backend".into(), git_push_backend).into(),
-        Series::new("acl_url".into(), acl_url).into(),
-        Series::new("acl_fail_open".into(), acl_fail_open).into(),
         Series::new("lfs_patterns".into(), lfs_patterns).into(),
         Series::new("config_version".into(), config_version).into(),
         Series::new("created_at".into(), created_at).into(),
@@ -86,9 +81,7 @@ pub fn show_filestore_config_df(
 
     // Single row of strings/bools/ints summarizing key fields
     let cols = vec![
-        ("global_acl_url", global.acl_url.unwrap_or_default()),
         ("global_git_branch", global.git_branch.unwrap_or_else(|| "".to_string())),
-        ("fs_acl_url", fs_cfg.acl_url.clone().unwrap_or_default()),
         ("fs_git_remote", fs_cfg.git_remote.clone().unwrap_or_default()),
         ("effective_git_remote", eff.git_remote.clone().unwrap_or_default()),
         ("effective_git_branch", eff.git_branch.clone().unwrap_or_default()),
@@ -106,10 +99,7 @@ pub fn show_filestore_config_df(
     }
 
     // Additional scalar fields
-    let bools = vec![
-        ("effective_acl_fail_open", eff.acl_fail_open),
-        ("security_check_enabled", eff.security_check_enabled),
-    ];
+    let bools = vec![("security_check_enabled", eff.security_check_enabled)];
     let mut bool_names: Vec<String> = Vec::with_capacity(bools.len());
     let mut bool_vals: Vec<bool> = Vec::with_capacity(bools.len());
     for (k, v) in bools { bool_names.push(k.to_string()); bool_vals.push(v); }

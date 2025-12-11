@@ -32,12 +32,8 @@ impl FilestoreRegistryEntry {
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct FilestoreConfigUpdate {
     pub security_check_enabled: Option<bool>,
-    pub acl_url: Option<Option<String>>,
-    pub acl_auth_header: Option<Option<String>>,
-    pub acl_timeout_ms: Option<Option<u64>>,
     pub acl_cache_ttl_allow_ms: Option<Option<u64>>,
     pub acl_cache_ttl_deny_ms: Option<Option<u64>>,
-    pub acl_fail_open: Option<Option<bool>>,
     pub git_remote: Option<Option<String>>,
     pub git_branch: Option<Option<String>>,
     pub git_mode: Option<Option<String>>,
@@ -128,12 +124,8 @@ pub fn alter_filestore_entry(store: &SharedStore, database: &str, fs: &str, upda
     if let Some(mut ent) = load_filestore_entry(store, database, fs)? {
         // Apply updates field-by-field
         if let Some(v) = update.security_check_enabled { ent.config.security_check_enabled = v; }
-        if let Some(v) = update.acl_url { ent.config.acl_url = v; }
-        if let Some(v) = update.acl_auth_header { ent.config.acl_auth_header = v; }
-        if let Some(v) = update.acl_timeout_ms { ent.config.acl_timeout_ms = v; }
         if let Some(v) = update.acl_cache_ttl_allow_ms { ent.config.acl_cache_ttl_allow_ms = v; }
         if let Some(v) = update.acl_cache_ttl_deny_ms { ent.config.acl_cache_ttl_deny_ms = v; }
-        if let Some(v) = update.acl_fail_open { ent.config.acl_fail_open = v; }
         if let Some(v) = update.git_remote { ent.config.git_remote = v; }
         if let Some(v) = update.git_branch { ent.config.git_branch = v; }
         if let Some(v) = update.git_mode { ent.config.git_mode = v; }

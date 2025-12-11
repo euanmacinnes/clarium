@@ -49,6 +49,8 @@ pub use crate::server::exec::exec_helpers::{execute_select_df, dataframe_to_tabu
 pub use crate::server::exec::exec_create::do_create_table;
 use crate::identity::RequestContext;
 use once_cell::sync::OnceCell;
+use futures_util::FutureExt; // for catch_unwind on async blocks
+use std::panic::AssertUnwindSafe;
 
 use crate::server::query::*;
 use crate::server::exec::filestore as fs;
@@ -74,6 +76,8 @@ static SEC_STORE_INIT: OnceCell<bool> = OnceCell::new();
 fn ensure_sec_store(store: &SharedStore) {
     if SEC_STORE_INIT.get().is_none() {
         crate::server::exec::filestore::sec::evaluator::set_store(store);
+        // Register a default file logger for post-auth audit events
+        crate::server::exec::filestore::sec::hooks::register_file_logger("security_audit.log");
         let _ = SEC_STORE_INIT.set(true);
         tprintln!("[sec] evaluator store initialized");
     }
@@ -929,24 +933,16 @@ pub async fn execute_query_safe_with_ctx(
     ctx: &RequestContext,
 ) -> Result<serde_json::Value> {
     use tracing::debug;
-    let text_owned = text.to_string();
-    let store_cloned = store.clone();
-    let ctx_cloned = ctx.clone();
-    let handle = tokio::spawn(async move {
+    // Run inline and capture panics without requiring Send on captured references
+    let exec_fut = async {
         tprintln!("[exec] execute_query_safe_with_ctx execute_query_with_ctx");
-        execute_query_with_ctx(&store_cloned, &text_owned, &ctx_cloned).await
-    });
-    match handle.await {
+        execute_query_with_ctx(store, text, ctx).await
+    };
+    match AssertUnwindSafe(exec_fut).catch_unwind().await {
         Ok(res) => res,
-        Err(join_err) => {
-            if join_err.is_panic() {
-                debug!(target: "exec", "execute_query_safe_with_ctx captured panic inside query task");
-                Err(anyhow::anyhow!("query execution failed due to an internal panic"))
-            } else if join_err.is_cancelled() {
-                Err(anyhow::anyhow!("query execution was cancelled"))
-            } else {
-                Err(anyhow::anyhow!(format!("query execution task join error: {}", join_err)))
-            }
+        Err(_panic) => {
+            debug!(target: "exec", "execute_query_safe_with_ctx captured panic inside query future");
+            Err(anyhow::anyhow!("query execution failed due to an internal panic"))
         }
     }
 }
@@ -1032,25 +1028,16 @@ fn make_acl_ctx(store: &SharedStore, filestore: &str) -> AclContext {
 /// to the user gracefully.
 pub async fn execute_query_safe(store: &SharedStore, text: &str) -> Result<serde_json::Value> {
     use tracing::debug;
-    let text_owned = text.to_string();
-    let store_cloned = store.clone();
-    let handle = tokio::spawn(async move {
-        // Delegate to the regular executor; propagate its Result
+    // Run the execution future and convert panics into an error without requiring Send
+    let exec_fut = async {
         tprintln!("[exec] execute_query_safe execute_query");
-        execute_query(&store_cloned, &text_owned).await
-    });
-    match handle.await {
+        execute_query(store, text).await
+    };
+    match AssertUnwindSafe(exec_fut).catch_unwind().await {
         Ok(res) => res,
-        Err(join_err) => {
-            // Convert panic or cancellation into a user-visible error, without unwinding here
-            if join_err.is_panic() {
-                debug!(target: "exec", "execute_query_safe captured panic inside query task");
-                Err(anyhow::anyhow!("query execution failed due to an internal panic"))
-            } else if join_err.is_cancelled() {
-                Err(anyhow::anyhow!("query execution was cancelled"))
-            } else {
-                Err(anyhow::anyhow!(format!("query execution task join error: {}", join_err)))
-            }
+        Err(_panic) => {
+            debug!(target: "exec", "execute_query_safe captured panic inside query future");
+            Err(anyhow::anyhow!("query execution failed due to an internal panic"))
         }
     }
 }

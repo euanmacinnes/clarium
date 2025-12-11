@@ -130,7 +130,38 @@ pub fn set_store(store: &crate::storage::SharedStore) {
     *STORE.write() = Some(store.clone());
 }
 
+// ----- L1 per-thread decision cache (tiny) -----
+thread_local! {
+    static L1_CACHE: std::cell::RefCell<(u64, HashMap<String, Decision>)> = std::cell::RefCell::new((0, HashMap::new()));
+}
+
+#[inline]
+fn l1_key(user: &User, action: Action, res: &ResourceId) -> String {
+    format!("{}|{}|{}", user.id, action_str(action), res.0)
+}
+
+fn l1_get(epoch: u64, key: &str) -> Option<Decision> {
+    L1_CACHE.with(|cell| {
+        let (ep, map) = &*cell.borrow();
+        if *ep == epoch { map.get(key).cloned() } else { None }
+    })
+}
+
+fn l1_put(epoch: u64, key: String, value: Decision) {
+    L1_CACHE.with(|cell| {
+        let mut pair = cell.borrow_mut();
+        let (ref mut ep, ref mut map) = *pair;
+        if *ep != epoch { map.clear(); *ep = epoch; }
+        // Cap size to 512 to keep it tiny
+        if map.len() >= 512 { map.clear(); }
+        map.insert(key, value);
+    });
+}
+
 pub fn evaluate(user: &User, action: Action, res: &ResourceId, _ctx: &Context) -> Decision {
+    let epoch = crate::server::exec::filestore::sec::epochs::epoch_global();
+    let key = l1_key(user, action, res);
+    if let Some(hit) = l1_get(epoch, &key) { return hit; }
     // Admin fast-path
     if has_role(user, "admin") { return allow_all(); }
 
@@ -168,12 +199,14 @@ pub fn evaluate(user: &User, action: Action, res: &ResourceId, _ctx: &Context) -
     }
 
     // Fallback: minimal role-based gates to keep behavior sensible if no policies loaded
-    match action {
+    let out = match action {
         Action::Read | Action::List | Action::Pull | Action::Clone => {
             if has_role(user, "db_reader") || has_role(user, "fs_reader") { Decision { allow: true, reason: Some("role_reader".into()) } } else { deny("no_read_policy") }
         }
         _ => {
             if has_role(user, "db_writer") || has_role(user, "fs_writer") { Decision { allow: true, reason: Some("role_writer".into()) } } else { deny("no_write_policy") }
         }
-    }
+    };
+    l1_put(epoch, key, out.clone());
+    out
 }
