@@ -1,5 +1,4 @@
 use polars::prelude::*;
-// Needed for Expr::map closure signature and output typing
 use polars::prelude::Column;
 use regex::Regex;
 
@@ -264,7 +263,7 @@ pub fn build_arith_expr(a: &ArithExpr, ctx: &crate::server::data_context::DataCo
                     let e_in = inner.clone().alias("__in");
                     let as_struct = polars::lazy::dsl::as_struct(vec![e_in]);
                     let micros_expr = as_struct.map(
-                        move |col: polars::prelude::Column| {
+                        move |c: polars::prelude::Column| {
                             use polars::prelude::*;
                             // Parser: supports leading '-' sign, 'P{d}D' day part (optional),
                             // 'T{sec}[.frac]S' seconds part (optional). Ignores months/years.
@@ -308,8 +307,10 @@ pub fn build_arith_expr(a: &ArithExpr, ctx: &crate::server::data_context::DataCo
                                 let micros = (total * 1_000_000f64).round() as i64;
                                 Some(if neg { -micros } else { micros })
                             }
-                            let ca = col.struct_()?.field_by_name("__in")?;
-                            let len = ca.len();
+                            let s_mat = c.as_materialized_series();
+                            let sc = s_mat.struct_()?;
+                            let ca = sc.field_by_name("__in")?;
+                            let len = sc.len();
                             let mut out: Vec<Option<i64>> = Vec::with_capacity(len);
                             for i in 0..len {
                                 let av = ca.get(i).unwrap_or(AnyValue::Null);
@@ -325,10 +326,10 @@ pub fn build_arith_expr(a: &ArithExpr, ctx: &crate::server::data_context::DataCo
                                     out.push(parse_iso_micros(&st));
                                 } else { out.push(None); }
                             }
-                            let s = Series::new("__interval_micros", out);
-                            Ok(s)
+                            let s = Series::new("__interval_micros".into(), out);
+                            Ok(s.into_column())
                         },
-                        GetOutput::from_type(DataType::Int64),
+                        |_schema, _field| Ok(Field::new("__interval_micros".into(), DataType::Int64)),
                     );
                     micros_expr.cast(DataType::Duration(TimeUnit::Microseconds))
                 }
