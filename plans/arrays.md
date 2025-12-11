@@ -36,3 +36,8 @@
 8) Performance considerations
 - Use index-based `Series::get` and `AnyValue` conversions; avoid deprecated `utf8()?.iter()` patterns (Junie Polars guidelines). 
 - Keep array encode/decode helpers thin and isolated for maintainability.
+### Ongoing items (in progress)
+- Extend `unnest(expr_or_column)` to accept expressions/columns (not only literals) and behave like lateral expansion where appropriate. IN PROGRESS
+- Brace array literals in SQL expressions (outside pgwire), allowing `'{1,2,"a,b"}'` constants with optional casts. ✓
+- DDL/catalog support for `typename[]` columns and schema round‑trip. ✓
+- Comprehensive tests per the plan (parser, exec, TVF, pgwire, DDL) and comparison with VECTORS. IN PROGRESS

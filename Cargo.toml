@@ -21,6 +21,10 @@ regex = "1"
 chrono = { version = "=0.4.42", features = ["serde"] }
 parking_lot = { version = "0.12", features = ["deadlock_detection"] }
 
+# Filesystem walking for Criterion ingestion
+walkdir = "2"
+whoami = "1"
+
 futures-util = "0.3"
 
 # Optional Postgres wire protocol via pgwire
@@ -95,6 +99,52 @@ futures = "0.3.31"
 tempfile = "3"
 criterion = { version = "0.5", features = ["html_reports"] }
 rand = "0.8"
+
+# --- Developer build profile tuning for faster incremental compiles ---
+# These settings significantly speed up `cargo check/build` during inner-loop development
+# without affecting release builds. They also reduce the rebuild blast radius across deps.
+[profile.dev]
+opt-level = 0          # Do not optimize in dev; keeps compile fast
+debug = 1              # Sufficient for backtraces without heavy debug info
+lto = false            # Disable LTO in dev
+codegen-units = 256    # Maximize parallel codegen across crates
+incremental = true     # Enable incremental compilation
+
+# Ensure dependencies and build scripts are not built with higher opt levels in dev.
+[profile.dev.package."*"]
+opt-level = 0
+
+[profile.dev.build-override]
+opt-level = 0
+codegen-units = 64
+
+[profile.test]
+opt-level = 0
+debug = 1
+lto = false
+codegen-units = 256
+incremental = true
+
+[profile.test.package."*"]
+opt-level = 0
+
+[profile.test.build-override]
+opt-level = 0
+codegen-units = 64
+
+[profile.bench]
+opt-level = 0
+debug = 1
+lto = false
+codegen-units = 256
+incremental = true
+
+[profile.bench.package."*"]
+opt-level = 0
+
+[profile.bench.build-override]
+opt-level = 0
+codegen-units = 64
 
 [dependencies.hnsw_rs]
 version = "0.3"

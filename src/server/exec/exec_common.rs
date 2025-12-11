@@ -284,8 +284,8 @@ pub fn build_arith_expr(a: &ArithExpr, ctx: &crate::server::data_context::DataCo
                     inner.cast(DataType::Int32)
                 }
                 SqlType::Array(inner_ty) => {
-                    // Map inner SqlType to Polars DataType, then cast to List(inner)
-                    let inner_dt: DataType = match inner_ty.as_ref() {
+                    // Target inner dtype for the array elements
+                    let target_inner_dt: DataType = match inner_ty.as_ref() {
                         SqlType::Boolean => DataType::Boolean,
                         SqlType::SmallInt | SqlType::Integer | SqlType::BigInt => DataType::Int64,
                         SqlType::Real | SqlType::Double | SqlType::Numeric(_) => DataType::Float64,
@@ -293,10 +293,87 @@ pub fn build_arith_expr(a: &ArithExpr, ctx: &crate::server::data_context::DataCo
                         SqlType::Bytea => DataType::Binary,
                         SqlType::Time => DataType::Time,
                         SqlType::Date | SqlType::Timestamp | SqlType::TimestampTz => DataType::Datetime(TimeUnit::Milliseconds, None),
-                        // For registry pseudo-types and nested arrays, fall back to strings
                         _ => DataType::String,
                     };
-                    inner.cast(DataType::List(Box::new(inner_dt)))
+                    // If the input is already a List, stringify elements for safety, then cast to the desired List(inner) at the end.
+                    // If the input is a String (e.g., Postgres brace literal '{...}' or 'a,b'), parse into a list of strings row-wise.
+                    // Otherwise, fall back to simple cast to List(String) first, then to List(target_inner_dt).
+                    let in_e = inner.clone().alias("__in");
+                    let struct_expr = polars::lazy::dsl::as_struct(vec![in_e]);
+                    let list_strings = struct_expr.map(
+                        move |col: Column| {
+                            use polars::prelude::AnyValue;
+                            // Utility: parse a brace array literal into Vec<String>
+                            fn parse_brace_array_literal(txt: &str) -> Vec<String> {
+                                let s = txt.trim();
+                                if !(s.starts_with('{') && s.ends_with('}')) {
+                                    // simple CSV fallback
+                                    return if s.is_empty() { Vec::new() } else { s.split(',').map(|p| p.trim().to_string()).collect() };
+                                }
+                                let inner = &s[1..s.len()-1];
+                                let mut out: Vec<String> = Vec::new();
+                                let mut cur = String::new();
+                                let mut in_q = false; let mut esc = false;
+                                for ch in inner.chars() {
+                                    if in_q {
+                                        if esc { cur.push(ch); esc = false; continue; }
+                                        if ch == '\\' { esc = true; continue; }
+                                        if ch == '"' { in_q = false; continue; }
+                                        cur.push(ch);
+                                    } else {
+                                        match ch {
+                                            '"' => { in_q = true; }
+                                            ',' => { out.push(cur.trim().to_string()); cur.clear(); }
+                                            _ => cur.push(ch),
+                                        }
+                                    }
+                                }
+                                if !cur.is_empty() { out.push(cur.trim().to_string()); }
+                                // Convert bare NULL to empty string (represents NULL cell); keep others as-is (without quotes)
+                                out.into_iter().map(|t| if t.eq_ignore_ascii_case("NULL") { String::new() } else { t }).collect()
+                            }
+                            let s = col.as_materialized_series();
+                            let sc = s.struct_()?;
+                            let fields = sc.fields_as_series();
+                            let sin = &fields[0];
+                            let n = sin.len();
+                            let mut out_rows: Vec<Series> = Vec::with_capacity(n);
+                            for i in 0..n {
+                                let av = sin.get(i).unwrap_or(AnyValue::Null);
+                                match av {
+                                    AnyValue::List(inner) => {
+                                        // Stringify existing list elements
+                                        let mut vals: Vec<String> = Vec::with_capacity(inner.len());
+                                        for j in 0..inner.len() {
+                                            let v = inner.get(j).unwrap_or(AnyValue::Null);
+                                            match v { AnyValue::Null => vals.push(String::new()), _ => vals.push(v.to_string()) }
+                                        }
+                                        out_rows.push(Series::new("__e".into(), vals));
+                                    }
+                                    AnyValue::String(sv) => {
+                                        let parts = parse_brace_array_literal(sv);
+                                        out_rows.push(Series::new("__e".into(), parts));
+                                    }
+                                    AnyValue::StringOwned(ref sv) => {
+                                        let parts = parse_brace_array_literal(sv);
+                                        out_rows.push(Series::new("__e".into(), parts));
+                                    }
+                                    AnyValue::Null => {
+                                        out_rows.push(Series::new("__e".into(), Vec::<String>::new()));
+                                    }
+                                    _ => {
+                                        // Fallback: single scalar → one-element array of its string form
+                                        out_rows.push(Series::new("__e".into(), vec![av.to_string()]));
+                                    }
+                                }
+                            }
+                            Ok(Series::new("__arr".into(), out_rows).into_column())
+                        },
+                        move |_schema, _field| {
+                            Ok(Field::new("__arr".into(), DataType::List(Box::new(DataType::String))))
+                        }
+                    );
+                    list_strings.cast(DataType::List(Box::new(target_inner_dt)))
                 }
             }
         }

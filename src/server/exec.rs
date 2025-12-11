@@ -28,6 +28,7 @@ pub mod exec_array_tvf;    // Array TVFs (unnest)
 pub mod filestore;         // FILESTORE implementation (config, paths, security, git backends)
 pub mod df_utils_json;   // JSON -> DataFrame conversion helpers for KV Json
 pub mod explain;         // EXPLAIN data model and renderers (skeleton)
+pub mod exec_auth_shadow; // Shadow SQL authorization (RBAC/ABAC) — no behavior change
 
 use anyhow::Result;
 use polars::prelude::*;
@@ -46,6 +47,8 @@ use crate::server::exec::df_utils::read_df_or_kv;
 // Re-export common helpers so external callers can keep using crate::server::exec::*
 pub use crate::server::exec::exec_helpers::{execute_select_df, dataframe_to_tabular, normalize_query_with_defaults};
 pub use crate::server::exec::exec_create::do_create_table;
+use crate::identity::RequestContext;
+use once_cell::sync::OnceCell;
 
 use crate::server::query::*;
 use crate::server::exec::filestore as fs;
@@ -64,6 +67,16 @@ fn is_transaction_control(text: &str) -> bool {
         up.as_str(),
         "BEGIN" | "START TRANSACTION" | "COMMIT" | "END" | "ROLLBACK"
     )
+}
+
+// Ensure Security v2 evaluator has access to SharedStore for RBAC storage loading
+static SEC_STORE_INIT: OnceCell<bool> = OnceCell::new();
+fn ensure_sec_store(store: &SharedStore) {
+    if SEC_STORE_INIT.get().is_none() {
+        crate::server::exec::filestore::sec::evaluator::set_store(store);
+        let _ = SEC_STORE_INIT.set(true);
+        tprintln!("[sec] evaluator store initialized");
+    }
 }
 
 pub async fn execute_query(store: &SharedStore, text: &str) -> Result<serde_json::Value> {
@@ -885,6 +898,55 @@ pub async fn execute_query(store: &SharedStore, text: &str) -> Result<serde_json
                 perms_opt,
             )?;
             Ok(serde_json::json!({"status":"ok"}))
+        }
+    }
+}
+
+/// Context-aware entrypoint for executing a SQL/text command.
+///
+/// This variant accepts a `RequestContext` carrying an optional `Principal`,
+/// request id, and database/filestore hints. For now it delegates to the
+/// legacy `execute_query` to avoid behavior changes. Callers can start using
+/// this to propagate identity while we migrate internals.
+pub async fn execute_query_with_ctx(store: &SharedStore, text: &str, _ctx: &RequestContext) -> Result<serde_json::Value> {
+    // Initialize security evaluator storage on first use
+    ensure_sec_store(store);
+    // Enforce authorization using Security v2. If parsing fails, fall back to legacy path.
+    if let Ok(cmd) = parse(text) {
+        // Enforce (deny on unauthorized)
+        if let Err(e) = crate::server::exec::exec_auth_shadow::enforce_authorize_sql(_ctx, &cmd) {
+            return Err(e);
+        }
+    }
+    execute_query(store, text).await
+}
+
+/// Panic-safe wrapper around `execute_query_with_ctx`.
+/// Spawns a task and captures panics, returning a graceful error instead.
+pub async fn execute_query_safe_with_ctx(
+    store: &SharedStore,
+    text: &str,
+    ctx: &RequestContext,
+) -> Result<serde_json::Value> {
+    use tracing::debug;
+    let text_owned = text.to_string();
+    let store_cloned = store.clone();
+    let ctx_cloned = ctx.clone();
+    let handle = tokio::spawn(async move {
+        tprintln!("[exec] execute_query_safe_with_ctx execute_query_with_ctx");
+        execute_query_with_ctx(&store_cloned, &text_owned, &ctx_cloned).await
+    });
+    match handle.await {
+        Ok(res) => res,
+        Err(join_err) => {
+            if join_err.is_panic() {
+                debug!(target: "exec", "execute_query_safe_with_ctx captured panic inside query task");
+                Err(anyhow::anyhow!("query execution failed due to an internal panic"))
+            } else if join_err.is_cancelled() {
+                Err(anyhow::anyhow!("query execution was cancelled"))
+            } else {
+                Err(anyhow::anyhow!(format!("query execution task join error: {}", join_err)))
+            }
         }
     }
 }

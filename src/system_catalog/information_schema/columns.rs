@@ -162,9 +162,11 @@ fn map_dtype(dtype: &str) -> (&'static str, &'static str) {
         "int64" | "i64" => ("bigint", "int8"),
         "int32" | "i32" | "int" | "integer" => ("integer", "int4"),
         "float" | "float64" | "f64" | "double" => ("double precision", "float8"),
+        // Represent generic arrays (non-vector) as text[] for information_schema exposure
+        "list" | "array" => ("text[]", "_text"),
         // Represent vectors (List(Float64)/List(Int64) or logical 'vector')
         // Default: Postgres float8[]; When feature "pgvector_type" is enabled, map to "vector".
-        "list" | "vector" | "list<float64>" | "list<int64>" => {
+        "vector" | "list<float64>" | "list<int64>" => {
             if cfg!(feature = "pgvector_type") { ("vector", "vector") } else { ("double precision[]", "_float8") }
         }
         "bool" | "boolean" => ("boolean", "bool"),

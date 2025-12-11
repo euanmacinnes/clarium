@@ -4,6 +4,7 @@
 pub mod paths;
 pub mod config;
 pub mod security;
+pub mod sec; // New modular security (RBAC/ABAC, hooks, storage)
 pub mod kv;
 pub mod host_path;
 pub mod git;
@@ -19,6 +20,8 @@ pub mod gc;
 pub use config::{GlobalFilestoreConfig, FilestoreConfig, FolderGitOverride, EffectiveConfig};
 pub use paths::{normalize_nfc, validate_logical_path, split_normalized_segments};
 pub use security::{ACLAction, AclUser, AclContext, AclDecision, check_acl};
+// Expose new security API surface for incremental adoption
+pub use sec::{authorize as authorize_v2, explain as explain_v2};
 pub use host_path::{is_host_path_allowed, normalize_abs_path};
 pub use correlation::{CorrelationId, correlation_id_opt_str};
 pub use types::{FileMeta, Chunking, ChunkRef, Tree, Commit, CommitAuthor, RefInfo, Alias};

@@ -21,8 +21,8 @@ impl Store {
     pub fn filter_df(&self, table: &str, cols: &[String], t0: Option<i64>, t1: Option<i64>) -> Result<DataFrame> {
         let dir = self.db_dir(table);
         let mut wanted: Vec<String> = cols.iter().cloned().collect();
-        // Ensure _time present only for time-series tables (*.time)
-        let is_time_table = table.ends_with(".time");
+        // Ensure _time present only for time-series tables (metadata-first detection)
+        let is_time_table = self.is_time_table(table);
         if is_time_table && !wanted.iter().any(|c| c == "_time") { wanted.insert(0, "_time".into()); }
         let mut dfs: Vec<DataFrame> = Vec::new();
         if dir.exists() {
@@ -165,7 +165,7 @@ impl Store {
             // Return empty dataframe with schema from schema.json if present.
             // Only include `_time` automatically for time-series tables (*.time).
             let mut cols: Vec<Column> = Vec::new();
-            if table.ends_with(".time") {
+            if self.is_time_table(table) {
                 cols.push(Series::new("_time".into(), Vec::<i64>::new()).into());
             }
             let schema = self.load_schema(table).unwrap_or_default();
@@ -241,7 +241,7 @@ impl Store {
         super::schema::save_schema_with_locks(self, table, &schema, &locks)?;
         tprintln!("[STORAGE] rewrite_table_df: update schema took={:?}", __t_schema.elapsed());
         // For regular tables: if partitions are defined, write partitioned files.
-        if !table.ends_with(".time") {
+        if !self.is_time_table(table) {
             // Check for partitions in schema.json
             let sp = self.schema_path(table);
             let mut wrote_partitioned = false;
@@ -474,7 +474,7 @@ impl Store {
         }
 
         // Create series and assemble into DataFrame
-        let is_time_table = table.ends_with(".time");
+        let is_time_table = self.is_time_table(table);
         // Determine frame height for constructing null/list columns
         let height: usize = if is_time_table {
             times.len()

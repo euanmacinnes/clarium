@@ -695,6 +695,8 @@ dependencies = [
  "unicode-normalization",
  "urlencoding",
  "uuid",
+ "walkdir",
+ "whoami",
  "xxhash-rust",
 ]
 

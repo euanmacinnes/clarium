@@ -73,6 +73,40 @@ impl Store {
     /// Return the configured root folder for this Store.
     pub fn root_path(&self) -> &PathBuf { &self.root }
 
+    /// Determine if a logical table is a time-series table using metadata first,
+    /// and falling back to legacy name heuristics if metadata is absent.
+    pub fn is_time_table(&self, table: &str) -> bool {
+        let schema_path = self.schema_path(table);
+        if schema_path.exists() {
+            if let Ok(text) = std::fs::read_to_string(&schema_path) {
+                if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
+                    if let Some(tt) = v.get("tableType").and_then(|x| x.as_str()) {
+                        let is_time = tt.eq_ignore_ascii_case("time");
+                        crate::tprintln!(
+                            "[storage.is_time_table] table='{}' schema='{}' tableType='{}' -> {}",
+                            table,
+                            schema_path.display(),
+                            tt,
+                            is_time
+                        );
+                        return is_time;
+                    }
+                }
+            }
+        }
+        // Fallback to name-based heuristic
+        let name = table.replace('\\', "/");
+        let by_suffix = name.ends_with(".time");
+        let by_token = name.split('.').last().map(|t| t.eq_ignore_ascii_case("time")).unwrap_or(false);
+        let guess = by_suffix || by_token;
+        crate::tprintln!(
+            "[storage.is_time_table] table='{}' no/invalid schema.json -> heuristic {}",
+            table,
+            guess
+        );
+        guess
+    }
+
     /// Create an empty logical database (table directory) and initialize schema.json.
     ///
     /// The `table` parameter is a logical path like "clarium/public/mytable.time".

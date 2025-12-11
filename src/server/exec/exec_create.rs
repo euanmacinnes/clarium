@@ -172,7 +172,9 @@ pub fn do_create_table(store: &SharedStore, q: &str) -> Result<()> {
             continue; 
         }
         let t_up = ty.to_ascii_lowercase();
-        let key = if t_up.contains("char") || t_up.contains("text") || t_up.contains("json") || t_up.contains("bool") { "string".to_string() }
+        // Map SQL type string to schema key. Support arrays (typename[]) mapped to generic 'list'.
+        let key = if t_up.trim_end().ends_with("[]") { "list".to_string() }
+            else if t_up.contains("char") || t_up.contains("text") || t_up.contains("json") || t_up.contains("bool") { "string".to_string() }
             else if t_up.contains("int") { "int64".to_string() }
             else if t_up.contains("double") || t_up.contains("real") || t_up.contains("float") || t_up.contains("numeric") || t_up.contains("decimal") { "float64".to_string() }
             else if t_up.contains("time") || t_up.contains("date") { "int64".to_string() }

@@ -92,17 +92,56 @@ pub fn try_array_tvf(_store: &crate::storage::SharedStore, raw: &str) -> Result<
     let low = s.to_ascii_lowercase();
     if !low.starts_with("unnest(") { return Ok(None); }
     let (_fname, arg_text) = match parse_func_args(s) { Some(v) => v, None => return Ok(None) };
-    // Accept ARRAY[...] or brace literal {...}
+    // Accept:
+    //  - ARRAY[...]
+    //  - array(...) constructor (lower/upper case)
+    //  - brace literal {...}
+    //  - quoted string containing any of the above (e.g., '{1,2}', 'ARRAY[1,2]', 'array(1,2)')
     let arg_trim = arg_text.trim();
-    let elems: Vec<String> = if arg_trim.to_ascii_uppercase().starts_with("ARRAY[") && arg_trim.ends_with(']') {
-        let inside = &arg_trim[6..arg_trim.len()-1];
+    // If quoted, strip quotes first
+    let arg_core = if (arg_trim.starts_with('"') && arg_trim.ends_with('"')) || (arg_trim.starts_with('\'') && arg_trim.ends_with('\'')) {
+        if arg_trim.len() >= 2 { &arg_trim[1..arg_trim.len()-1] } else { arg_trim }
+    } else { arg_trim };
+    let elems: Vec<String> = if arg_core.to_ascii_uppercase().starts_with("ARRAY[") && arg_core.ends_with(']') {
+        let inside = &arg_core[6..arg_core.len()-1];
         let parts = split_array_inside(inside);
         parts.into_iter().map(|p| strip_quotes(&p)).collect()
-    } else if arg_trim.starts_with('{') && arg_trim.ends_with('}') {
-        parse_brace_array_literal(arg_trim)?
+    } else if {
+        // Support array(...) constructor emitted by the arithmetic parser for ARRAY literals
+        let up = arg_core.to_ascii_lowercase();
+        up.starts_with("array(") && arg_core.ends_with(')')
+    } {
+        let inside = &arg_core[6..arg_core.len()-1];
+        let parts = split_array_inside(inside);
+        parts.into_iter().map(|p| strip_quotes(&p)).collect()
+    } else if arg_core.starts_with('{') && arg_core.ends_with('}') {
+        parse_brace_array_literal(arg_core)?
+    } else if (arg_trim.starts_with('\'') && arg_trim.ends_with('\'')) || (arg_trim.starts_with('"') && arg_trim.ends_with('"')) {
+        // Fallback: a quoted, comma-separated list without braces
+        // Example: unnest('a,b,c') -> ["a","b","c"]
+        let inner = &arg_trim[1..arg_trim.len()-1];
+        let mut out: Vec<String> = Vec::new();
+        let mut cur = String::new();
+        let mut in_q = false; let mut qch = '"'; let mut esc = false;
+        for ch in inner.chars() {
+            if in_q {
+                if esc { cur.push(ch); esc = false; continue; }
+                if ch == '\\' { esc = true; continue; }
+                if ch == qch { in_q = false; continue; }
+                cur.push(ch);
+            } else {
+                match ch {
+                    '"' | '\'' => { in_q = true; qch = ch; }
+                    ',' => { out.push(strip_quotes(cur.trim())); cur.clear(); }
+                    _ => cur.push(ch),
+                }
+            }
+        }
+        if !cur.trim().is_empty() { out.push(strip_quotes(cur.trim())); }
+        out
     } else {
         // Not a supported literal form
-        return Err(anyhow!("unnest: only ARRAY[...] and brace '{{...}}' literals supported in TVF for now"));
+        return Err(anyhow!("unnest: only ARRAY[...] / array(...) and brace '{{...}}' literals (optionally quoted) are supported in TVF for now"));
     };
     tprintln!("[array.tvf] unnest: {} element(s)", elems.len());
     let df = DataFrame::new(vec![Series::new("unnest".into(), elems).into()])?;

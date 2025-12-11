@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use crate::identity::Principal;
 use pub_fields::pub_fields;
 
 #[derive(Clone)]
@@ -30,6 +31,10 @@ pub(crate) struct ConnState {
     in_error: bool,
     // inside explicit transaction block (BEGIN..)
     in_tx: bool,
+    // unified identity principal for this connection (if authenticated)
+    principal: Option<Principal>,
+    // opaque session token when using LocalAuthProvider (optional)
+    session_token: Option<String>,
 }
 
 #[derive(Debug, Clone)]

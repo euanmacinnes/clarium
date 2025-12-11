@@ -19,6 +19,70 @@ pub fn parse_arith_expr(tokens: &[String]) -> Result<ArithExpr> {
     // Turn whitespace-split tokens into a single string, then tokenize char-by-char to support parentheses
     let src = tokens.join(" ");
 
+    // Detect top-level PostgreSQL brace array literal: '{...}'
+    // Map to built-in call: array(elem1, elem2, ...), where each elem is parsed as a string or NULL term.
+    // This enables expressions like '{1,2,"a,b"}' and supports explicit casts, e.g., '{1,2}'::int8[]
+    {
+        let s = src.trim();
+        if s.starts_with('{') && s.ends_with('}') {
+            // Ensure braces are top-level and not inside quotes
+            let mut depth_br: i32 = 0;
+            let mut in_sq = false; let mut in_dq = false; let mut ok = true;
+            for ch in s.chars() {
+                if in_sq { if ch == '\'' { in_sq = false; } continue; }
+                if in_dq {
+                    if ch == '"' { in_dq = false; } else if ch == '\\' { /* next char escaped in literals, skip handling here */ }
+                    continue;
+                }
+                match ch {
+                    '\'' => in_sq = true,
+                    '"' => in_dq = true,
+                    '{' => depth_br += 1,
+                    '}' => depth_br -= 1,
+                    _ => {}
+                }
+                if depth_br < 0 { ok = false; break; }
+            }
+            if ok && depth_br == 0 {
+                // Split inner on commas respecting quotes
+                let inner = &s[1..s.len()-1];
+                let mut parts: Vec<String> = Vec::new();
+                let mut cur = String::new();
+                let mut in_q = false; let mut qch = '"'; let mut esc = false;
+                for ch in inner.chars() {
+                    if in_q {
+                        if esc { cur.push(ch); esc = false; continue; }
+                        if ch == '\\' { esc = true; continue; }
+                        if ch == qch { in_q = false; continue; }
+                        cur.push(ch); continue;
+                    } else {
+                        match ch {
+                            '"' => { in_q = true; qch = '"'; }
+                            ',' => { parts.push(cur.trim().to_string()); cur.clear(); }
+                            _ => cur.push(ch),
+                        }
+                    }
+                }
+                if !cur.is_empty() { parts.push(cur.trim().to_string()); }
+                // Build args as terms; treat bare NULL (any case) as Term::Null
+                let mut args: Vec<ArithExpr> = Vec::with_capacity(parts.len());
+                for p in parts.into_iter() {
+                    if p.eq_ignore_ascii_case("NULL") {
+                        args.push(ArithExpr::Term(ArithTerm::Null));
+                    } else {
+                        // Unquote if user put quotes; otherwise keep raw
+                        let v = p.trim();
+                        let val = if (v.starts_with('"') && v.ends_with('"')) || (v.starts_with('\'') && v.ends_with('\'')) {
+                            if v.len() >= 2 { v[1..v.len()-1].to_string() } else { String::new() }
+                        } else { v.to_string() };
+                        args.push(ArithExpr::Term(ArithTerm::Str(val)));
+                    }
+                }
+                return Ok(ArithExpr::Call { name: "array".to_string(), args });
+            }
+        }
+    }
+
     // Detect scalar subquery of the form: (SELECT ...)
     // This is commonly used as a scalar RHS for functions, e.g., cosine_sim(x,(SELECT v FROM q))
     // We only treat the whole expression as a scalar subquery when it is exactly wrapped once by parentheses

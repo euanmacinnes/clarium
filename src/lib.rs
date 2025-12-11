@@ -1,6 +1,7 @@
 pub mod server;
 pub mod storage;
 pub mod security;
+pub mod identity;
 pub mod scripts;
 pub mod system;
 pub mod system_catalog;

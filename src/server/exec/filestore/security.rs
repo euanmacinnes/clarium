@@ -6,6 +6,7 @@ use once_cell::sync::Lazy;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use super::config::EffectiveConfig;
+use super::sec;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
@@ -186,77 +187,42 @@ pub async fn check_acl(
         corr
     );
 
-    // No URL configured → deny unless fail-open
-    let Some(url) = eff.acl_url.as_deref() else {
-        if eff.acl_fail_open { return AclDecision::allow("acl_fail_open_no_url"); }
-        return AclDecision::deny("acl_url_not_configured");
+    // Evaluate authorization locally via Security v2 (RBAC/ABAC) — replaces remote HTTP path
+    let v2_user = sec::model::User { id: user.id.clone(), roles: user.roles.clone(), ip: user.ip.clone() };
+    let v2_action = match action {
+        ACLAction::Read => sec::model::Action::Read,
+        ACLAction::Write => sec::model::Action::Write,
+        ACLAction::Delete => sec::model::Action::Delete,
+        ACLAction::Move => sec::model::Action::Move,
+        ACLAction::Copy => sec::model::Action::Copy,
+        ACLAction::Rename => sec::model::Action::Rename,
+        ACLAction::List => sec::model::Action::List,
+        ACLAction::Commit => sec::model::Action::Commit,
+        ACLAction::Push => sec::model::Action::Push,
+        ACLAction::Pull => sec::model::Action::Pull,
+        ACLAction::Clone => sec::model::Action::Clone,
     };
-
-    // Prepare request
-    let req_body = AclRequest {
-        filestore: filestore_name,
-        user,
-        action: action.clone(),
-        paths: AclPaths { logical: logical_path, old: old_path },
-        context: ctx.clone(),
+    let v2_ctx = sec::model::Context {
+        filestore_config_version: ctx.filestore_config_version,
+        media_type: ctx.content_meta.as_ref().and_then(|m| m.media_type.clone()),
+        size_bytes: ctx.content_meta.as_ref().and_then(|m| m.size_bytes),
+        git_remote: ctx.git.as_ref().and_then(|g| g.remote.clone()),
+        git_branch: ctx.git.as_ref().and_then(|g| g.branch.clone()),
+        request_id: ctx.request_id.clone(),
     };
+    let v2_res = sec::resources::res_path("unknown_db", filestore_name, logical_path);
+    let v2_dec = sec::authorize(&v2_user, v2_action, &v2_res, &v2_ctx);
+    crate::tprintln!(
+        "ACL local eval: user={} action={:?} path={} allow={}{}",
+        user.id,
+        action,
+        logical_path,
+        v2_dec.allow,
+        corr
+    );
+    let mut decision = if v2_dec.allow { AclDecision::allow(v2_dec.reason.unwrap_or_else(|| "allow".into())) } else { AclDecision::deny(v2_dec.reason.unwrap_or_else(|| "deny".into())) };
 
-    // Execute HTTP POST
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_millis(eff.acl_timeout_ms))
-        .build();
-
-    let client = match client {
-        Ok(c) => c,
-        Err(e) => {
-            crate::tprintln!("ACL client build error: {}{}", e, corr);
-            return if eff.acl_fail_open { AclDecision::allow("acl_fail_open_client_build") } else { AclDecision::deny("acl_client_build_error") };
-        }
-    };
-
-    let mut req = client.post(url).json(&req_body);
-    if let Some(h) = eff.acl_auth_header.as_deref() {
-        // The configured string is the full header value, typically an Authorization header.
-        req = req.header("Authorization", h);
-    }
-
-    crate::tprintln!("ACL POST start: {} action={:?} path={}{}", url, action, logical_path, corr);
-    let resp = req.send().await;
-    let resp = match resp {
-        Ok(r) => r,
-        Err(e) => {
-            crate::tprintln!("ACL POST transport error: {}{}", e, corr);
-            return if eff.acl_fail_open { AclDecision::allow("acl_fail_open_transport") } else { AclDecision::deny("acl_transport_error") };
-        }
-    };
-
-    let status = resp.status();
-    let text = resp.text().await.unwrap_or_else(|_| "".into());
-    let parsed: Result<AclResponse, _> = serde_json::from_str(&text);
-    if !status.is_success() || parsed.is_err() {
-        crate::tprintln!("ACL POST bad status/body: status={} body={} parse_err={}{}", status, text, parsed.as_ref().err().map(|e| e.to_string()).unwrap_or_default(), corr);
-        return if eff.acl_fail_open { AclDecision::allow("acl_fail_open_bad_status") } else { AclDecision::deny("acl_bad_status_or_body") };
-    }
-    let resp = parsed.unwrap();
-    crate::tprintln!("ACL POST ok: data={}{}", resp.data, corr);
-
-    // Map response to a decision
-    let decision = if resp.data == "ok" {
-        // allow if any result allows
-        if resp.results.iter().any(|r| r.allow) {
-            let mut d = AclDecision::allow("acl_ok");
-            // Prefer the first allowing result's perms/ttl
-            if let Some(first) = resp.results.into_iter().find(|r| r.allow) {
-                d.effective_perms = first.effective_perms;
-                d.ttl_ms = first.ttl_ms;
-            }
-            d
-        } else {
-            AclDecision::deny("acl_denied")
-        }
-    } else {
-        AclDecision::deny("acl_error")
-    };
+    // No shadow evaluation needed; v2 is the source of truth now.
 
     // Determine TTL
     let ttl_ms = decision.ttl_ms.unwrap_or_else(|| if decision.allow { eff.acl_cache_ttl_allow_ms } else { eff.acl_cache_ttl_deny_ms });

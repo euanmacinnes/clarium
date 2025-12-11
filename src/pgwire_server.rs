@@ -21,6 +21,7 @@ use crate::pgwire_server::structs::*;
 use crate::tprintln;
 
 use crate::{storage::SharedStore, server::exec};
+use crate::identity::{AuthProvider, LocalAuthProvider, SessionManager, LoginRequest, RequestContext, Principal};
 use crate::server::query::{self, Command};
 use crate::server::exec::exec_select::handle_select;
 use polars::prelude::AnyValue;
@@ -111,25 +112,40 @@ async fn handle_conn(socket: &mut tokio::net::TcpStream, store: SharedStore, con
                 request_password(socket).await?;
                 let password = read_password_message(socket).await?;
                 debug!(target: "pgwire", "conn_id={} password received, authenticating user '{}'", conn_id, user);
-                let db_root = store.root_path();
-                let ok = crate::security::authenticate(db_root.to_string_lossy().as_ref(), &user, &password)?;
-                if !ok { 
-                    debug!(target: "pgwire", "conn_id={} authentication failed for user '{}'", conn_id, user);
-                    send_error(socket, "authentication failed").await?; 
-                    return Ok(()); 
+                let db_root = store.root_path().to_string_lossy().to_string();
+                let provider = LocalAuthProvider::new(db_root, SessionManager::default());
+                let lr = LoginRequest { username: user.clone(), password: password.clone(), db: None, ip: Some(peer.to_string()) };
+                match provider.login(&lr) {
+                    Ok(resp) => {
+                        debug!(target: "pgwire", "conn_id={} login successful for user '{}' (sid={})", conn_id, user, resp.session.session_id);
+                        // Initialize session state honoring dbname/database if provided
+                        let db = params.get("database").cloned()
+                            .or_else(|| params.get("dbname").cloned())
+                            .unwrap_or_else(|| env_default_db());
+                        let mut state = ConnState { current_database: db, current_schema: env_default_schema(), statements: HashMap::new(), portals: HashMap::new(), in_error: false, in_tx: false, principal: Some(resp.session.principal.clone()), session_token: Some(resp.session.token.clone()) };
+                        send_auth_ok_and_params(socket, &params).await?;
+                        run_query_loop(socket, &store, &user, &mut state, conn_id).await?;
+                        return Ok(());
+                    }
+                    Err(e) => {
+                        debug!(target: "pgwire", "conn_id={} authentication failed for user '{}' ({})", conn_id, user, e);
+                        send_error(socket, "authentication failed").await?; 
+                        return Ok(());
+                    }
                 }
-                debug!(target: "pgwire", "conn_id={} authentication successful for user '{}'", conn_id, user);
             } else {
                 debug!(target: "pgwire", "conn_id={} TRUST mode enabled via CLARIUM_PGWIRE_TRUST; skipping password auth for user '{}'", conn_id, user);
+                // Initialize state without a principal (trust mode)
+                send_auth_ok_and_params(socket, &params).await?;
+                let db = params.get("database").cloned()
+                    .or_else(|| params.get("dbname").cloned())
+                    .unwrap_or_else(|| env_default_db());
+                let mut state = ConnState { current_database: db, current_schema: env_default_schema(), statements: HashMap::new(), portals: HashMap::new(), in_error: false, in_tx: false, principal: None, session_token: None };
+                run_query_loop(socket, &store, &user, &mut state, conn_id).await?;
+                return Ok(());
             }
-            send_auth_ok_and_params(socket, &params).await?;
-            // Initialize session state honoring dbname/database if provided
-            let db = params.get("database").cloned()
-                .or_else(|| params.get("dbname").cloned())
-                .unwrap_or_else(|| env_default_db());
-            let mut state = ConnState { current_database: db, current_schema: env_default_schema(), statements: HashMap::new(), portals: HashMap::new(), in_error: false, in_tx: false };
-            run_query_loop(socket, &store, &user, &mut state, conn_id).await?;
-            Ok(())
+            // unreachable: handled above
+            
         } else {
             // Unknown 4-byte request; continue without auth (shouldn't happen)
             send_error(socket, "unsupported startup request").await?;
@@ -144,25 +160,36 @@ async fn handle_conn(socket: &mut tokio::net::TcpStream, store: SharedStore, con
             request_password(socket).await?;
             let password = read_password_message(socket).await?;
             debug!(target: "pgwire", "conn_id={} password received, authenticating user '{}'", conn_id, user);
-            let db_root = store.root_path();
-            let ok = crate::security::authenticate(db_root.to_string_lossy().as_ref(), &user, &password)?;
-            if !ok { 
-                debug!(target: "pgwire", "conn_id={} authentication failed for user '{}'", conn_id, user);
-                send_error(socket, "authentication failed").await?; 
-                return Ok(()); 
+            let db_root = store.root_path().to_string_lossy().to_string();
+            let provider = LocalAuthProvider::new(db_root, SessionManager::default());
+            let lr = LoginRequest { username: user.clone(), password: password.clone(), db: None, ip: Some(peer.to_string()) };
+            match provider.login(&lr) {
+                Ok(resp) => {
+                    debug!(target: "pgwire", "conn_id={} login successful for user '{}' (sid={})", conn_id, user, resp.session.session_id);
+                    send_auth_ok_and_params(socket, &params).await?;
+                    let db = params.get("database").cloned()
+                        .or_else(|| params.get("dbname").cloned())
+                        .unwrap_or_else(|| env_default_db());
+                    let mut state = ConnState { current_database: db, current_schema: env_default_schema(), statements: HashMap::new(), portals: HashMap::new(), in_error: false, in_tx: false, principal: Some(resp.session.principal.clone()), session_token: Some(resp.session.token.clone()) };
+                    run_query_loop(socket, &store, &user, &mut state, conn_id).await?;
+                    return Ok(());
+                }
+                Err(e) => {
+                    debug!(target: "pgwire", "conn_id={} authentication failed for user '{}' ({})", conn_id, user, e);
+                    send_error(socket, "authentication failed").await?; 
+                    return Ok(());
+                }
             }
-            debug!(target: "pgwire", "conn_id={} authentication successful for user '{}'", conn_id, user);
         } else {
             debug!(target: "pgwire", "conn_id={} TRUST mode enabled via CLARIUM_PGWIRE_TRUST; skipping password auth for user '{}'", conn_id, user);
+            send_auth_ok_and_params(socket, &params).await?;
+            let db = params.get("database").cloned()
+                .or_else(|| params.get("dbname").cloned())
+                .unwrap_or_else(|| env_default_db());
+            let mut state = ConnState { current_database: db, current_schema: env_default_schema(), statements: HashMap::new(), portals: HashMap::new(), in_error: false, in_tx: false, principal: None, session_token: None };
+            run_query_loop(socket, &store, &user, &mut state, conn_id).await?;
+            return Ok(());
         }
-        send_auth_ok_and_params(socket, &params).await?;
-        // Initialize session state honoring dbname/database if provided
-        let db = params.get("database").cloned()
-            .or_else(|| params.get("dbname").cloned())
-            .unwrap_or_else(|| env_default_db());
-        let mut state = ConnState { current_database: db, current_schema: env_default_schema(), statements: HashMap::new(), portals: HashMap::new(), in_error: false, in_tx: false };
-        run_query_loop(socket, &store, &user, &mut state, conn_id).await?;
-        Ok(())
     }
 }
 
@@ -391,6 +418,16 @@ async fn handle_query(socket: &mut tokio::net::TcpStream, store: &SharedStore, _
         let upper = q_trim.chars().take(32).collect::<String>().to_uppercase();
         // Treat SHOW as a row-returning command similar to SELECT for client compatibility
         let is_select_like = upper.starts_with("SELECT") || upper.starts_with("WITH ") || upper.starts_with("SHOW ");
+        // Special-case SHOW CURRENT_USER for convenience
+        if upper == "SHOW CURRENT_USER" || upper == "SELECT CURRENT_USER" {
+            let cols = vec!["current_user".to_string()];
+            let oids = vec![PG_TYPE_TEXT];
+            send_row_description(socket, &cols, &oids).await?;
+            let who = state.principal.as_ref().map(|p| p.user_id.clone()).unwrap_or_else(|| _username.to_string());
+            send_data_row(socket, &vec![Some(who)]).await?;
+            send_command_complete(socket, "SELECT 1").await?;
+            continue;
+        }
         if is_select_like {
             // Use the query engine directly to preserve schema even for empty results
             match query::parse(&q_effective) {
@@ -422,7 +459,8 @@ async fn handle_query(socket: &mut tokio::net::TcpStream, store: &SharedStore, _
                 }
                 Ok(_) | Err(_) => {
                     // Fallback to legacy path
-                    match exec::execute_query_safe(store, &q_effective).await {
+                    let ctx = RequestContext { principal: state.principal.clone(), request_id: None, database: Some(state.current_database.clone()), filestore: None };
+                    match exec::execute_query_safe_with_ctx(store, &q_effective, &ctx).await {
                         Ok(val) => {
                             let (cols, data) = match &val {
                                 serde_json::Value::Array(arr) => to_table(arr.clone())?,
@@ -441,7 +479,8 @@ async fn handle_query(socket: &mut tokio::net::TcpStream, store: &SharedStore, _
                 }
             }
         } else {
-            match exec::execute_query_safe(store, &q_effective).await {
+            let ctx = RequestContext { principal: state.principal.clone(), request_id: None, database: Some(state.current_database.clone()), filestore: None };
+            match exec::execute_query_safe_with_ctx(store, &q_effective, &ctx).await {
                 Ok(val) => {
                     let (cols, data): (Vec<String>, Vec<Vec<Option<String>>>) = (Vec::new(), Vec::new());
                     let tag = if upper.starts_with("SELECT") { format!("SELECT {}", data.len()) }
@@ -608,20 +647,111 @@ async fn handle_bind(socket: &mut tokio::net::TcpStream, state: &mut ConnState) 
         }
     }
 
-    // Helper: canonicalize array text parameters to Postgres brace form {..}
-    fn canonicalize_array_text_param(s: &str) -> Option<String> {
-        let t = s.trim();
-        if t.is_empty() { return Some("{}".to_string()); }
-        // Already brace literal
-        if t.starts_with('{') && t.ends_with('}') { return Some(t.to_string()); }
-        // ARRAY[...] constructor
-        let up = t.to_ascii_uppercase();
-        if up.starts_with("ARRAY[") && t.ends_with(']') {
-            let inside = &t[6..t.len()-1];
-            // naive pass-through; server side will parse robustly where needed
-            return Some(format!("{{{}}}", inside));
+    // Helper: parse a Postgres brace array text into vector of optional element strings (unescaped, without surrounding quotes).
+    fn parse_brace_array_elements(txt: &str) -> Option<Vec<Option<String>>> {
+        let s = txt.trim();
+        if !s.starts_with('{') || !s.ends_with('}') { return None; }
+        let inner = &s[1..s.len()-1];
+        let mut out: Vec<Option<String>> = Vec::new();
+        let mut cur = String::new();
+        let mut in_q = false; let mut esc = false;
+        for ch in inner.chars() {
+            if in_q {
+                if esc { cur.push(ch); esc = false; continue; }
+                if ch == '\\' { esc = true; continue; }
+                if ch == '"' { in_q = false; continue; }
+                cur.push(ch);
+            } else {
+                match ch {
+                    '"' => { in_q = true; }
+                    ',' => {
+                        let t = cur.trim();
+                        if t.eq_ignore_ascii_case("NULL") { out.push(None); }
+                        else if t.is_empty() { out.push(Some(String::new())); }
+                        else { out.push(Some(t.to_string())); }
+                        cur.clear();
+                    }
+                    _ => cur.push(ch),
+                }
+            }
         }
-        None
+        let t = cur.trim();
+        if t.eq_ignore_ascii_case("NULL") { out.push(None); }
+        else if !t.is_empty() { out.push(Some(t.to_string())); }
+        else if !inner.is_empty() { out.push(Some(String::new())); }
+        Some(out)
+    }
+
+    // Helper: format an element (unescaped text value) for an element type OID into canonical array literal cell.
+    // For text-like, quote and escape; for numeric/bool, validate and return bare; for NULL use bare NULL when input is None.
+    fn format_array_element_for_oid(elem_oid: i32, val_opt: &Option<String>) -> Option<String> {
+        use crate::pgwire_server::inline::anyvalue_to_opt_string; // not used directly but keep import style consistent
+        match val_opt {
+            None => Some("NULL".to_string()),
+            Some(v) => {
+                let t = v.trim();
+                match elem_oid {
+                    16 => { // bool
+                        let low = t.to_ascii_lowercase();
+                        if low == "t" || low == "true" { Some("true".to_string()) }
+                        else if low == "f" || low == "false" { Some("false".to_string()) }
+                        else { None }
+                    }
+                    21 | 23 | 20 => { // int2/int4/int8
+                        if t.parse::<i64>().is_ok() { Some(t.to_string()) } else { None }
+                    }
+                    700 => { // float4
+                        if t.parse::<f32>().is_ok() { Some(t.to_string()) } else { None }
+                    }
+                    701 | 1700 => { // float8 / numeric
+                        if t.parse::<f64>().is_ok() { Some(t.to_string()) } else { None }
+                    }
+                    1082 | 1083 | 1114 | 1184 => {
+                        // Temporal types: keep as quoted text; server side handles casts
+                        let mut s = String::new(); s.push('"');
+                        for ch in t.chars() { match ch { '"' => s.push_str("\\\""), '\\' => s.push_str("\\\\"), _ => s.push(ch) } }
+                        s.push('"'); Some(s)
+                    }
+                    17 => { // bytea: expect either already in \x.. or plain; quote and preserve
+                        let mut s = String::new(); s.push('"');
+                        for ch in t.chars() { match ch { '"' => s.push_str("\\\""), '\\' => s.push_str("\\\\"), _ => s.push(ch) } }
+                        s.push('"'); Some(s)
+                    }
+                    _ => { // text and others: quoted with escapes
+                        let mut s = String::new(); s.push('"');
+                        for ch in t.chars() { match ch { '"' => s.push_str("\\\""), '\\' => s.push_str("\\\\"), _ => s.push(ch) } }
+                        s.push('"'); Some(s)
+                    }
+                }
+            }
+        }
+    }
+
+    // Helper: canonicalize array text parameters to Postgres brace form {..}; also normalize per element OID.
+    fn canonicalize_array_text_param_with_oid(array_oid: i32, s: &str) -> Option<String> {
+        // Convert ARRAY[...] to {..}
+        let trimmed = s.trim();
+        let base = if trimmed.is_empty() {
+            "{}".to_string()
+        } else if trimmed.starts_with('{') && trimmed.ends_with('}') {
+            trimmed.to_string()
+        } else {
+            let up = trimmed.to_ascii_uppercase();
+            if up.starts_with("ARRAY[") && trimmed.ends_with(']') {
+                format!("{{{}}}", &trimmed[6..trimmed.len()-1])
+            } else {
+                // Not an array text
+                return None;
+            }
+        };
+        // Parse cells
+        let elems = parse_brace_array_elements(&base)?;
+        let elem_oid = crate::pgwire_server::inline::array_elem_oid(array_oid);
+        let mut out_cells: Vec<String> = Vec::with_capacity(elems.len());
+        for e in elems.iter() {
+            if let Some(cell) = format_array_element_for_oid(elem_oid, e) { out_cells.push(cell); } else { return None; }
+        }
+        Some(format!("{{{}}}", out_cells.join(",")))
     }
 
     for pidx in 0..n_params {
@@ -638,9 +768,17 @@ async fn handle_bind(socket: &mut tokio::net::TcpStream, state: &mut ConnState) 
             // If this parameter has an array OID, try to canonicalize to brace notation
             if let Some(oid) = stmt_param_types.get(pidx) {
                 if crate::pgwire_server::inline::is_array_oid(*oid) {
-                    if let Some(canon) = canonicalize_array_text_param(&val) {
-                        val = canon;
-                    }
+                    // Try robust canonicalization and normalization per element OID first
+                    if let Some(canon) = canonicalize_array_text_param_with_oid(*oid, &val) { val = canon; }
+                    else if let Some(canon) = {
+                        // Fallback to simpler canonicalization (ARRAY[...] -> {...})
+                        let t = val.trim();
+                        if t.starts_with('{') && t.ends_with('}') { Some(t.to_string()) }
+                        else {
+                            let up = t.to_ascii_uppercase();
+                            if up.starts_with("ARRAY[") && t.ends_with(']') { Some(format!("{{{}}}", &t[6..t.len()-1])) } else { None }
+                        }
+                    } { val = canon; }
                 }
             }
             params.push(Some(val));

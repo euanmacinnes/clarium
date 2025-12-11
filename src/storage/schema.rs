@@ -115,6 +115,9 @@ pub(crate) fn str_to_dtype(s: &str) -> DataType {
         "int64" => DataType::Int64,
         // Map logical 'vector' to List(Float64)
         "vector" => DataType::List(Box::new(DataType::Float64)),
+        // Generic list (array) type used for non-vector arrays in schemas
+        // Default inner type to String for resilience; execution paths can cast as needed.
+        "list" | "array" => DataType::List(Box::new(DataType::String)),
         _ => DataType::Float64,
     }
 }
