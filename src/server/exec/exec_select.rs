@@ -72,14 +72,20 @@ pub(crate) fn run_select_with_context(store: &SharedStore, q: &Query, parent_ctx
     if q.base_table.is_none() {
         // Skip BY/GROUP BY, ROLLING, ORDER BY/LIMIT, HAVING
         let df_proj = stage_project_select(df_from, q, &mut ctx)?;
-        return Ok(df_proj);
+        // Apply late naming policy: switch to id mode then finalize names
+        let df_ids = ctx.enter_output_id_mode(df_proj)?;
+        let df_final = ctx.finalize_output_names(df_ids)?;
+        return Ok(df_final);
     }
 
     let df_by = stage_by_or_groupby(store, df_from, q, &mut ctx)?;
     let df_roll = if q.rolling_window_ms.is_some() { stage_rolling(df_by, q, &mut ctx)? } else { df_by };
     let df_proj = stage_project_select(df_roll, q, &mut ctx)?;
     let df_order = stage_order_limit(df_proj, q, &mut ctx)?;
-    let df_final = if let Some(h) = &q.having_clause { apply_having_with_validation(df_order, h, &ctx)? } else { df_order };
+    let df_having = if let Some(h) = &q.having_clause { apply_having_with_validation(df_order, h, &ctx)? } else { df_order };
+    // Late naming: enter id mode and finalize just before returning
+    let df_ids = ctx.enter_output_id_mode(df_having)?;
+    let df_final = ctx.finalize_output_names(df_ids)?;
     Ok(df_final)
 }
 

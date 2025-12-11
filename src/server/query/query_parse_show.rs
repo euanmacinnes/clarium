@@ -30,10 +30,39 @@ pub fn parse_show(s: &str) -> Result<Command> {
     if up == "SHOW APPLICATION_NAME" { return Ok(Command::ShowApplicationName); }
     if up == "SHOW EXTRA_FLOAT_DIGITS" { return Ok(Command::ShowExtraFloatDigits); }
     if up == "SHOW ALL" { return Ok(Command::ShowAll); }
-    if up.starts_with("SHOW SCHEMAS") || up.starts_with("SHOW SCHEMA") { return Ok(Command::ShowSchemas); }
-    if up == "SHOW TABLES" { return Ok(Command::ShowTables); }
-    if up == "SHOW OBJECTS" { return Ok(Command::ShowObjects); }
-    if up == "SHOW SCRIPTS" { return Ok(Command::ShowScripts); }
+    // SHOW SCHEMAS / SCHEMA [WHERE ...] [ORDER BY ...]
+    if up.starts_with("SHOW SCHEMAS") || up.starts_with("SHOW SCHEMA") {
+        let tail = s.trim()["SHOW SCHEMAS".len().min(s.len())..].trim();
+        if tail.is_empty() || tail == ";" { return Ok(Command::ShowSchemas); }
+        // Route to SELECT * FROM show_schemas() ...
+        let mut sql = String::from("SELECT * FROM show_schemas() ");
+        sql.push_str(tail);
+        return Ok(Command::Select(parse_select(&sql)?));
+    }
+    // SHOW TABLES [WHERE ...] [ORDER BY ...]
+    if up.starts_with("SHOW TABLES") {
+        let tail = s.trim()["SHOW TABLES".len()..].trim();
+        if tail.is_empty() || tail == ";" { return Ok(Command::ShowTables); }
+        let mut sql = String::from("SELECT * FROM show_tables() ");
+        sql.push_str(tail);
+        return Ok(Command::Select(parse_select(&sql)?));
+    }
+    // SHOW OBJECTS [WHERE ...] [ORDER BY ...]
+    if up.starts_with("SHOW OBJECTS") {
+        let tail = s.trim()["SHOW OBJECTS".len()..].trim();
+        if tail.is_empty() || tail == ";" { return Ok(Command::ShowObjects); }
+        let mut sql = String::from("SELECT * FROM show_objects() ");
+        sql.push_str(tail);
+        return Ok(Command::Select(parse_select(&sql)?));
+    }
+    // SHOW SCRIPTS [WHERE ...] [ORDER BY ...]
+    if up.starts_with("SHOW SCRIPTS") {
+        let tail = s.trim()["SHOW SCRIPTS".len()..].trim();
+        if tail.is_empty() || tail == ";" { return Ok(Command::ShowScripts); }
+        let mut sql = String::from("SELECT * FROM show_scripts() ");
+        sql.push_str(tail);
+        return Ok(Command::Select(parse_select(&sql)?));
+    }
 
     // ------------------------
     // FILESTORE SHOW commands

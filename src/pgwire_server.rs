@@ -8,6 +8,7 @@ use anyhow::{anyhow, Result};
 use std::net::SocketAddr;
 use std::sync::atomic::Ordering;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::sync::watch;
 use tracing::{error, info, debug, warn};
 use crate::pgwire_server::encodedecode::*;
 use crate::pgwire_server::inline::*;
@@ -48,7 +49,7 @@ fn pgwire_trace_enabled() -> bool {
 
 
 
-pub async fn start_pgwire(store: SharedStore, bind: &str) -> Result<()> {
+pub async fn start_pgwire(store: SharedStore, bind: &str, mut shutdown: watch::Receiver<bool>) -> Result<()> {
     let addr: SocketAddr = bind.parse()?;
     // Ensure DDL installer runs and physical checks are performed once at startup
     // Best-effort: continue serving even if installer reports errors; they are logged.
@@ -56,16 +57,29 @@ pub async fn start_pgwire(store: SharedStore, bind: &str) -> Result<()> {
     let listener = tokio::net::TcpListener::bind(addr).await?;
     info!("pgwire listening on {}", addr);
     loop {
-        let (mut socket, peer) = listener.accept().await?;
-        let store = store.clone();
-        let conn_id = CONN_ID_COUNTER.fetch_add(1, Ordering::Relaxed);
-        tokio::spawn(async move {
-            if let Err(e) = handle_conn(&mut socket, store, conn_id, &peer.to_string()).await {
-                error!(target: "pgwire", "conn_id={} peer={} error: {}", conn_id, peer, e);
-                let _ = socket.shutdown();
+        tokio::select! {
+            biased;
+            _ = shutdown.changed() => {
+                if *shutdown.borrow() {
+                    crate::tprintln!("[shutdown] pgwire accept loop exiting on shutdown signal");
+                    break;
+                }
             }
-        });
+            accept_res = listener.accept() => {
+                let (mut socket, peer) = match accept_res { Ok(v) => v, Err(e) => { error!(target: "pgwire", "accept error: {}", e); continue; } };
+                let store = store.clone();
+                let conn_id = CONN_ID_COUNTER.fetch_add(1, Ordering::Relaxed);
+                tokio::spawn(async move {
+                    if let Err(e) = handle_conn(&mut socket, store, conn_id, &peer.to_string()).await {
+                        error!(target: "pgwire", "conn_id={} peer={} error: {}", conn_id, peer, e);
+                        let _ = socket.shutdown();
+                    }
+                });
+            }
+        }
     }
+    info!(target="pgwire", "pgwire listener on {} stopped", addr);
+    Ok(())
 }
 
 

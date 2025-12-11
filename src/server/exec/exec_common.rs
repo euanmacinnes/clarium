@@ -244,7 +244,7 @@ pub fn build_arith_expr(a: &ArithExpr, ctx: &crate::server::data_context::DataCo
                 SqlType::Boolean => inner.cast(DataType::Boolean),
                 SqlType::SmallInt | SqlType::Integer | SqlType::BigInt => inner.cast(DataType::Int64),
                 SqlType::Real | SqlType::Double | SqlType::Numeric(_) => inner.cast(DataType::Float64),
-                SqlType::Text | SqlType::Varchar(_) | SqlType::Char(_) | SqlType::Uuid | SqlType::Json | SqlType::Jsonb | SqlType::Interval | SqlType::TimeTz => {
+                SqlType::Text | SqlType::Varchar(_) | SqlType::Char(_) | SqlType::Uuid | SqlType::Json | SqlType::Jsonb | SqlType::TimeTz => {
                     // Cast-to-text semantics: format numbers without trailing .0 when integral,
                     // otherwise preserve normal stringification. This mirrors CONCAT formatting.
                     let ef = inner.clone().cast(DataType::Float64);
@@ -257,6 +257,81 @@ pub fn build_arith_expr(a: &ArithExpr, ctx: &crate::server::data_context::DataCo
                         .otherwise(ef.cast(DataType::String));
                     when(is_num).then(num_str).otherwise(inner.cast(DataType::String))
                 },
+                SqlType::Interval => {
+                    // Convert to Duration (microseconds). Accept ISO8601-like strings such as
+                    // "P1DT2.000000S" and simple numeric seconds.
+                    // Strategy: map input to i64 micros per row, then cast to Duration(us).
+                    let e_in = inner.clone().alias("__in");
+                    let as_struct = polars::lazy::dsl::as_struct(vec![e_in]);
+                    let micros_expr = as_struct.map(
+                        move |col: polars::prelude::Column| {
+                            use polars::prelude::*;
+                            // Parser: supports leading '-' sign, 'P{d}D' day part (optional),
+                            // 'T{sec}[.frac]S' seconds part (optional). Ignores months/years.
+                            fn parse_iso_micros(txt: &str) -> Option<i64> {
+                                let s = txt.trim();
+                                if s.is_empty() { return None; }
+                                let mut neg = false;
+                                let mut p = s;
+                                if let Some(rest) = p.strip_prefix('-') { neg = true; p = rest; }
+                                if !p.starts_with('P') { // try plain seconds
+                                    if let Ok(sec) = p.parse::<f64>() { return Some(((if neg { -sec } else { sec }) * 1_000_000f64).round() as i64); }
+                                    return None;
+                                }
+                                p = &p[1..]; // skip 'P'
+                                let mut days: i64 = 0;
+                                let mut secs: f64 = 0.0;
+                                // parse up to 'T'
+                                let mut before_t = p;
+                                let mut after_t = "";
+                                if let Some(tpos) = p.find('T') {
+                                    before_t = &p[..tpos];
+                                    after_t = &p[tpos+1..];
+                                }
+                                // days: number before 'D'
+                                if let Some(dpos) = before_t.find('D') {
+                                    let dnum = &before_t[..dpos];
+                                    if !dnum.is_empty() {
+                                        days = dnum.parse::<i64>().ok()?;
+                                    }
+                                }
+                                // seconds: number before 'S' in after_t
+                                if !after_t.is_empty() {
+                                    if let Some(spos) = after_t.find('S') {
+                                        let snum = &after_t[..spos];
+                                        if !snum.is_empty() {
+                                            secs = snum.parse::<f64>().ok()?;
+                                        }
+                                    }
+                                }
+                                let total = (days as f64) * 86_400f64 + secs;
+                                let micros = (total * 1_000_000f64).round() as i64;
+                                Some(if neg { -micros } else { micros })
+                            }
+                            let ca = col.struct_()?.field_by_name("__in")?;
+                            let len = ca.len();
+                            let mut out: Vec<Option<i64>> = Vec::with_capacity(len);
+                            for i in 0..len {
+                                let av = ca.get(i).unwrap_or(AnyValue::Null);
+                                let s_owned = match av {
+                                    AnyValue::Null => None,
+                                    AnyValue::Int64(v) => Some(v.to_string()),
+                                    AnyValue::Float64(v) => Some(v.to_string()),
+                                    AnyValue::String(s) => Some(s.to_string()),
+                                    AnyValue::StringOwned(s) => Some(s.to_string()),
+                                    other => Some(format!("{}", other)),
+                                };
+                                if let Some(st) = s_owned {
+                                    out.push(parse_iso_micros(&st));
+                                } else { out.push(None); }
+                            }
+                            let s = Series::new("__interval_micros", out);
+                            Ok(s)
+                        },
+                        GetOutput::from_type(DataType::Int64),
+                    );
+                    micros_expr.cast(DataType::Duration(TimeUnit::Microseconds))
+                }
                 SqlType::Bytea => inner.cast(DataType::Binary),
                 SqlType::Time => {
                     // Cast to Polars Time (time since midnight) when available
@@ -289,7 +364,8 @@ pub fn build_arith_expr(a: &ArithExpr, ctx: &crate::server::data_context::DataCo
                         SqlType::Boolean => DataType::Boolean,
                         SqlType::SmallInt | SqlType::Integer | SqlType::BigInt => DataType::Int64,
                         SqlType::Real | SqlType::Double | SqlType::Numeric(_) => DataType::Float64,
-                        SqlType::Text | SqlType::Varchar(_) | SqlType::Char(_) | SqlType::Uuid | SqlType::Json | SqlType::Jsonb | SqlType::Interval | SqlType::TimeTz => DataType::String,
+                        SqlType::Text | SqlType::Varchar(_) | SqlType::Char(_) | SqlType::Uuid | SqlType::Json | SqlType::Jsonb | SqlType::TimeTz => DataType::String,
+                        SqlType::Interval => DataType::Duration(TimeUnit::Microseconds),
                         SqlType::Bytea => DataType::Binary,
                         SqlType::Time => DataType::Time,
                         SqlType::Date | SqlType::Timestamp | SqlType::TimestampTz => DataType::Datetime(TimeUnit::Milliseconds, None),

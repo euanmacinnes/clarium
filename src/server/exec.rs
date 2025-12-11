@@ -2,6 +2,7 @@
 // NOTE: This module is intentionally kept thin. Add new logic in exec_*.rs files.
 pub mod exec_select;
 pub mod exec_show;
+pub mod show;            // Consolidated SHOW DataFrame producers and TVFs
 pub mod select_stages;
 pub mod exec_slice;
 pub mod exec_common;

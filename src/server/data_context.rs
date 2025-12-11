@@ -10,6 +10,27 @@ use tracing::debug;
 
 use crate::server::query::*;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum DisplayPolicy {
+    PreferAlias,
+    PreferUnqualified,
+    QualifiedOnly,
+}
+
+#[derive(Debug, Clone)]
+pub struct ColumnMeta {
+    /// Stable 0-based output column id (maps to physical column name `__c{id}` while in ID mode)
+    pub id: usize,
+    /// Original name observed coming out of project_select (may be qualified or unqualified)
+    pub original_name: String,
+    /// Base name (unqualified; last segment after '.') derived from original_name
+    pub base_name: String,
+    /// Whether this column is internal engine column (e.g., __row_id)
+    pub is_internal: bool,
+    /// Naming preference when finalizing
+    pub policy: DisplayPolicy,
+}
+
 #[derive(Debug, Clone)]
 struct TableNameReg {
     alias: Option<String>,
@@ -67,6 +88,10 @@ pub struct DataContext {
     pub temp_order_by_columns: HashSet<String>,
     /// Registry of table name metadata for this query (alias/fq/unqualified)
     table_name_registry: Vec<TableNameReg>,
+    /// When true, output columns have been normalized to __c{N} ids and column_matrix is populated
+    pub output_id_mode: bool,
+    /// Column metadata captured at the moment we entered output-id mode
+    pub column_matrix: Vec<ColumnMeta>,
 }
 
 impl Default for DataContext {
@@ -85,6 +110,124 @@ impl DataContext {
     pub fn register_df_columns_for_stage(&mut self, stage: SelectStage, df: &DataFrame) {
         let entry = self.stage_columns.entry(stage).or_default();
         for c in df.get_column_names() { entry.insert(c.to_string()); }
+    }
+
+    /// Enter output-id mode: rename physical columns to __c{N} and record column metadata.
+    /// This should be called immediately after project_select finalizes the projection order.
+    pub fn enter_output_id_mode(&mut self, mut df: DataFrame) -> anyhow::Result<DataFrame> {
+        if self.output_id_mode { return Ok(df); }
+        let mut metas: Vec<ColumnMeta> = Vec::with_capacity(df.get_column_names().len());
+        let names: Vec<String> = df.get_column_names().iter().map(|s| s.to_string()).collect();
+        for (i, name) in names.iter().enumerate() {
+            let base = name.rsplit('.').next().unwrap_or(name).to_string();
+            let is_internal = base.eq("__row_id");
+            metas.push(ColumnMeta {
+                id: i,
+                original_name: name.clone(),
+                base_name: base,
+                is_internal,
+                policy: DisplayPolicy::PreferUnqualified,
+            });
+        }
+        // Physically rename columns to __c{i}
+        let mut cols: Vec<polars::prelude::Column> = Vec::with_capacity(names.len());
+        for (i, old) in names.iter().enumerate() {
+            let mut s = df.column(old.as_str())?.clone();
+            s.rename(format!("__c{}", i).into());
+            cols.push(s.into());
+        }
+        self.column_matrix = metas;
+        self.output_id_mode = true;
+        Ok(DataFrame::new(cols)?)
+    }
+
+    /// Finalize output names: drop internal columns and resolve final display names according to policy.
+    /// This should be called once at the very end of SELECT processing, before returning the DataFrame.
+    pub fn finalize_output_names(&mut self, mut df: DataFrame) -> anyhow::Result<DataFrame> {
+        if !self.output_id_mode { return Ok(df); }
+        let height = df.height();
+        let mut keep_flags: Vec<bool> = vec![true; self.column_matrix.len()];
+        // 1) Drop internal row-id columns unless explicitly selected in the SELECT list
+        // Determine explicitly selected output names recorded at ProjectSelect stage (if available)
+        let explicit_selects: std::collections::HashSet<String> = self
+            .stage_user_columns
+            .get(&SelectStage::ProjectSelect)
+            .cloned()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|s| s.to_lowercase())
+            .collect();
+        for m in &self.column_matrix {
+            if m.is_internal {
+                // Keep if user explicitly selected a row_id column: match either exact original name
+                // or any entry whose base segment equals "__row_id"
+                let orig_lc = m.original_name.to_lowercase();
+                let base_is_rowid = m.base_name.eq_ignore_ascii_case("__row_id");
+                let explicitly_selected = if explicit_selects.is_empty() {
+                    false
+                } else {
+                    if explicit_selects.contains(&orig_lc) { true } else {
+                        // look for any select item whose last dot-segment equals __row_id
+                        explicit_selects.iter().any(|n| {
+                            let last = n.rsplit('.').next().unwrap_or(n.as_str());
+                            last.eq("__row_id")
+                        }) && base_is_rowid
+                    }
+                };
+                if !explicitly_selected {
+                    keep_flags[m.id] = false;
+                }
+            }
+        }
+        // 2) Do not drop qualified duplicates at this stage; preserve original projection semantics.
+        //    Only internal columns were removed in step 1.
+        // 3) Compute final display names directly from original names to preserve external schema.
+        use std::collections::HashMap;
+        let mut candidates: Vec<Option<String>> = vec![None; self.column_matrix.len()];
+        for m in &self.column_matrix {
+            if !keep_flags[m.id] { continue; }
+            candidates[m.id] = Some(m.original_name.clone());
+        }
+        // 4) Ensure uniqueness deterministically (should already be unique in practice).
+        let mut freq: HashMap<String, usize> = HashMap::new();
+        for m in &self.column_matrix {
+            if !keep_flags[m.id] { continue; }
+            let n = candidates[m.id].as_ref().unwrap().clone();
+            *freq.entry(n).or_insert(0) += 1;
+        }
+        if freq.values().any(|&c| c > 1) {
+            // Extremely rare: duplicate exact names; append numeric suffix for subsequent duplicates.
+            let mut used: HashMap<String, usize> = HashMap::new();
+            for m in &self.column_matrix {
+                if !keep_flags[m.id] { continue; }
+                let n = candidates[m.id].as_ref().unwrap().clone();
+                let entry = used.entry(n.clone()).or_insert(0usize);
+                if *entry > 0 {
+                    candidates[m.id] = Some(format!("{}#{}", n, *entry));
+                }
+                *entry += 1;
+            }
+        }
+        // 6) Build final DataFrame with kept columns in original order, renaming __c{i} → final name
+        let mut cols: Vec<polars::prelude::Column> = Vec::new();
+        for m in &self.column_matrix {
+            if !keep_flags[m.id] { continue; }
+            let phys = format!("__c{}", m.id);
+            if let Ok(col) = df.column(phys.as_str()) {
+                let mut s = col.clone();
+                let final_name = candidates[m.id].as_ref().map(|s| s.as_str()).unwrap_or(phys.as_str());
+                s.rename(final_name.into());
+                cols.push(s.into());
+            } else {
+                // missing column: create nulls to keep schema stable
+                let name = candidates[m.id].as_ref().cloned().unwrap_or(phys);
+                let s = Series::new_null(name.into(), height);
+                cols.push(s.into());
+            }
+        }
+        self.output_id_mode = false; // completed
+        self.column_matrix.clear();
+        Ok(DataFrame::new(cols)?)
     }
 
     /// Resolve a PostgreSQL regclass cast input (text relation name) to a stable OID (Int32).
@@ -247,6 +390,8 @@ impl DataContext {
             cte_tables: HashMap::new(),
             temp_order_by_columns: HashSet::new(),
             table_name_registry: Vec::new(),
+            output_id_mode: false,
+            column_matrix: Vec::new(),
         }
     }
 
@@ -819,6 +964,10 @@ impl DataContext {
             TableRef::Tvf { call, alias } => {
                 tracing::debug!(target: "clarium::exec", "load_source_df: evaluating TVF call='{}' alias={:?}", call, alias);
                 // Try known TVF families
+                // SHOW TVFs first
+                if let Some(df) = crate::server::exec::show::try_show_tvf(store, call)? {
+                    return Self::prefix_columns_tvf(df, alias.as_deref());
+                }
                 if let Some(df) = Self::try_graph_tvf(store, call)? {
                     // Apply alias-based prefixing only; no function-call leakage
                     return Self::prefix_columns_tvf(df, alias.as_deref());
@@ -932,7 +1081,17 @@ impl DataContext {
             s.rename(new_name.into());
             cols.push(s);
         }
-        Ok(DataFrame::new(cols)?)
+        let mut out = DataFrame::new(cols)?;
+        // Inject a stable <prefix>.__row_id if missing
+        let rid_name = format!("{}.{}", pref, "__row_id");
+        if !out.get_column_names().iter().any(|c| c.as_str().eq_ignore_ascii_case(&rid_name)) {
+            let h = out.height();
+            let mut ids: Vec<u64> = Vec::with_capacity(h);
+            for i in 0..h { ids.push(i as u64); }
+            let s = Series::new(rid_name.clone().into(), ids);
+            let _ = out.with_column(s);
+        }
+        Ok(out)
     }
 
     // Prefix helper specifically for TVFs using optional alias; when alias is None or empty, return df unchanged.
@@ -945,7 +1104,17 @@ impl DataContext {
                 s.rename(new_name.into());
                 cols.push(s);
             }
-            return Ok(DataFrame::new(cols)?);
+            let mut out = DataFrame::new(cols)?;
+            // Inject <alias>.__row_id if missing
+            let rid_name = format!("{}.{}", a, "__row_id");
+            if !out.get_column_names().iter().any(|c| c.as_str().eq_ignore_ascii_case(&rid_name)) {
+                let h = out.height();
+                let mut ids: Vec<u64> = Vec::with_capacity(h);
+                for i in 0..h { ids.push(i as u64); }
+                let s = Series::new(rid_name.clone().into(), ids);
+                let _ = out.with_column(s);
+            }
+            return Ok(out);
         } }
         Ok(df)
     }

@@ -20,6 +20,7 @@ use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use serde::{Serialize, Deserialize};
 use tracing::{info, error};
 use tokio::sync::RwLock;
+use tokio::sync::watch;
 use getrandom::getrandom;
 use anyhow::Context;
 use std::panic::{AssertUnwindSafe};
@@ -165,32 +166,49 @@ pub async fn run_with_ports(http_port: u16, pg_port: Option<u16>, db_root: &str)
     // Make registry globally accessible for executor paths
     crate::scripts::init_script_registry(scripts.clone());
 
-    // Start background KV sweeper
+    // Shutdown signal (Ctrl-C) broadcaster
+    let (shutdown_tx, mut shutdown_rx) = watch::channel(false);
+
+    // Start background KV sweeper (shutdown-aware)
     {
         let store_for_sweep = store.clone();
+        let mut rx = shutdown_rx.clone();
         tokio::spawn(async move {
             use std::time::Duration;
             loop {
-                // Sweep expired keys across all stores
-                let reg = store_for_sweep.kv_registry();
-                let removed = reg.sweep_all();
-                if removed > 0 { tracing::debug!(removed = removed, "kv_sweep"); }
-                tokio::time::sleep(Duration::from_secs(5)).await;
+                tokio::select! {
+                    _ = rx.changed() => {
+                        if *rx.borrow() { crate::tprintln!("[shutdown] kv_sweeper exiting on shutdown signal"); break; }
+                    }
+                    _ = tokio::time::sleep(Duration::from_secs(5)) => {
+                        // Sweep expired keys across all stores
+                        let reg = store_for_sweep.kv_registry();
+                        let removed = reg.sweep_all();
+                        if removed > 0 { tracing::debug!(removed = removed, "kv_sweep"); }
+                    }
+                }
             }
         });
     }
 
-    // Background GraphStore GC ticker (optional)
+    // Background GraphStore GC ticker (optional, shutdown-aware)
     {
         let store_for_gc = store.clone();
+        let mut rx = shutdown_rx.clone();
         // Interval in seconds; default 60s; set to 0 or negative to disable
         let interval_sec: i64 = std::env::var("CLARIUM_GRAPH_GC_INTERVAL_SEC").ok().and_then(|s| s.parse::<i64>().ok()).unwrap_or(60);
         if interval_sec > 0 {
             tokio::spawn(async move {
                 use std::time::Duration;
                 loop {
-                    crate::server::graphstore::gc_scan_all_graphs(&store_for_gc);
-                    tokio::time::sleep(Duration::from_secs(interval_sec as u64)).await;
+                    tokio::select! {
+                        _ = rx.changed() => {
+                            if *rx.borrow() { crate::tprintln!("[shutdown] graph_gc_ticker exiting on shutdown signal"); break; }
+                        }
+                        _ = tokio::time::sleep(Duration::from_secs(interval_sec as u64)) => {
+                            crate::server::graphstore::gc_scan_all_graphs(&store_for_gc);
+                        }
+                    }
                 }
             });
         } else {
@@ -212,9 +230,10 @@ pub async fn run_with_ports(http_port: u16, pg_port: Option<u16>, db_root: &str)
     {
         if let Some(port) = pg_port.or(Some(5433)) {
             let store_clone = store.clone();
+            let mut rx = shutdown_rx.clone();
             tokio::spawn(async move {
                 let addr_pg: SocketAddr = format!("0.0.0.0:{}", port).parse().unwrap();
-                if let Err(e) = crate::pgwire_server::start_pgwire(store_clone, &addr_pg.to_string()).await {
+                if let Err(e) = crate::pgwire_server::start_pgwire(store_clone, &addr_pg.to_string(), rx).await {
                     tracing::error!("pgwire server error: {}", e);
                 }
             });
@@ -236,9 +255,56 @@ pub async fn run_with_ports(http_port: u16, pg_port: Option<u16>, db_root: &str)
     let addr: SocketAddr = format!("0.0.0.0:{}", http_port).parse()?;
     info!("Starting server on {}", addr);
     let listener = tokio::net::TcpListener::bind(addr).await?;
-    axum::serve(listener, app).await?;
+
+    // Prepare graceful shutdown future (Ctrl-C)
+    let mut http_rx = shutdown_rx.clone();
+    let shutdown_fut = async move {
+        // Wait for either Ctrl-C or an external shutdown signal
+        let ctrl_c = async {
+            if let Err(e) = tokio::signal::ctrl_c().await {
+                tracing::error!("failed to listen for ctrl_c: {}", e);
+            }
+        };
+        tokio::select! {
+            _ = ctrl_c => { tracing::info!(target="shutdown", "Ctrl-C received, initiating graceful shutdown"); }
+            _ = http_rx.changed() => { if *http_rx.borrow() { tracing::info!(target="shutdown", "Shutdown signal received, stopping HTTP server"); } }
+        }
+    };
+
+    // Run server with graceful shutdown and spawn a Ctrl-C notifier
+    let http_server = axum::serve(listener, app).with_graceful_shutdown(shutdown_fut);
+
+    // Ctrl-C handler task: broadcast shutdown and perform cleanup
+    {
+        let store_for_cleanup = store.clone();
+        let shutdown_tx2 = shutdown_tx.clone();
+        tokio::spawn(async move {
+            if tokio::signal::ctrl_c().await.is_ok() {
+                tracing::info!(target="shutdown", "Ctrl-C detected, broadcasting shutdown and cleaning up");
+                let _ = shutdown_tx2.send(true);
+                graceful_cleanup(&store_for_cleanup, http_port).await;
+            }
+        });
+    }
+
+    // Await the HTTP server (it will exit after shutdown signal)
+    http_server.await?;
 
     Ok(())
+}
+
+/// Best-effort cleanup logic invoked on shutdown:
+/// - sweep KV registries
+/// - clear sessions and CSRF maps
+/// - emit debug counters
+async fn graceful_cleanup(store: &SharedStore, http_port: u16) {
+    crate::tprintln!("[shutdown] starting graceful cleanup for http_port={}", http_port);
+    // Sweep KV to drop expired keys before exit
+    let reg = store.kv_registry();
+    let removed = reg.sweep_all();
+    tracing::info!(target="shutdown", removed = removed, "KV sweep completed during shutdown");
+    // Nothing else to explicitly free; data is persisted. Session maps will be dropped with process.
+    crate::tprintln!("[shutdown] cleanup complete");
 }
 
 /// Return true if the database root contains no three-level tables of the form

@@ -411,8 +411,40 @@ pub fn project_select(df: DataFrame, q: &Query, ctx: &mut DataContext) -> Result
                 let base_norm = if base == "_time" { "_time" } else { base };
                 *base_counts.entry(base_norm.to_string()).or_insert(0) += 1;
             }
+            // Detect if this is a time table selection (has a _time column present at all)
+            let has_time = base_counts.contains_key("_time");
+            // If time table, we normalize `_time` and map value→`_value` (unqualified) once
+            let mut pushed_time = false;
+            let mut pushed_value = false;
             for cname in df.get_column_names() {
                 let cname_s = cname.as_str();
+                let base = cname_s.rsplit('.').next().unwrap_or(cname_s);
+                let base_norm = if base == "_time" { "_time" } else { base };
+                if has_time {
+                    // Special time-table handling
+                    if base_norm == "_time" {
+                        if !pushed_time {
+                            let mut s = df.column(cname_s)?.clone();
+                            s.rename("_time".into());
+                            if let Some(pos) = out_cols.iter().position(|c| c.name().as_str() == "_time") { out_cols.remove(pos); }
+                            out_cols.push(s);
+                            pushed_time = true;
+                        }
+                        continue;
+                    }
+                    if base_norm.eq_ignore_ascii_case("_value") || base_norm.eq_ignore_ascii_case("value") {
+                        if !pushed_value {
+                            let mut s = df.column(cname_s)?.clone();
+                            // Normalize to unqualified "_value"
+                            s.rename("_value".into());
+                            if let Some(pos) = out_cols.iter().position(|c| c.name().as_str() == "_value") { out_cols.remove(pos); }
+                            out_cols.push(s);
+                            pushed_value = true;
+                        }
+                        continue;
+                    }
+                    // For other columns (if any), keep prior behavior (qualified + possible unqualified when unique)
+                }
                 // Always include the qualified column label present in the DataFrame
                 if !out_cols.iter().any(|c| c.name().as_str() == cname_s) {
                     let mut s = df.column(cname_s)?.clone();
@@ -420,8 +452,6 @@ pub fn project_select(df: DataFrame, q: &Query, ctx: &mut DataContext) -> Result
                     out_cols.push(s);
                 }
                 // Conditionally include an unqualified alias only if its base name is unique across sources
-                let base = cname_s.rsplit('.').next().unwrap_or(cname_s);
-                let base_norm = if base == "_time" { "_time" } else { base };
                 if *base_counts.get(base_norm).unwrap_or(&0) == 1 {
                     if !out_cols.iter().any(|c| c.name().as_str() == base_norm) {
                         let mut s2 = df.column(cname_s)?.clone();
@@ -522,15 +552,32 @@ pub fn project_select(df: DataFrame, q: &Query, ctx: &mut DataContext) -> Result
             for cname in df.get_column_names() {
                 let cname_s = cname.as_str();
                 if cname_s.starts_with(&want_prefix) {
-                    // 1) Always include the qualified form (keep the original DF name)
+                    // Special-case time column: keep only a single unqualified `_time` and DO NOT keep `t._time`
+                    let base = cname_s.rsplit('.').next().unwrap_or(cname_s);
+                    let base_norm = if base == "_time" { "_time" } else { base };
+                    if base_norm == "_time" {
+                        if !out_cols.iter().any(|c| c.name().as_str() == "_time") {
+                            let mut s2 = df.column(cname_s)?.clone();
+                            s2.rename("_time".into());
+                            out_cols.push(s2);
+                        }
+                        continue;
+                    }
+                    // For value columns on time tables: keep the qualified `t.value` (do not emit unqualified duplicate)
+                    if base_norm.eq_ignore_ascii_case("_value") || base_norm.eq_ignore_ascii_case("value") {
+                        if !out_cols.iter().any(|c| c.name().as_str() == cname_s) {
+                            let mut s = df.column(cname_s)?.clone();
+                            s.rename(cname_s.into());
+                            out_cols.push(s);
+                        }
+                        continue;
+                    }
+                    // Default behavior for other columns: keep qualified and add unqualified when unique under qualifier
                     if !out_cols.iter().any(|c| c.name().as_str() == cname_s) {
                         let mut s = df.column(cname_s)?.clone();
                         s.rename(cname_s.into());
                         out_cols.push(s);
                     }
-                    // 2) Also include an unqualified alias if the base is unique under this qualifier
-                    let base = cname_s.rsplit('.').next().unwrap_or(cname_s);
-                    let base_norm = if base == "_time" { "_time" } else { base };
                     if *base_counts.get(base_norm).unwrap_or(&0) == 1 {
                         if !out_cols.iter().any(|c| c.name().as_str() == base_norm) {
                             let mut s2 = df.column(cname_s)?.clone();
