@@ -1,5 +1,7 @@
 use serde_json::Value;
 
+pub mod connectivity;
+
 // Render query results as an ASCII table.
 // Returns true if a table was printed (i.e., detected rows/columns), false otherwise.
 pub fn print_query_result(val: &Value) -> bool {
