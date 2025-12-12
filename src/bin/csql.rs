@@ -14,10 +14,8 @@ use reqwest::Url;
 
 use clarium::server::exec::execute_query_safe;
 use clarium::storage::SharedStore;
-use clarium::cli::print_query_result;
+use clarium::cli::outputformatter::print_query_result;
 use clarium::cli::connectivity::*;
-
-// Use the shared library module for table rendering (defined in src/cli_table.rs)
 
 fn print_usage(program: &str) {
     eprintln!(
