@@ -58,8 +58,8 @@ pub enum Command {
     // UNION or UNION ALL of multiple SELECT queries
     SelectUnion { queries: Vec<Query>, all: bool },
     // VIEW DDL
-    // CREATE [OR ALTER] VIEW <name> AS <SELECT...>
-    CreateView { name: String, or_alter: bool, definition_sql: String },
+    // CREATE [OR ALTER] VIEW [IF NOT EXISTS] <name> AS <SELECT...>
+    CreateView { name: String, or_alter: bool, if_not_exists: bool, definition_sql: String },
     // DROP VIEW [IF EXISTS] <name>
     DropView { name: String, if_exists: bool },
     // SHOW VIEW <name>
@@ -76,18 +76,18 @@ pub enum Command {
     DatabaseAdd { database: String },
     DatabaseDelete { database: String },
     // New DDL
-    CreateDatabase { name: String },
+    CreateDatabase { name: String, if_not_exists: bool },
     DropDatabase { name: String },
     RenameDatabase { from: String, to: String },
-    CreateSchema { path: String },
+    CreateSchema { path: String, if_not_exists: bool },
     DropSchema { path: String },
     RenameSchema { from: String, to: String },
-    CreateTimeTable { table: String },
+    CreateTimeTable { table: String, if_not_exists: bool },
     DropTimeTable { table: String },
     RenameTimeTable { from: String, to: String },
     // Regular parquet table DDL
     // Optional PRIMARY KEY / PARTITION BY metadata on create
-    CreateTable { table: String, primary_key: Option<Vec<String>>, partitions: Option<Vec<String>> },
+    CreateTable { table: String, primary_key: Option<Vec<String>>, partitions: Option<Vec<String>>, if_not_exists: bool },
     DropTable { table: String, if_exists: bool },
     RenameTable { from: String, to: String },
     // ALTER TABLE for regular tables

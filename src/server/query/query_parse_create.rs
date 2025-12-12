@@ -33,9 +33,12 @@ pub fn parse_create(s: &str) -> Result<Command> {
     let rest = s[6..].trim();
     let up = rest.to_uppercase();
     if up.starts_with("DATABASE ") {
-        let name = rest[9..].trim();
-        if name.is_empty() { anyhow::bail!("Invalid CREATE DATABASE: missing database name"); }
-        return Ok(Command::CreateDatabase { name: name.to_string() });
+        let mut name = rest[9..].trim();
+        let mut if_not_exists = false;
+        let up2 = name.to_uppercase();
+        if up2.starts_with("IF NOT EXISTS ") { if_not_exists = true; name = &name["IF NOT EXISTS ".len()..]; }
+        if name.trim().is_empty() { anyhow::bail!("Invalid CREATE DATABASE: missing database name"); }
+        return Ok(Command::CreateDatabase { name: name.trim().to_string(), if_not_exists });
     }
     // CREATE MATCH VIEW <name> AS MATCH ...
     if up.starts_with("MATCH VIEW ") || up.starts_with("OR ALTER MATCH VIEW ") || up.starts_with("OR REPLACE MATCH VIEW ") {
@@ -66,7 +69,7 @@ pub fn parse_create(s: &str) -> Result<Command> {
         match crate::server::query::parse_match(body) {
             Ok(crate::server::query::Command::MatchRewrite { sql }) => {
                 let normalized_name = crate::ident::normalize_identifier(name);
-                return Ok(Command::CreateView { name: normalized_name, or_alter, definition_sql: sql });
+                return Ok(Command::CreateView { name: normalized_name, or_alter, if_not_exists: false, definition_sql: sql });
             }
             Ok(other) => {
                 anyhow::bail!("CREATE MATCH VIEW: internal error, expected MatchRewrite, got {:?}", other);
@@ -77,10 +80,10 @@ pub fn parse_create(s: &str) -> Result<Command> {
         }
     }
     if up.starts_with("VIEW ") || up.starts_with("OR ALTER VIEW ") || up.starts_with("OR REPLACE VIEW ") {
-        // CREATE [OR ALTER] VIEW <name> AS <SELECT...>
+        // CREATE [OR ALTER] VIEW [IF NOT EXISTS] <name> AS <SELECT...>
         // Capture the definition SQL verbatim after AS (can be SELECT or SELECT UNION)
         let mut or_alter = false;
-        let after = if up.starts_with("OR ALTER VIEW ") {
+        let mut after = if up.starts_with("OR ALTER VIEW ") {
             or_alter = true;
             &rest["OR ALTER VIEW ".len()..]
         } else if up.starts_with("OR REPLACE VIEW ") {
@@ -89,7 +92,11 @@ pub fn parse_create(s: &str) -> Result<Command> {
         } else {
             &rest["VIEW ".len()..]
         };
-        let after = after.trim();
+        let mut if_not_exists = false;
+        let mut a = after.trim();
+        let a_up = a.to_uppercase();
+        if a_up.starts_with("IF NOT EXISTS ") { if_not_exists = true; a = &a["IF NOT EXISTS ".len()..]; }
+        let after = a.trim();
         // Split on AS (case-insensitive, token with whitespace boundaries)
         let as_pos = find_as_token(after).ok_or_else(|| anyhow::anyhow!("Invalid CREATE VIEW: expected AS"))?;
         let name = after[..as_pos].trim();
@@ -100,7 +107,7 @@ pub fn parse_create(s: &str) -> Result<Command> {
         if name.is_empty() { anyhow::bail!("Invalid CREATE VIEW: missing view name"); }
         if def_sql.is_empty() { anyhow::bail!("Invalid CREATE VIEW: missing SELECT definition after AS"); }
         let normalized_name = crate::ident::normalize_identifier(name);
-        return Ok(Command::CreateView { name: normalized_name, or_alter, definition_sql: def_sql.to_string() });
+        return Ok(Command::CreateView { name: normalized_name, or_alter, if_not_exists, definition_sql: def_sql.to_string() });
     }
     if up.starts_with("VECTOR INDEX ") {
         // CREATE VECTOR INDEX <name> ON <table>(<column>) USING hnsw [WITH (k=v, ...)]
@@ -312,10 +319,13 @@ pub fn parse_create(s: &str) -> Result<Command> {
         return Ok(Command::CreateScript { kind, path: name_part.to_string(), code: code_s.to_string() });
     }
     if up.starts_with("SCHEMA ") {
-        let path = rest[7..].trim();
+        let mut path = rest[7..].trim();
+        let up2 = path.to_uppercase();
+        let mut if_not_exists = false;
+        if up2.starts_with("IF NOT EXISTS ") { if_not_exists = true; path = &path["IF NOT EXISTS ".len()..]; }
         if path.is_empty() { anyhow::bail!("Invalid CREATE SCHEMA: missing schema name"); }
         let normalized_path = crate::ident::normalize_identifier(path);
-        return Ok(Command::CreateSchema { path: normalized_path });
+        return Ok(Command::CreateSchema { path: normalized_path, if_not_exists });
     }
     if up.starts_with("STORE ") {
         // CREATE STORE <db>.store.<store>
@@ -324,15 +334,26 @@ pub fn parse_create(s: &str) -> Result<Command> {
         return Ok(Command::CreateStore { database: db, store: st });
     }
     if up.starts_with("TIME TABLE ") || up == "TIME TABLE" {
-        let db = if up == "TIME TABLE" { "" } else { &rest[11..] };
-        let table = db.trim();
+        let mut db = if up == "TIME TABLE" { "" } else { &rest[11..] };
+        let mut if_not_exists = false;
+        let db_up = db.to_uppercase();
+        let mut t = db.trim();
+        if db_up.starts_with("IF NOT EXISTS ") {
+            if_not_exists = true;
+            t = db["IF NOT EXISTS ".len()..].trim();
+        }
+        let table = t;
         if table.is_empty() { anyhow::bail!("Invalid CREATE TIME TABLE: missing time table name"); }
         if !table.ends_with(".time") { anyhow::bail!("CREATE TIME TABLE target must end with .time"); }
         // Prefer new variant while keeping legacy Command::DatabaseAdd path available elsewhere
-        return Ok(Command::CreateTimeTable { table: table.to_string() });
+        return Ok(Command::CreateTimeTable { table: table.to_string(), if_not_exists });
     }
     if up.starts_with("TABLE ") || up == "TABLE" {
-        let arg = if up == "TABLE" { "" } else { &rest[6..] };
+        let arg0 = if up == "TABLE" { "" } else { &rest[6..] };
+        let mut arg = arg0.trim();
+        let mut if_not_exists = false;
+        let arg_up = arg.to_uppercase();
+        if arg_up.starts_with("IF NOT EXISTS ") { if_not_exists = true; arg = &arg["IF NOT EXISTS ".len()..]; }
         let t = arg.trim();
         if t.is_empty() { anyhow::bail!("Invalid CREATE TABLE: missing table name"); }
         // Split table name and optional clauses
@@ -355,7 +376,7 @@ pub fn parse_create(s: &str) -> Result<Command> {
                 }}
             }
         }
-        return Ok(Command::CreateTable { table: table_name.to_string(), primary_key, partitions });
+        return Ok(Command::CreateTable { table: table_name.to_string(), primary_key, partitions, if_not_exists });
     }
     anyhow::bail!("Invalid CREATE syntax")
 }

@@ -1,5 +1,6 @@
 use anyhow::Result;
 use serde_json::Value;
+use polars::prelude::*;
 use std::collections::BTreeSet;
 use std::path::Path;
 
@@ -111,8 +112,24 @@ fn kv(k: &str, v: &str) -> Value { serde_json::json!({ k: v }) }
 fn root_path(store: &SharedStore) -> std::path::PathBuf { let g = store.0.lock(); g.root_path().clone() }
 
 fn show_schemas(store: &SharedStore) -> Result<Value> {
-    let df = crate::server::exec::show::df_show_schemas(store)?;
-    Ok(crate::server::exec::dataframe_to_json(&df))
+    // tvf df_show_schemas() returns schemas for all databases with columns:
+    //   schema_database, schema_name
+    // SHOW SCHEMAS (command) should restrict to current database context.
+    let df_all = crate::server::exec::show::df_show_schemas(store)?;
+//     let current_db = crate::system::get_current_database();
+//     // Build boolean mask per Junie Polars guidelines
+//     let col = df_all.column("schema_database")?;
+//     let mut mask: Vec<bool> = Vec::with_capacity(col.len());
+//     for i in 0..col.len() {
+//         let keep = match col.get(i) {
+//             Ok(v) => v.get_str().map(|s| s == current_db.as_str()).unwrap_or(false),
+//             Err(_) => false,
+//         };
+//         mask.push(keep);
+//     }
+//     let mask_series = Series::new("__mask".into(), mask);
+//     let df = df_all.filter(mask_series.bool()?)?;
+    Ok(crate::server::exec::dataframe_to_json(&df_all))
 }
 
 fn show_tables(store: &SharedStore) -> Result<Value> {

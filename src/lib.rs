@@ -13,6 +13,7 @@ pub mod lua_bc;
 pub mod pgwire_server;
 pub mod system_views;
 pub mod tools;
+pub mod cli;
 
 // Test-only printing helper: expands to tprintln! during tests and is absent otherwise.
 // Usage in tests: tprintln!("debug: {}", value);

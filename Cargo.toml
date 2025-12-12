@@ -1,8 +1,8 @@
 [package]
 name = "clarium"
-version = "0.1.0"
+version = "0.5.0"
 edition = "2021"
-description = "Minimal time-series store using Parquet with a simple SQL-like query language, HTTP and WebSocket APIs, with a postgres-wired interface"
+description = "time-series, key/vaue., vecotr, knowledge graph and wide table store using Parquet with a simple SQL-like query language, HTTP and WebSocket APIs and a postgres-wired interface"
 authors = ["Euan Duncan Macinnes"]
 
 include = ["scripts/"]

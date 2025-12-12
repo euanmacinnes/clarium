@@ -360,7 +360,7 @@ pub fn from_where(store: &SharedStore, q: &Query, ctx: &mut DataContext) -> Resu
 
     // Apply WHERE filter if present with clause-aware validation (columns + UDFs)
     if let Some(w) = &q.where_clause {
-        eprintln!("[FROM/WHERE dbg] where_clause present: true, before rows={}", df.height());
+        tprintln!("[FROM/WHERE dbg] where_clause present: true, before rows={}", df.height());
         // Validate UDF presence in WHERE expressions
         fn collect_udf_names_where(w: &WhereExpr, out: &mut Vec<String>) {            
             match w {
@@ -402,19 +402,19 @@ pub fn from_where(store: &SharedStore, q: &Query, ctx: &mut DataContext) -> Resu
                 } 
             }
         }
-        eprintln!("[FROM/WHERE dbg] before WHERE: rows={}", df.height());
+        tprintln!("[FROM/WHERE dbg] before WHERE: rows={}", df.height());
         // Qualify and apply filter using DataContext so unqualified/suffix columns resolve
         let qw = qualify_where_ctx(&df, ctx, w, "WHERE")?;
         // Always evaluate WHERE via eval_where_mask so correlated subqueries are supported.
         // eval_where_mask delegates to Polars for simple predicates, so this is safe.
         let mask = eval_where_mask(&df, ctx, store, &qw)?;
         let kept = mask.len() - mask.into_iter().filter(|v| !v.unwrap_or(false)).count();
-        eprintln!("[FROM/WHERE dbg] mask computed; keeping {} rows", kept);
+        tprintln!("[FROM/WHERE dbg] mask computed; keeping {} rows", kept);
         let mask2 = eval_where_mask(&df, ctx, store, &qw)?;
         df = df.filter(&mask2)?;
-        eprintln!("[FROM/WHERE dbg] after WHERE: rows={}", df.height());
+        tprintln!("[FROM/WHERE dbg] after WHERE: rows={}", df.height());
     } else {
-        eprintln!("[FROM/WHERE dbg] where_clause present: false, rows={}", df.height());
+        tprintln!("[FROM/WHERE dbg] where_clause present: false, rows={}", df.height());
     }
 
     // Register visible columns for this stage

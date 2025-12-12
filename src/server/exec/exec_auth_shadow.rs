@@ -94,7 +94,7 @@ fn map_cmd_to_resource(ctx: &RequestContext, cmd: &Command) -> sec::model::Resou
             R::res_database(db_default)
         }
         Command::Update { table, .. }
-        | Command::CreateTimeTable { table }
+        | Command::CreateTimeTable { table, .. }
         | Command::DropTimeTable { table }
         | Command::RenameTimeTable { from: table, .. }
         | Command::CreateTable { table, .. }
@@ -120,13 +120,13 @@ fn map_cmd_to_resource(ctx: &RequestContext, cmd: &Command) -> sec::model::Resou
             // Keys and stores are scoped to a database
             R::res_database(database)
         }
-        Command::CreateSchema { path }
+        Command::CreateSchema { path, .. }
         | Command::DropSchema { path }
         | Command::RenameSchema { from: path, .. } => {
             let (db, schema) = split_db_schema(ctx, path);
             R::res_schema(&db, &schema)
         }
-        Command::CreateDatabase { name }
+        Command::CreateDatabase { name, .. }
         | Command::DropDatabase { name }
         | Command::RenameDatabase { from: name, .. }
         | Command::DatabaseAdd { database: name }

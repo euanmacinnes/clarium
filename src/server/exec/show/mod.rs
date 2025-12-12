@@ -51,27 +51,37 @@ pub fn df_show_tables(store: &SharedStore) -> Result<DataFrame> {
     Ok(df)
 }
 
-/// SHOW SCHEMAS as a DataFrame
-/// Columns: schema_name
+/// SHOW SCHEMAS as a DataFrame (all databases)
+/// Columns: schema_database, schema_name
 pub fn df_show_schemas(store: &SharedStore) -> Result<DataFrame> {
     use std::fs;
-    use std::collections::BTreeSet;
-    let mut schemas: BTreeSet<String> = BTreeSet::new();
     let root = root_path(store);
+    let mut dbs_vec: Vec<String> = Vec::new();
+    let mut schemas_vec: Vec<String> = Vec::new();
     if let Ok(dbs) = fs::read_dir(&root) {
         for db_ent in dbs.flatten() {
-            let db_path = db_ent.path(); if !db_path.is_dir() { continue; }
+            let db_path = db_ent.path();
+            if !db_path.is_dir() { continue; }
+            let dbname = db_ent.file_name().to_string_lossy().to_string();
             if let Ok(sd) = fs::read_dir(&db_path) {
                 for sch_ent in sd.flatten() {
-                    let p = sch_ent.path(); if p.is_dir() {
-                        if let Some(name) = p.file_name().and_then(|s| s.to_str()) { if !name.starts_with('.') { schemas.insert(name.to_string()); } }
+                    let p = sch_ent.path();
+                    if p.is_dir() {
+                        if let Some(name) = p.file_name().and_then(|s| s.to_str()) {
+                            if !name.starts_with('.') {
+                                dbs_vec.push(dbname.clone());
+                                schemas_vec.push(name.to_string());
+                            }
+                        }
                     }
                 }
             }
         }
     }
-    let list: Vec<String> = schemas.into_iter().collect();
-    let df = DataFrame::new(vec![Series::new("schema_name".into(), list).into()])?;
+    let df = DataFrame::new(vec![
+        Series::new("schema_database".into(), dbs_vec).into(),
+        Series::new("schema_name".into(), schemas_vec).into(),
+    ])?;
     Ok(df)
 }
 

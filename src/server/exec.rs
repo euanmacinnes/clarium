@@ -756,9 +756,13 @@ pub async fn execute_query(store: &SharedStore, text: &str) -> Result<serde_json
             Ok(serde_json::json!({"status": "ok"}))
         }
         // New DDL commands
-        Command::CreateDatabase { name } => {
+        Command::CreateDatabase { name, if_not_exists } => {
             use std::fs;
             let dir = store.root_path().join(name.replace('/', std::path::MAIN_SEPARATOR.to_string().as_str()));
+            if dir.exists() {
+                if if_not_exists { return Ok(serde_json::json!({"status":"ok"})); }
+                anyhow::bail!(format!("Database already exists: {}", name));
+            }
             fs::create_dir_all(&dir)?;
             Ok(serde_json::json!({"status":"ok"}))
         }
@@ -778,11 +782,15 @@ pub async fn execute_query(store: &SharedStore, text: &str) -> Result<serde_json
             fs::rename(&src, &dst)?;
             Ok(serde_json::json!({"status":"ok"}))
         }
-        Command::CreateSchema { path } => {
+        Command::CreateSchema { path, if_not_exists } => {
             use std::fs;
             // If unqualified (no '/'), prepend current database
             let full = if path.contains('/') || path.contains('\\') { path.clone() } else { format!("{}/{}", crate::system::get_current_database(), path) };
             let dir = store.root_path().join(full.replace('/', std::path::MAIN_SEPARATOR.to_string().as_str()));
+            if dir.exists() {
+                if if_not_exists { return Ok(serde_json::json!({"status":"ok"})); }
+                anyhow::bail!(format!("Schema already exists: {}", full));
+            }
             fs::create_dir_all(&dir)?;
             Ok(serde_json::json!({"status":"ok"}))
         }
@@ -804,7 +812,7 @@ pub async fn execute_query(store: &SharedStore, text: &str) -> Result<serde_json
             fs::rename(&src, &dst)?;
             Ok(serde_json::json!({"status":"ok"}))
         }
-        Command::CreateTimeTable { table } => {
+        Command::CreateTimeTable { table, if_not_exists } => {
             // Qualify identifier with current session defaults
             let d = crate::system::current_query_defaults();
             let table = crate::ident::qualify_time_ident(&table, &d);
@@ -819,6 +827,15 @@ pub async fn execute_query(store: &SharedStore, text: &str) -> Result<serde_json
                 vp.set_extension("view");
                 if vp.exists() {
                     anyhow::bail!(format!("Object name conflict: a VIEW exists with name '{}'. Time table names must be unique across views.", base_no_time));
+                }
+            }
+            // If exists, honor IF NOT EXISTS
+            {
+                let root = store.root_path().clone();
+                let dir = root.join(table.replace('/', std::path::MAIN_SEPARATOR.to_string().as_str()));
+                if dir.exists() {
+                    if if_not_exists { return Ok(serde_json::json!({"status":"ok"})); }
+                    anyhow::bail!(format!("Time table already exists: {}", table));
                 }
             }
             let guard = store.0.lock();
@@ -844,8 +861,8 @@ pub async fn execute_query(store: &SharedStore, text: &str) -> Result<serde_json
             fs::rename(&src, &dst)?;
             Ok(serde_json::json!({"status":"ok"}))
         }
-        Command::CreateTable { table, primary_key, partitions } => {
-            crate::server::exec::exec_create::handle_create_table(store, &table, &primary_key, &partitions)
+        Command::CreateTable { table, primary_key, partitions, if_not_exists } => {
+            crate::server::exec::exec_create::handle_create_table(store, &table, &primary_key, &partitions, if_not_exists)
         }
         Command::DropTable { table, if_exists } => {
             crate::server::exec::exec_create::handle_drop_table(store, &table, if_exists)

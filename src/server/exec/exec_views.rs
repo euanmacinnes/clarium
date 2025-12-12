@@ -81,10 +81,13 @@ fn infer_columns_from_sql(store: &SharedStore, def_sql: &str) -> Result<Vec<(Str
 
 pub fn execute_views(store: &SharedStore, cmd: query::Command) -> Result<serde_json::Value> {
     match cmd {
-        query::Command::CreateView { name, or_alter, definition_sql } => {
+        query::Command::CreateView { name, or_alter, if_not_exists, definition_sql } => {
             let qualified = qualify_view_name(&name);
             let exists = read_view_file(store, &qualified)?.is_some();
-            if exists && !or_alter { return Err(AppError::Conflict { code: "name_conflict".into(), message: format!("View already exists: {}", qualified) }.into()); }
+            if exists {
+                if if_not_exists { return Ok(serde_json::json!({"status":"ok"})); }
+                if !or_alter { return Err(AppError::Conflict { code: "name_conflict".into(), message: format!("View already exists: {}", qualified) }.into()); }
+            }
             // Enforce uniqueness across objects: a view name must not clash with an existing table folder
             {
                 let root = store.0.lock().root_path().clone();

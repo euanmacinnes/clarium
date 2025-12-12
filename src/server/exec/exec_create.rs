@@ -12,7 +12,7 @@ use crate::tprintln;
 use crate::storage::SharedStore;
 
 /// Handle CREATE TABLE for regular (non-time) tables.
-pub fn handle_create_table(store: &SharedStore, table: &str, primary_key: &Option<Vec<String>>, partitions: &Option<Vec<String>>) -> Result<serde_json::Value> {
+pub fn handle_create_table(store: &SharedStore, table: &str, primary_key: &Option<Vec<String>>, partitions: &Option<Vec<String>>, if_not_exists: bool) -> Result<serde_json::Value> {
     use std::{fs, path::PathBuf};
     debug!(target: "clarium::exec", "CreateTable: begin table='{}' pk={:?} partitions={:?}", table, primary_key, partitions);
 
@@ -29,6 +29,14 @@ pub fn handle_create_table(store: &SharedStore, table: &str, primary_key: &Optio
         (dir, ex)
     };
     info!(target: "clarium::ddl", "CREATE TABLE requested table='{}' existed_before={}", table, exists_before);
+    if exists_before {
+        if if_not_exists {
+            crate::tprintln!("[CREATE] handle_create_table: exists, honoring IF NOT EXISTS — no-op");
+            return Ok(serde_json::json!({"status":"ok"}));
+        } else {
+            return Err(AppError::Conflict { code: "name_conflict".into(), message: format!("Table already exists: {}", table) }.into());
+        }
+    }
 
     if table.ends_with(".time") { return Err(AppError::Ddl { code: "ddl_error".into(), message: "CREATE TABLE cannot target a .time table".into() }.into()); }
 
@@ -130,7 +138,9 @@ pub fn do_create_table(store: &SharedStore, q: &str) -> Result<()> {
     if !up.starts_with("CREATE TABLE ") { return Err(AppError::Ddl { code: "unsupported_create".into(), message: "Only CREATE TABLE is supported".into() }.into()); }
     s = s["CREATE TABLE ".len()..].trim();
     let s_up = s.to_uppercase();
-    if s_up.starts_with("IF NOT EXISTS ") { s = s["IF NOT EXISTS ".len()..].trim(); }
+    // Track optional IF NOT EXISTS and strip it from the remaining input
+    let mut if_not_exists = false;
+    if s_up.starts_with("IF NOT EXISTS ") { if_not_exists = true; s = s["IF NOT EXISTS ".len()..].trim(); }
     // Extract identifier up to '(' and the column list inside (...)
     let p_open = s.find('(').ok_or_else(|| AppError::Ddl { code: "syntax".into(), message: "expected ( in CREATE TABLE".into() })?;
     let ident = s[..p_open].trim();
@@ -201,6 +211,15 @@ pub fn do_create_table(store: &SharedStore, q: &str) -> Result<()> {
     let root = store.root_path();
     let dir = std::path::Path::new(&root).join(db_path.replace('/', std::path::MAIN_SEPARATOR.to_string().as_str()));
     debug!(target: "clarium::exec", "do_create_table: dir='{}' (db_path='{}')", dir.display(), db_path);
+    // Existence handling per IF NOT EXISTS contract
+    if dir.exists() {
+        if if_not_exists {
+            tprintln!("[CREATE] do_create_table: directory already exists, honoring IF NOT EXISTS — no-op");
+            return Ok(())
+        } else {
+            return Err(AppError::Conflict { code: "name_conflict".into(), message: format!("Table already exists: {}", db_path) }.into());
+        }
+    }
     std::fs::create_dir_all(&dir).with_context(|| format!("create table dir {}", dir.display()))?;
     // Build nested schema map using centralized dtype mapping
     use std::collections::{HashMap, HashSet};
