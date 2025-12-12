@@ -130,7 +130,7 @@ fn main() -> Result<()> {
 
     let root_path = root.unwrap_or_else(|| {
         // default to dbs\\clarium relative to CWD
-        let default = if cfg!(windows) { "dbs\\clarium" } else { "dbs/clarium" };
+        let default = if cfg!(windows) { "dbs" } else { "dbs" };
         default.to_string()
     });
 
@@ -281,7 +281,7 @@ fn main() -> Result<()> {
     } else {
         let initial_local_db = connect_db.clone().unwrap_or_else(|| "clarium".to_string());
         let initial_local_schema = connect_schema.clone().unwrap_or_else(|| "public".to_string());
-        println!("Local context:\n  root: {}\n  database: {}\n  schema: {}", root_path, initial_local_db, initial_local_schema);
+        println!("Local database: {}/{}/{}", root_path, initial_local_db, initial_local_schema);
     }
 
     return run_repl_with_autoconnect(
@@ -370,7 +370,7 @@ fn run_repl_with_autoconnect(
     println!("clarium-cli interpreter. Type 'help' for commands.");
     loop {
         input.clear();
-        print!("> "); let _ = stdout.flush();
+        print!(":> "); let _ = stdout.flush();
         if stdin.read_line(&mut input).is_err() { break; }
         let line = input.trim();
         if line.is_empty() { continue; }
@@ -409,7 +409,7 @@ fn run_repl_with_autoconnect(
             if let Some(s) = &session {
                 println!("connected: {}", s.ident());
             } else {
-                println!("local (not connected)\n  root: {}\n  database: {}\n  schema: {}", local_root_path, local_db, local_schema);
+                println!("Local database: {}/{}/{}", local_root_path, local_db, local_schema);                
             }
             continue;
         }
@@ -437,12 +437,18 @@ fn run_repl_with_autoconnect(
         }
         if let Some(s) = &session {
             match rt.block_on(async { s.post_query(line).await }) {
-                Ok(val) => { let pretty = serde_json::to_string_pretty(&val).unwrap_or_else(|_| val.to_string()); println!("{}", pretty); }
+                Ok(val) => { 
+                    if !print_query_result(&val) {
+                    let pretty = serde_json::to_string_pretty(&val).unwrap_or_else(|_| val.to_string()); println!("{}", pretty); }
+            }
                 Err(e) => eprintln!("error: {}", e),
             }
         } else {
-            match rt.block_on(async { execute_query_safe(&store, line).await }) {
-                Ok(val) => { let pretty = serde_json::to_string_pretty(&val).unwrap_or_else(|_| val.to_string()); println!("{}", pretty); }
+            match rt.block_on(async { execute_query_safe(&store, line).await }) {                
+                Ok(val) => { 
+                    if !print_query_result(&val) {
+                    let pretty = serde_json::to_string_pretty(&val).unwrap_or_else(|_| val.to_string()); println!("{}", pretty); }
+                }
                 Err(e) => eprintln!("error: {}", e),
             }
         }
