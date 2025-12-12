@@ -1,5 +1,7 @@
 use serde_json::Value;
 
+use terminal_size::{Width, Height, terminal_size};
+
 // Render query results as an ASCII table.
 // Returns true if a table was printed (i.e., detected rows/columns), false otherwise.
 pub fn print_query_result(val: &Value) -> bool {
@@ -30,19 +32,17 @@ pub fn print_query_result(val: &Value) -> bool {
     // If there are no rows, stick to JSON as per requirement (only print table when rows are returned)
     if rows.is_empty() { return false; }
 
-    // Compute widths (per-column), cap to keep output readable
-    let max_col_width: usize = 80;
-    let mut widths: Vec<usize> = cols.iter().map(|s| s.len().min(max_col_width)).collect();
-    for r in &rows {
-        for (i, cell) in r.iter().enumerate().take(cols.len()) {
-            let w = display_len(cell);
-            if w > widths[i] { widths[i] = w.min(max_col_width); }
-        }
-    }
-
     // Detect terminal width once for this rendering
     let termw = get_terminal_width();
     crate::tprintln!("[cli.outputformatter] detected terminal width={} columns", termw);
+
+    let mut widths: Vec<usize> = cols.iter().map(|s| s.len().min(termw)).collect();
+    for r in &rows {
+        for (i, cell) in r.iter().enumerate().take(cols.len()) {
+            let w = display_len(cell);
+            if w > widths[i] { widths[i] = w.min(termw); }
+        }
+    }
 
     // Header
     let sep = build_separator(&widths);
@@ -276,13 +276,12 @@ fn extract_elapsed_ms_from(v: Option<&Value>) -> Option<u64> {
 // --- Terminal fitting & ANSI helpers ---
 
 fn get_terminal_width() -> usize {
-    if let Ok(cols) = std::env::var("COLUMNS") {
-        if let Ok(n) = cols.parse::<usize>() {
-            if n >= 20 { return n; }
-        }
+    let size = terminal_size();
+    if let Some((Width(w), Height(h))) = size {
+        return (w-4) as usize;
     }
-    // Fallback default if unknown
-    120
+    
+    return 80;    
 }
 
 fn fit_line_to_width(s: &str, maxw: usize) -> String {

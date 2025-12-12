@@ -20,6 +20,8 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 regex = "1"
 chrono = { version = "=0.4.42", features = ["serde"] }
 parking_lot = { version = "0.12", features = ["deadlock_detection"] }
+terminal_size = "0.4.3"
+rustyline = "13"
 
 # Filesystem walking for Criterion ingestion
 walkdir = "2"

@@ -8,6 +8,7 @@
 use std::env;
 use std::fs;
 use std::io::{self, Write};
+use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use reqwest::Url;
@@ -16,6 +17,9 @@ use clarium::server::exec::execute_query_safe;
 use clarium::storage::SharedStore;
 use clarium::cli::outputformatter::print_query_result;
 use clarium::cli::connectivity::*;
+
+// Line editor for REPL with persistent history
+use rustyline::{DefaultEditor, error::ReadlineError};
 
 fn print_usage(program: &str) {
     eprintln!(
@@ -255,6 +259,15 @@ fn main() -> Result<()> {
             }
         } else {
             println!("Running natively on database in this folder");
+            // If caller passed --database/--schema without --connect, apply them as session defaults locally
+            if let Some(db) = connect_db.as_deref() {
+                clarium::tprintln!("[cli.csql] applying local USE DATABASE {} before single-shot query", db);
+                let _ = rt.block_on(async { execute_query_safe(&store, &format!("USE DATABASE {}", db)).await });
+            }
+            if let Some(sch) = connect_schema.as_deref() {
+                clarium::tprintln!("[cli.csql] applying local USE SCHEMA {} before single-shot query", sch);
+                let _ = rt.block_on(async { execute_query_safe(&store, &format!("USE SCHEMA {}", sch)).await });
+            }
             rt.block_on(async { execute_query_safe(&store, &qtext).await })
         };
 
@@ -304,10 +317,32 @@ fn run_repl_with_autoconnect(
     connect_db: Option<String>,
     connect_schema: Option<String>,
 ) -> Result<()> {
+    // Attempt to initialize a line editor with persistent history.
+    // If initialization fails, we gracefully fall back to stdio read_line loop.
+    let mut rl_opt: Option<DefaultEditor> = match DefaultEditor::new() {
+        Ok(ed) => Some(ed),
+        Err(e) => { eprintln!("[repl] warning: line editor unavailable: {} — falling back to basic input", e); None }
+    };
+    let history_path = compute_history_path();
+    if let (Some(rl), Some(hpath)) = (rl_opt.as_mut(), history_path.as_ref()) {
+        // Try load history; ignore errors if file missing/corrupt
+        if let Err(e) = rl.load_history(hpath) {
+            clarium::tprintln!("[cli.csql] history load failed ({}), starting fresh: {}", hpath.display(), e);
+        } else {
+            clarium::tprintln!("[cli.csql] loaded history from {}", hpath.display());
+        }
+    }
     let mut session: Option<RemoteTransport> = None;
     // Track local database/schema context even when not connected
     let mut local_db: String = connect_db.clone().unwrap_or_else(|| "clarium".to_string());
     let mut local_schema: String = connect_schema.clone().unwrap_or_else(|| "public".to_string());
+
+    // Initialize server-side session defaults for local mode so unqualified names resolve as expected
+    if connect_url.is_none() {
+        clarium::tprintln!("[cli.csql] initializing local session defaults: db={}, schema={}", local_db, local_schema);
+        let _ = rt.block_on(async { execute_query_safe(&store, &format!("USE DATABASE {}", local_db)).await });
+        let _ = rt.block_on(async { execute_query_safe(&store, &format!("USE SCHEMA {}", local_schema)).await });
+    }
     if let Some(url) = connect_url {
         match (connect_user.as_deref(), connect_password.as_deref()) {
             (Some(user), Some(pass)) => {
@@ -362,15 +397,33 @@ fn run_repl_with_autoconnect(
     }
 
     // Enter REPL, starting with existing session if any
-    let stdin = io::stdin();
-    let mut stdout = io::stdout();
-    let mut input = String::new();
     println!("clarium-cli interpreter. Type 'help' for commands.");
+    let mut stdout = io::stdout();
     loop {
-        input.clear();
-        print!(":> "); let _ = stdout.flush();
-        if stdin.read_line(&mut input).is_err() { break; }
-        let line = input.trim();
+        let line_owned: String = if let Some(rl) = rl_opt.as_mut() {
+            match rl.readline(":> ") {
+                Ok(line) => {
+                    let trimmed = line.trim();
+                    if !trimmed.is_empty() { rl.add_history_entry(trimmed).ok(); }
+                    line
+                }
+                Err(ReadlineError::Interrupted) => { println!("^C"); break; }
+                Err(ReadlineError::Eof) => { println!("^D"); break; }
+                Err(e) => {
+                    eprintln!("[repl] editor error: {} — switching to basic input", e);
+                    rl_opt = None; // fall through to stdio mode
+                    continue;
+                }
+            }
+        } else {
+            // Basic stdio fallback
+            let mut input = String::new();
+            print!(":> "); let _ = stdout.flush();
+            if io::stdin().read_line(&mut input).is_err() { break; }
+            input
+        };
+
+        let line = line_owned.trim();
         if line.is_empty() { continue; }
         let up = line.to_uppercase();
         if up == "EXIT" || up == "QUIT" { break; }
@@ -419,6 +472,10 @@ fn run_repl_with_autoconnect(
                 // Update local context
                 local_db = name.to_string();
                 println!("Using database (local): {}", local_db);
+                // Also update server-side session so subsequent queries use this default
+                if let Err(e) = rt.block_on(async { execute_query_safe(&store, &format!("USE DATABASE {}", name)).await }) {
+                    eprintln!("error applying local USE DATABASE: {}", e);
+                }
             }
             continue;
         }
@@ -430,6 +487,10 @@ fn run_repl_with_autoconnect(
                 // Update local context
                 local_schema = name.to_string();
                 println!("Using schema (local): {}", local_schema);
+                // Also update server-side session so subsequent queries use this default
+                if let Err(e) = rt.block_on(async { execute_query_safe(&store, &format!("USE SCHEMA {}", name)).await }) {
+                    eprintln!("error applying local USE SCHEMA: {}", e);
+                }
             }
             continue;
         }
@@ -451,5 +512,62 @@ fn run_repl_with_autoconnect(
             }
         }
     }
+    // Save history if editor was active
+    if let (Some(rl), Some(hpath)) = (rl_opt.as_mut(), history_path.as_ref()) {
+        if let Some(parent) = hpath.parent() { let _ = std::fs::create_dir_all(parent); }
+        if let Err(e) = rl.save_history(hpath) {
+            eprintln!("[repl] warning: failed to save history at {}: {}", hpath.display(), e);
+        } else {
+            clarium::tprintln!("[cli.csql] saved history to {}", hpath.display());
+        }
+    }
     Ok(())
+}
+
+// Determine a suitable path for the REPL history file, platform-aware.
+// Windows: %APPDATA%\Clarium\csql_history
+// Unix: $XDG_DATA_HOME/clarium/csql_history or ~/.local/share/clarium/csql_history
+// Fallback: ~/.clarium/csql_history
+fn compute_history_path() -> Option<PathBuf> {
+    #[cfg(windows)]
+    {
+        if let Ok(appdata) = std::env::var("APPDATA") {
+            let mut p = PathBuf::from(appdata);
+            p.push("Clarium");
+            p.push("csql_history");
+            clarium::tprintln!("[cli.csql] history path (windows) => {}", p.display());
+            return Some(p);
+        }
+        // Fallback to HOME if APPDATA not set
+        if let Ok(home) = std::env::var("USERPROFILE") {
+            let mut p = PathBuf::from(home);
+            p.push(".clarium");
+            p.push("csql_history");
+            clarium::tprintln!("[cli.csql] history path (win fallback) => {}", p.display());
+            return Some(p);
+        }
+        return None;
+    }
+    #[cfg(not(windows))]
+    {
+        if let Ok(xdg) = std::env::var("XDG_DATA_HOME") {
+            let mut p = PathBuf::from(xdg);
+            p.push("clarium");
+            p.push("csql_history");
+            clarium::tprintln!("[cli.csql] history path (xdg) => {}", p.display());
+            return Some(p);
+        }
+        if let Ok(home) = std::env::var("HOME") {
+            // ~/.local/share/clarium/csql_history
+            let mut p = PathBuf::from(home);
+            p.push(".local");
+            p.push("share");
+            p.push("clarium");
+            p.push("csql_history");
+            clarium::tprintln!("[cli.csql] history path (home) => {}", p.display());
+            return Some(p);
+        }
+        // Last resort
+        None
+    }
 }
