@@ -57,15 +57,33 @@ Key components:
 
 ### Sharding Unit
 - Graph partition (existing `partitions` option in GraphStore manifests).
+- Table partition (relational/structured tables; per-table configurable partitioning).
+- Time table partition (time-series optimized; primary partitioning by time windows plus optional secondary shard key).
+- File store partition (object/file keys; compatible with directory-like prefixes and content-addressed IDs (GIT chunks are referenced  by CID, the file overall by GUID)).
 
 ### Key to Partition Mapping
-- Default: consistent hashing with virtual nodes on a stable key (e.g., node key or a hash of (src,dst) for edges). Hash seeded by `partitioning.hash_seed`.
-- Partition count: choose 128–2048 based on dataset scale. Make it configurable per graph.
+- Default (hash): consistent hashing with virtual nodes on a stable key. Hash seeded by `partitioning.hash_seed`.
+- Graphs: key is node id or a hash of (src,dst) for edges; configurable per graph.
+- Tables: hash on one or more partition keys; optionally composite (e.g., tenant_id + id). Range partitioning supported for monotonic keys.
+- Time tables: primary by time-range windows (e.g., hourly/daily buckets), inside each window apply hash on secondary key for fan-out. Late/early events routed by arrival with watermark controls.
+- File store: hash on object id or path; optional prefix-based range partitions to co-locate hierarchical paths; support content-addressed shards by CID hash.
+- Partition count: choose 128–2048 based on dataset scale. Configurable per namespace (graph/table/time/filestore).
 
 ### Placement
 - Replication factor (RF) default 3 (1 in dev). Persisted in manifest (`cluster.replication_factor`).
 - Failure domains (labels): `az`, `rack`, `host`. Spread replicas across domains.
 - Placement algorithm: score-based first-fit decreasing with anti-affinity and capacity weights. Rebalance periodically.
+
+### Namespace Separation and Co-residency
+- Namespaces: `graph`, `table`, `time`, `filestore`. Each has an independent partition space and `ShardMap`.
+- Co-residency: placement planner may co-locate partitions from different namespaces on the same node when beneficial (cache locality), while preserving isolation via quotas.
+
+### DDL and Schema Evolution (Tables/Time Tables)
+- Keep DDL parsing and execution separate. Each DDL lives in a separate module/file per object type.
+- Partitioned tables expose per-partition schema versions; online schema changes use metadata indirection with backfills executed shard-locally.
+
+### Object Lifecycle (File Store)
+- Objects are stored in per-shard segments with WAL-backed durability. Large objects may be chunked; chunk ids map to the same partition as the root object for locality.
 
 ---
 
@@ -80,6 +98,14 @@ Two deployment options:
 - Shard Map: partition → replica set (node_ids), leader, epoch/term, config version.
 - Leases: short TTLs for node liveness; watch streams to push updates to routers.
 - Placement & Rebalance: compute assignments and orchestrate safe transitions.
+
+### Graph-based Metadata Option
+- Optionally model Nodes, Shards, and Placements inside an internal system graph (using our own graph tech) to track relations:
+  - Nodes as vertices with labels/attributes (capacity, domains).
+  - Shards as vertices typed by namespace (`graph`, `table`, `time`, `filestore`).
+  - Edges `HOSTS(node -> shard)` with weights/scores; edges `LEADS(node -> shard)` for leadership.
+  - Benefits: native queries for placement decisions, auditability via graph snapshots, natural history/versioning using timeline edges.
+- The authoritative state still persists via the meta-raft store; the graph view is maintained transactionally or derived via changefeed for observability and planning.
 
 ### Metadata Objects
 - `Cluster` (singleton): version, created_at, config.
@@ -102,16 +128,40 @@ Each partition forms a Raft group. We integrate `openraft` for consensus and log
 3. Apply to state machine: append to WAL (GraphStore), update delta logs.
 4. Acknowledge to client after commit index reached (configurable for latency vs. durability trade-offs).
 
+#### Tables
+- State machine maintains per-partition row stores (columnar backing using Polars-compatible frames where applicable) with MVCC timestamps.
+- WAL entries capture logical mutations (INSERT/UPDATE/DELETE) and schema version. Compaction produces columnar segments per partition.
+
+#### Time Tables
+- Append-optimized path with time-windowed segments. Background re-clustering merges late arrivals up to a configurable watermark.
+- Retention policies applied shard-locally with tombstone logs to support PITR.
+
+#### File Store
+- WAL tracks object metadata (name, path, headers) and chunk manifests. Data chunks are written to shard-local durable storage; commits reference content hashes.
+- Snapshots include manifests and referenced chunk sets with checksums.
+
 ### Read Path
 - Consistency levels:
   - Strong: route to leader.
   - Timeline: follower with `read_index` (linearizable within leader lease).
   - Eventual: follower without `read_index` (lowest latency, may be stale).
 
+#### Tables
+- Predicate pushdown per partition. For range-partitioned tables, the router prunes partitions by min/max metadata. For hash, route to all candidate shards based on partitioning expression.
+
+#### Time Tables
+- Time window pruning using query time ranges; within each window, scatter on secondary key hashes. Merging uses k-way merge respecting ORDER BY time and LIMIT using bounded heaps.
+
+#### File Store
+- List/Prefix queries map to range partitions; object GET routes via exact key hash or prefix range. Directory-like semantics are synthetic but efficient via partition-local indexes.
+
 ### Snapshots & Compaction
 - Periodic snapshots per partition (size or time based). Store manifest + checksum.
 - Compact Raft logs after stable snapshot.
 - GraphStore compaction merges delta logs into segment files; preserve reverse adjacency if configured.
+- Tables: compact row-level deltas into columnar segments with bloom filters and zone maps per column for fast pruning.
+- Time tables: time-sorted segments with optional downsampling materializations per policy.
+- File store: compact chunk manifests; optionally re-pack small objects into shard-local packfiles.
 
 ### Replica Changes
 - Joint consensus reconfiguration: add non-voter, catch up, promote; demote and remove old replica. Orchestrated by control plane.
@@ -132,6 +182,14 @@ Responsibilities:
 - Retries & Hedged Reads:
   - Idempotency tokens for write retries.
   - Hedged reads for tail latency (send a backup after p95 delay).
+
+### SQL Tables and Time Tables
+- Planner annotates plans with partitioning info using table metadata (partition columns, time windows). Partition pruning happens before scatter.
+- Execution keeps query parsing and planning separate from DDL execution. Each DDL statement for tables/time tables is handled in a dedicated module.
+- Aggregations: prefer partial aggregation per partition and final merge at router; respect nulls and dtypes per Polars 0.51+ guidance.
+
+### File Store
+- API operations (PUT/GET/HEAD/LIST) route via the same shard client, allowing hedged reads for GET. Multi-part uploads coordinate per object id and enforce idempotency.
 
 ---
 
@@ -213,6 +271,7 @@ Extend the GraphStore named config (see `docs/graph-catalog.md`) with cluster ke
 
 ### Debugging
 - Permanent lightweight `tprintln!`-style debug hooks in non-release builds; no cost in release.
+  - Include shard kind and namespace in every debug line: `ns=table|time|graph|filestore` and `part` for rapid triage.
 
 ---
 
@@ -232,13 +291,14 @@ Below are high-level interfaces. Keep primary interfaces thin; move heavy logic 
 // Control plane (embedded)
 pub trait ClusterMetaStore {
     fn get_nodes(&self) -> anyhow::Result<Vec<NodeInfo>>;
-    fn get_shard_map(&self, graph: &str) -> anyhow::Result<ShardMap>;
-    fn watch_shard_map(&self, graph: &str) -> ShardMapWatch;
+    fn get_shard_map(&self, ns: &Namespace, name: &str) -> anyhow::Result<ShardMap>;
+    fn watch_shard_map(&self, ns: &Namespace, name: &str) -> ShardMapWatch;
     fn txn_update<F: FnOnce(&mut MetaTxn) -> anyhow::Result<()>>(&self, f: F) -> anyhow::Result<()>;
 }
 
 pub struct NodeInfo { pub id: String, pub addrs: NodeAddrs, pub labels: Labels, pub capacity: Capacity, pub version: String }
-pub struct ShardMap { pub graph: String, pub parts: Vec<ShardEntry>, pub version: u64 }
+pub enum Namespace { Graph, Table, Time, FileStore }
+pub struct ShardMap { pub namespace: Namespace, pub name: String, pub parts: Vec<ShardEntry>, pub version: u64 }
 pub struct ShardEntry { pub part: u32, pub replicas: Vec<String>, pub leader: Option<String>, pub epoch: u64 }
 
 // Data plane client (router side)
@@ -251,7 +311,7 @@ pub enum ReadPolicy { Strong, Timeline, Eventual }
 
 // Placement engine
 pub trait PlacementPlanner {
-    fn plan_initial(&self, nodes: &[NodeInfo], parts: u32, rf: u32, domains: &[&str]) -> anyhow::Result<ShardMap>;
+    fn plan_initial(&self, ns: Namespace, name: &str, nodes: &[NodeInfo], parts: u32, rf: u32, domains: &[&str]) -> anyhow::Result<ShardMap>;
     fn plan_rebalance(&self, cur: &ShardMap, nodes: &[NodeInfo], policy: &RebalancePolicy) -> anyhow::Result<Vec<PlanOp>>;
 }
 
@@ -269,20 +329,30 @@ Keep match statements thin: each `PlanOp` handled by a dedicated function groupe
 2) Send write with idempotency key and epoch.
 3) On `NotLeader` or epoch mismatch, refresh map and retry once (exponential backoff thereafter).
 
+### Router Write (tables/time/filestore specifics)
+- Tables: ensure consistent partition key hashing client-side for batching; preserve row ordering where required by constraints.
+- Time tables: batch by time window to reduce cross-partition fan-out; late events go to the correct window with watermark checks.
+- File store: multi-part uploads coordinate chunk writes to the same partition; commit materializes the object manifest atomically.
+
 ### Router Read (scatter)
 1) Build subplans per partition.
 2) For each subplan, choose read policy (Strong/Timeline/Eventual).
 3) Dispatch concurrently; merge results honoring sort/limit using bounded heaps or k-way merges.
 
+### Router Read (namespace-aware)
+- Tables: partition pruning based on predicates and zone maps; merge partial aggregates.
+- Time tables: window-aware pruning and ordered merges by time.
+- File store: range scans for LIST with continuation tokens scoped to a specific partition set, avoiding cross-partition hotspots.
+
 ---
 
 ## 16. Phased Delivery Plan
 
-- Phase 0: Partitioning only; single node, RF=1; stabilize GraphStore manifest and APIs. (Baseline)
-- Phase 1: RF=3 multi-raft; leader-only writes; static placement (manual config). Health checks and basic failover.
-- Phase 2: Control plane with leases, dynamic placement, rebalancer; online leadership transfer. Router retries/hedging.
-- Phase 3: Cross-shard transactions (2PC) and full scatter/gather; configurable consistency levels per query/session.
-- Phase 4: Multi-AZ and optional multi-region; backups/PITR; hot shard auto-splitting.
+- Phase 0: Partitioning only; single node, RF=1; stabilize GraphStore/Table/Time/File manifests and APIs. (Baseline)
+- Phase 1: RF=3 multi-raft across all namespaces; leader-only writes; static placement (manual config). Health checks and basic failover.
+- Phase 2: Control plane with leases, dynamic placement, rebalancer; online leadership transfer. Router retries/hedging. Namespace-aware placement policies.
+- Phase 3: Cross-shard transactions (2PC) for tables/graphs and coordinated consistency for file manifests; full scatter/gather; configurable consistency levels per query/session.
+- Phase 4: Multi-AZ and optional multi-region; backups/PITR; hot shard auto-splitting for tables/time; object re-packing for filestore.
 
 Each phase ships with: docs, chaos tests, soak tests, and operational playbooks.
 
@@ -296,15 +366,19 @@ Keep tests in dedicated files (no inline tests). Use `cargo build`/`cargo check`
 - Placement planner: constraint satisfaction, anti-affinity, capacity weighting.
 - Shard map updates: epoch increments, watchers, cache invalidation.
 - Router scatter/gather: correct merges under ORDER BY/LIMIT.
+- Namespace coverage: table partition pruning, time window pruning and merges, filestore listing correctness under prefixes.
 
 ### Integration Tests
 - Embedded 3-node cluster with RF=3: leader elections, write/read consistency classes.
 - Failure drills: kill leaders, network partitions, clock skews.
 - Rebalance flows: add/remove nodes, leader transfers.
+- Namespace flows: create partitioned tables/time tables with DDL; load data; verify router scatter/gather; filestore PUT/GET/LIST with hedged reads.
 
 ### Benchmarks
 - Read tail latency with hedged reads.
 - Write throughput under group commit settings.
+- Time table ingestion throughput under late-arrival rates and watermark settings.
+- Filestore GET p95/p99 with hedged reads and cache effects.
 
 ---
 
