@@ -8,6 +8,29 @@ Last updated: 2025-12-11
 
 ---
 
+Terminology:
+- Cluster: a set of nodes running the Clarium cluster server.
+- Node: a single server process running the Clarium cluster server.
+- Shard: a partition of the cluster data.
+- Partition: a logical grouping of shards.
+- Graph: a collection of shards with a common namespace.
+- Table: a collection of shards with a common namespace and partitioning.
+- Time Table: a collection of shards with a common namespace, partitioning, and time windows.
+- File Store: a collection of shards with a common namespace and partitioning.
+- Router: a stateless proxy server that routes PGWire/SQL clients to shards.
+- Client: a driver or application that sends queries to the router.
+- CID: content identifier (SHA256 hash of file content) used by GIT.
+- Epoch: a monotonic counter used to detect node failures and rebalance.
+- Quorum: a majority of replicas in a partition.
+- Leader: a replica that holds the partition leader lease.
+- Follower: a replica that does not hold the leader lease.
+- Raft: a consensus algorithm for distributed state machines.
+- Raft group: a set of Raft replicas that form a logical partition.
+- Raft log: a replicated append-only log for state machine replication.
+- Raft snapshot: a point-in-time snapshot of the Raft log.
+- WAL: a write-ahead log for durable state machine replication.
+---
+
 ## 1. Goals and Non-Goals
 
 ### Goals
@@ -59,7 +82,7 @@ Key components:
 - Graph partition (existing `partitions` option in GraphStore manifests).
 - Table partition (relational/structured tables; per-table configurable partitioning).
 - Time table partition (time-series optimized; primary partitioning by time windows plus optional secondary shard key).
-- File store partition (object/file keys; compatible with directory-like prefixes and content-addressed IDs (GIT chunks are referenced  by CID, the file overall by GUID)).
+- File store partition (object/file keys; compatible with File GUID + Chunk CIDs).
 
 ### Key to Partition Mapping
 - Default (hash): consistent hashing with virtual nodes on a stable key. Hash seeded by `partitioning.hash_seed`.
