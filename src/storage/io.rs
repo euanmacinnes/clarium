@@ -495,6 +495,11 @@ impl Store {
 
         // Create series and assemble into DataFrame
         let is_time_table = self.is_time_table(table);
+        crate::tprintln!(
+            "[storage.write_records] table='{}' classified_as_time={}",
+            table,
+            is_time_table
+        );
         // Determine frame height for constructing null/list columns
         let height: usize = if is_time_table {
             times.len()
@@ -573,6 +578,7 @@ impl Store {
                 ParquetWriter::new(&mut file)
                     .with_statistics(StatisticsOptions::default())
                     .finish(&mut df)?;
+                crate::tprintln!("[storage.write_records] regular table wrote file '{}' rows={}", path.display(), df.height());
                 // Update schema.json: merge existing declared schema with columns present in this df
                 // Do NOT drop previously declared columns (e.g., VECTOR) that may be missing in this write.
                 use std::collections::{HashMap, HashSet};
@@ -611,6 +617,7 @@ impl Store {
         ParquetWriter::new(&mut file)
             .with_statistics(StatisticsOptions::default())
             .finish(&mut df)?;
+        crate::tprintln!("[storage.write_records] time table wrote chunk '{}' rows={}", path.display(), df.height());
 
         // Save merged schema with locks preserved
         super::schema::save_schema_with_locks(self, table, &schema, &locks)?;

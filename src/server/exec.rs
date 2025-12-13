@@ -30,6 +30,7 @@ pub mod filestore;         // FILESTORE implementation (config, paths, security,
 pub mod df_utils_json;   // JSON -> DataFrame conversion helpers for KV Json
 pub mod explain;         // EXPLAIN data model and renderers (skeleton)
 pub mod exec_auth_shadow; // Shadow SQL authorization (RBAC/ABAC) — no behavior change
+pub mod internal;         // Internal executor utilities (constants, helpers)
 
 use anyhow::Result;
 use polars::prelude::*;

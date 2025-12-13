@@ -10,9 +10,15 @@ use crate::{server::query, storage::SharedStore};
 
 pub fn handle_insert(store: &SharedStore, table: String, columns: Vec<String>, values: Vec<Vec<query::ArithTerm>>) -> Result<serde_json::Value> {
     let __t0 = std::time::Instant::now();
-    // Convert dot notation (schema.table) to slash notation (schema/table) for storage.
-    // Do not rely on suffix to classify; classification will come from schema metadata.
-    let table_path = table.replace('.', "/");
+    // Qualify the target identifier using current session defaults.
+    // Preserve `.time` suffix for time tables and build canonical path with '/'.
+    let qd = crate::system::current_query_defaults();
+    let lower = table.to_ascii_lowercase();
+    let table_path = if lower.ends_with(".time") {
+        crate::ident::qualify_time_ident(&table, &qd)
+    } else {
+        crate::ident::qualify_regular_ident(&table, &qd)
+    };
 
     // Ensure table exists (lock only for this short scope)
     {
@@ -26,6 +32,7 @@ pub fn handle_insert(store: &SharedStore, table: String, columns: Vec<String>, v
         let guard = store.0.lock();
         guard.is_time_table(&table_path)
     };
+    crate::tprintln!("[INSERT] target='{}' is_time_table={}", table_path, is_time_table);
     if is_time_table {
         // Find _time column index (accept ID or _time)
         let time_col_idx = columns.iter().position(|c| {
@@ -62,12 +69,14 @@ pub fn handle_insert(store: &SharedStore, table: String, columns: Vec<String>, v
             let guard = store.0.lock();
             guard.write_records(&table_path, &records)?;
         }
+        crate::tprintln!("[INSERT] wrote {} records into time table '{}'", records.len(), table_path);
         return Ok(serde_json::json!({"status":"ok", "inserted": records.len()}));
     }
 
     // Regular parquet table - build DataFrame and append
     let __t_build_df = std::time::Instant::now();
     // Create series for each column
+    crate::tprintln!("[INSERT] writing into regular table '{}' rows={}", table_path, values.len());
     let mut series_vec: Vec<Series> = Vec::new();
     for (col_idx, col_name) in columns.iter().enumerate() {
         let mut col_values: Vec<query::ArithTerm> = Vec::with_capacity(values.len());

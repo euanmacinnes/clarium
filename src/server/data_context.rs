@@ -618,6 +618,74 @@ impl DataContext {
         Ok(matches.remove(0))
     }
 
+    /// Resolve a stable row-id column present in the current DataFrame.
+    /// Preference order:
+    /// 1) Qualified form "<prefix>.__row_id" when a single such column exists.
+    ///    If multiple exist, prefer those under current db/schema when available.
+    /// 2) Unqualified "__row_id" if it exists uniquely.
+    /// 3) Legacy form "__row_id.<alias>" if it exists uniquely.
+    /// Otherwise returns Ok(None).
+    pub fn resolve_row_id(&self, df: &DataFrame) -> anyhow::Result<Option<String>> {
+        use std::collections::HashSet;
+        let cols = df.get_column_names();
+        crate::tprintln!("[resolve_row_id] DF columns: {:?}", cols);
+        let mut qualified: Vec<String> = Vec::new();
+        let mut unqualified: Vec<String> = Vec::new();
+        let mut legacy: Vec<String> = Vec::new();
+        for c in cols {
+            let s = c.as_str();
+            if s.eq_ignore_ascii_case("__row_id") {
+                unqualified.push(c.to_string());
+            } else if s.to_ascii_lowercase().ends_with(".__row_id") {
+                qualified.push(c.to_string());
+            } else if s.to_ascii_lowercase().starts_with("__row_id.") {
+                legacy.push(c.to_string());
+            }
+        }
+        // Helper: prefer entries under current db/schema
+        let prefer_scope = |v: &mut Vec<String>| {
+            if let (Some(db), Some(schema)) = (self.current_database.as_deref(), self.current_schema.as_deref()) {
+                let pref = format!("{}/{}/", db, schema);
+                let scoped: Vec<String> = v.iter().filter(|s| s.starts_with(&pref)).cloned().collect();
+                if !scoped.is_empty() { *v = scoped; }
+            }
+        };
+        if !qualified.is_empty() {
+            prefer_scope(&mut qualified);
+            if qualified.len() == 1 {
+                crate::tprintln!("[resolve_row_id] using qualified: {}", qualified[0]);
+                return Ok(Some(qualified.remove(0)));
+            }
+        }
+        if unqualified.len() == 1 {
+            crate::tprintln!("[resolve_row_id] using unqualified: {}", unqualified[0]);
+            return Ok(Some(unqualified.remove(0)));
+        }
+        if legacy.len() == 1 {
+            crate::tprintln!("[resolve_row_id] using legacy: {}", legacy[0]);
+            return Ok(Some(legacy.remove(0)));
+        }
+        // If multiple qualified candidates and DF columns share a single prefix, try that
+        if qualified.len() > 1 {
+            let mut prefixes: HashSet<String> = HashSet::new();
+            for cname in df.get_column_names() {
+                if let Some((pref, _col)) = cname.rsplit_once('.') {
+                    prefixes.insert(pref.to_string());
+                }
+            }
+            if prefixes.len() == 1 {
+                let pref = prefixes.into_iter().next().unwrap();
+                let candidate = format!("{}.{}", pref, "__row_id");
+                if let Some(actual) = df.get_column_names().iter().find(|n| n.as_str().eq_ignore_ascii_case(&candidate)) {
+                    crate::tprintln!("[resolve_row_id] single-prefix fast-path: {}", actual);
+                    return Ok(Some(actual.to_string()));
+                }
+            }
+        }
+        crate::tprintln!("[resolve_row_id] no row-id resolved");
+        Ok(None)
+    }
+
     /// Resolve a column name with awareness of stage-registered columns.
     /// Strategy:
     /// 1) Try resolving against the provided DataFrame (exact, then suffix-qualified) — same as `resolve_column`.

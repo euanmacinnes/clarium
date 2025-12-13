@@ -3,6 +3,7 @@
 use anyhow::Result;
 use polars::prelude::*;
 use crate::tprintln;
+use crate::server::exec::internal::constants::{ANN_SCORE, ROW_ID};
 
 use crate::server::query::query_common::Query;
 use crate::server::query;
@@ -471,8 +472,8 @@ fn ann_order_dataframe(
     let mut rid_col_name: Option<String> = None;
     for n in df.get_column_names() {
         let ns = n.as_str();
-        if ns == "__row_id"
-            || ns.ends_with(".__row_id")   // new preferred alias/fq form: alias.__row_id or fq.__row_id
+        if ns == ROW_ID
+            || ns.ends_with(&format!(".{}", ROW_ID))   // new preferred alias/fq form: alias.__row_id or fq.__row_id
         {
             rid_col_name = Some(ns.to_string());
             break;
@@ -480,7 +481,7 @@ fn ann_order_dataframe(
     }
     // Helper: build final sort expressions combining primary score + secondary keys + stable row-id tie-break
     let build_sort_keys = |df_cols: &DataFrame, rid_name: Option<&str>, final_desc: bool| -> (Vec<Expr>, Vec<bool>) {
-        let mut exprs: Vec<Expr> = vec![col("__ann_score")];
+        let mut exprs: Vec<Expr> = vec![col(ANN_SCORE)];
         let mut desc: Vec<bool> = vec![final_desc];
         if let Some(keys) = secondary_keys {
             for (name, asc) in keys.iter() {
