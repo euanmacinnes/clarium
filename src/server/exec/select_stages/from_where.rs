@@ -19,6 +19,7 @@ use crate::storage::SharedStore;
 use crate::server::exec::exec_common::{build_where_expr};
 use crate::server::exec::where_subquery::{eval_where_mask};
 use crate::tprintln;
+use crate::server::exec::internal::constants::{UNIT, LEFT_ROW_ID};
 
 fn extract_simple_equi_with_remainder(on: &WhereExpr) -> Option<((String, String), Option<WhereExpr>)> {
     match on {
@@ -62,7 +63,7 @@ pub fn from_where(store: &SharedStore, q: &Query, ctx: &mut DataContext) -> Resu
         tprintln!("Defaulting to blank dataframe");
         // Support queries without a FROM source by starting with a single-row dummy DataFrame.
         // This allows SELECT constant expressions (including casts/UDF calls) to yield one row.
-        let s = Series::new("__unit".into(), vec![1i32]);
+        let s = Series::new(UNIT.into(), vec![1i32]);
         DataFrame::new(vec![s.into()])?   
     };
 
@@ -246,7 +247,7 @@ pub fn from_where(store: &SharedStore, q: &Query, ctx: &mut DataContext) -> Resu
                         // Manual cross join with row tracking
                         let left_row_ids: Vec<i64> = (0..left_height as i64).collect();
                         let mut df_with_id = df.clone();
-                        df_with_id.with_column(Series::new("__left_row_id".into(), left_row_ids))?;
+                        df_with_id.with_column(Series::new(LEFT_ROW_ID.into(), left_row_ids))?;
                         
                         let total_rows = left_height * right_height;
                         let mut crossed_cols: Vec<Column> = Vec::new();
@@ -284,11 +285,11 @@ pub fn from_where(store: &SharedStore, q: &Query, ctx: &mut DataContext) -> Resu
                         let matched_with_id = crossed_with_id.lazy().filter(mask_id).collect()?;
                         
                         // Create matched DataFrame without tracking column
-                        let matched = matched_with_id.drop("__left_row_id")?;
+                        let matched = matched_with_id.drop(LEFT_ROW_ID)?;
                         
                         // Extract matched left row IDs
                         let matched_ids: std::collections::HashSet<i64> = if matched_with_id.height() > 0 {
-                            let id_col = matched_with_id.column("__left_row_id")?.i64()?;
+                            let id_col = matched_with_id.column(LEFT_ROW_ID)?.i64()?;
                             id_col.into_iter().flatten().collect()
                         } else {
                             std::collections::HashSet::new()

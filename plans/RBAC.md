@@ -24,6 +24,9 @@ Below is a comprehensive RBAC DDL proposal suitable for enterprise-grade, multi-
   - Table: `SELECT`, `INSERT`, `UPDATE`, `DELETE`, `ALTER`, `DROP`, `TRUNCATE`
   - View: `SELECT`, `ALTER`, `DROP`
   - Function/Procedure: `EXECUTE`, `ALTER`, `DROP`
+  - Graph: `GRAPH READ`, `GRAPH WRITE`, `GRAPH ALTER`, `GRAPH DROP`
+  - Filestore: `FILE READ`, `FILE WRITE`, `FILE ALTER`, `FILE DELETE`
+  - Vector: `VECTOR READ`, `VECTOR WRITE`, `VECTOR ALTER`, `VECTOR DROP`
 
 ### DDL Syntax
 Note: Identifiers are case-insensitive unless quoted. Optional clauses shown in brackets.
@@ -92,9 +95,9 @@ REVOKE privilege [, ...] ON DATABASE db_name FROM role_name [, ...] [CASCADE | R
 GRANT privilege [, ...] ON SCHEMA db_name.schema_name TO role_name [, ...] [WITH GRANT OPTION];
 REVOKE privilege [, ...] ON SCHEMA db_name.schema_name FROM role_name [, ...] [CASCADE | RESTRICT];
 
--- Object (TABLE | VIEW | FUNCTION)
-GRANT privilege [, ...] ON { TABLE | VIEW | FUNCTION } db.schema.obj TO role_name [, ...] [WITH GRANT OPTION];
-REVOKE privilege [, ...] ON { TABLE | VIEW | FUNCTION } db.schema.obj FROM role_name [, ...] [CASCADE | RESTRICT];
+-- Object (TABLE | VIEW | FUNCTION | GRAPH | FILESTORE | VECTOR)
+GRANT privilege [, ...] ON { TABLE | VIEW | FUNCTION | GRAPH | FILESTORE | VECTOR } db.schema.obj TO role_name [, ...] [WITH GRANT OPTION];
+REVOKE privilege [, ...] ON { TABLE | VIEW | FUNCTION | GRAPH | FILESTORE | VECTOR } db.schema.obj FROM role_name [, ...] [CASCADE | RESTRICT];
 ```
 
 #### Default and active role controls

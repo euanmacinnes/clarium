@@ -417,12 +417,20 @@ impl Store {
         let mut i64_cols: HashMap<String, Vec<Option<i64>>> = HashMap::new();
         let mut str_cols: HashMap<String, Vec<Option<String>>> = HashMap::new();
         let mut vec_cols: HashMap<String, Vec<Option<Vec<f64>>>> = HashMap::new();
+        let mut list_i64_cols: HashMap<String, Vec<Option<Vec<i64>>>> = HashMap::new();
+        let mut list_str_cols: HashMap<String, Vec<Option<Vec<String>>>> = HashMap::new();
         for name in &write_names {
             match schema.get(name) {
                 Some(DataType::String) => { str_cols.insert(name.clone(), Vec::with_capacity(records.len())); },
                 Some(DataType::Int64) => { i64_cols.insert(name.clone(), Vec::with_capacity(records.len())); },
                 Some(DataType::List(inner)) if matches!(**inner, DataType::Float64) => {
                     vec_cols.insert(name.clone(), Vec::with_capacity(records.len()));
+                }
+                Some(DataType::List(inner)) if matches!(**inner, DataType::Int64) => {
+                    list_i64_cols.insert(name.clone(), Vec::with_capacity(records.len()));
+                }
+                Some(DataType::List(inner)) if matches!(**inner, DataType::String) => {
+                    list_str_cols.insert(name.clone(), Vec::with_capacity(records.len()));
                 }
                 _ => { f64_cols.insert(name.clone(), Vec::with_capacity(records.len())); },
             }
@@ -480,6 +488,63 @@ impl Store {
                         });
                         entry.push(v);
                     }
+                    Some(DataType::List(inner)) if matches!(**inner, DataType::Int64) => {
+                        // INT ARRAY: accept arrays or string-encoded arrays; push None if invalid
+                        let entry = list_i64_cols.get_mut(name).unwrap();
+                        let v: Option<Vec<i64>> = r.sensors.get(name).and_then(|val| match val {
+                            serde_json::Value::Array(a) => {
+                                let mut out: Vec<i64> = Vec::with_capacity(a.len());
+                                for e in a {
+                                    if let Some(n) = e.as_i64() {
+                                        out.push(n);
+                                    } else if let Some(s) = e.as_str() {
+                                        if let Ok(n) = s.trim().parse::<i64>() { out.push(n); } else { return None; }
+                                    } else { return None; }
+                                }
+                                Some(out)
+                            }
+                            serde_json::Value::String(s) => {
+                                let t = s.trim().trim_start_matches('[').trim_end_matches(']');
+                                let mut out: Vec<i64> = Vec::new();
+                                for part in t.split(',') {
+                                    let p = part.trim();
+                                    if p.is_empty() { continue; }
+                                    if let Ok(n) = p.parse::<i64>() { out.push(n); } else { return None; }
+                                }
+                                if out.is_empty() { None } else { Some(out) }
+                            }
+                            _ => None,
+                        });
+                        entry.push(v);
+                    }
+                    Some(DataType::List(inner)) if matches!(**inner, DataType::String) => {
+                        // STRING ARRAY: accept arrays or string-encoded arrays
+                        let entry = list_str_cols.get_mut(name).unwrap();
+                        let v: Option<Vec<String>> = r.sensors.get(name).and_then(|val| match val {
+                            serde_json::Value::Array(a) => {
+                                let mut out: Vec<String> = Vec::with_capacity(a.len());
+                                for e in a {
+                                    if let Some(s) = e.as_str() { out.push(s.to_string()); }
+                                    else { out.push(e.to_string()); }
+                                }
+                                Some(out)
+                            }
+                            serde_json::Value::String(s) => {
+                                // tolerate formats: "[a,b]" or "a,b"; keep raw tokens
+                                let t = s.trim().trim_start_matches('[').trim_end_matches(']');
+                                let mut out: Vec<String> = Vec::new();
+                                for part in t.split(',') {
+                                    let p = part.trim(); if p.is_empty() { continue; }
+                                    // strip surrounding quotes if present
+                                    let p2 = p.trim_matches('"').trim_matches('\'');
+                                    out.push(p2.to_string());
+                                }
+                                if out.is_empty() { None } else { Some(out) }
+                            }
+                            _ => None,
+                        });
+                        entry.push(v);
+                    }
                     _ => {
                         let entry = f64_cols.get_mut(name).unwrap();
                         let v = r.sensors.get(name).and_then(|val| match val {
@@ -508,6 +573,8 @@ impl Store {
             else if let Some((_, v)) = i64_cols.iter().next() { v.len() }
             else if let Some((_, v)) = str_cols.iter().next() { v.len() }
             else if let Some((_, v)) = vec_cols.iter().next() { v.len() }
+            else if let Some((_, v)) = list_i64_cols.iter().next() { v.len() }
+            else if let Some((_, v)) = list_str_cols.iter().next() { v.len() }
             else { 0 }
         };
         let mut cols: Vec<Column> = Vec::with_capacity(write_names.len() + 1);
@@ -534,6 +601,28 @@ impl Store {
                     cols.push(Series::new(name.into(), cells).into());
                 }
             }
+            // int list cols
+            for (name, vals) in list_i64_cols.into_iter() {
+                if vals.iter().all(|v| v.is_none()) {
+                    let s = Series::full_null((&name).into(), height, &DataType::List(Box::new(DataType::Int64)));
+                    cols.push(s.into());
+                } else {
+                    let mut cells: Vec<Option<Series>> = Vec::with_capacity(vals.len());
+                    for opt in vals { if let Some(v) = opt { cells.push(Some(Series::new("".into(), v))); } else { cells.push(None); } }
+                    cols.push(Series::new(name.into(), cells).into());
+                }
+            }
+            // string list cols
+            for (name, vals) in list_str_cols.into_iter() {
+                if vals.iter().all(|v| v.is_none()) {
+                    let s = Series::full_null((&name).into(), height, &DataType::List(Box::new(DataType::String)));
+                    cols.push(s.into());
+                } else {
+                    let mut cells: Vec<Option<Series>> = Vec::with_capacity(vals.len());
+                    for opt in vals { if let Some(v) = opt { cells.push(Some(Series::new("".into(), v))); } else { cells.push(None); } }
+                    cols.push(Series::new(name.into(), cells).into());
+                }
+            }
         } else {
             // Regular tables: include payload columns; They DO NOT HAVE _time columns by default. Only time tables get a mandatory _time column
             for (name, vals) in f64_cols.into_iter() { cols.push(Series::new(name.into(), vals).into()); }
@@ -549,6 +638,26 @@ impl Store {
                     for opt in vals {
                         if let Some(v) = opt { cells.push(Some(Series::new("".into(), v))); } else { cells.push(None); }
                     }
+                    cols.push(Series::new(name.into(), cells).into());
+                }
+            }
+            for (name, vals) in list_i64_cols.into_iter() {
+                if vals.iter().all(|v| v.is_none()) {
+                    let s = Series::full_null((&name).into(), height, &DataType::List(Box::new(DataType::Int64)));
+                    cols.push(s.into());
+                } else {
+                    let mut cells: Vec<Option<Series>> = Vec::with_capacity(vals.len());
+                    for opt in vals { if let Some(v) = opt { cells.push(Some(Series::new("".into(), v))); } else { cells.push(None); } }
+                    cols.push(Series::new(name.into(), cells).into());
+                }
+            }
+            for (name, vals) in list_str_cols.into_iter() {
+                if vals.iter().all(|v| v.is_none()) {
+                    let s = Series::full_null((&name).into(), height, &DataType::List(Box::new(DataType::String)));
+                    cols.push(s.into());
+                } else {
+                    let mut cells: Vec<Option<Series>> = Vec::with_capacity(vals.len());
+                    for opt in vals { if let Some(v) = opt { cells.push(Some(Series::new("".into(), v))); } else { cells.push(None); } }
                     cols.push(Series::new(name.into(), cells).into());
                 }
             }

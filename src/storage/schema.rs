@@ -133,15 +133,13 @@ pub(crate) fn dtype_to_str(dt: &DataType) -> String {
     match dt {
         DataType::String => "string".into(),
         DataType::Int64 => "int64".into(),
-        // Treat List(Float64) as our logical 'vector' type for schema purposes
-        DataType::List(inner) => {
-            if matches!(**inner, DataType::Float64) || matches!(**inner, DataType::Int64) {
-                "vector".into()
-            } else {
-                // default label for other lists
-                "list".into()
-            }
-        }
+        // Prefer explicit array syntax using [] and preserve inner dtype
+        DataType::List(inner) => match inner.as_ref() {
+            DataType::Float64 => "float64[]".into(),
+            DataType::Int64 => "int64[]".into(),
+            DataType::String => "string[]".into(),
+            _ => "list".into(),
+        },
         _ => "float64".into(),
     }
 }
@@ -150,10 +148,13 @@ pub(crate) fn str_to_dtype(s: &str) -> DataType {
     match s.to_ascii_lowercase().as_str() {
         "utf8" | "string" => DataType::String,
         "int64" => DataType::Int64,
-        // Map logical 'vector' to List(Float64)
+        // Back-compat: logical 'vector' maps to List(Float64)
         "vector" => DataType::List(Box::new(DataType::Float64)),
-        // Generic list (array) type used for non-vector arrays in schemas
-        // Default inner type to String for resilience; execution paths can cast as needed.
+        // New explicit array syntax
+        "float64[]" | "double[]" => DataType::List(Box::new(DataType::Float64)),
+        "int64[]" | "bigint[]" => DataType::List(Box::new(DataType::Int64)),
+        "string[]" | "utf8[]" | "text[]" => DataType::List(Box::new(DataType::String)),
+        // Generic list (array)
         "list" | "array" => DataType::List(Box::new(DataType::String)),
         _ => DataType::Float64,
     }

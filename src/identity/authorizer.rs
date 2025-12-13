@@ -60,7 +60,12 @@ pub async fn check_command_allowed_async(
         .map(|r| format!("'{}'", r.replace("'", "''")))
         .collect::<Vec<_>>()
         .join(",");
-    let priv_list = req_privs.iter().map(|p| format!("'{}'", p)).collect::<Vec<_>>().join(",");
+    // Compare case-insensitively: lower both column and constants
+    let priv_list = req_privs
+        .iter()
+        .map(|p| format!("LOWER('{}')", p.to_lowercase()))
+        .collect::<Vec<_>>()
+        .join(",");
     let q = format!(
         "SELECT COUNT(1) AS c FROM security.grants \
          WHERE scope_kind='DATABASE' AND LOWER(db_name)=LOWER('{db}') \

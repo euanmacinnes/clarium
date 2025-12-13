@@ -22,6 +22,21 @@ pub const ARG_PREFIX: &str = "__arg"; // e.g., __arg0, __arg1
 /// Sentinel group key for global aggregates (GROUP BY ALL / no-key grouping).
 pub const ALL_GROUP_KEY: &str = "__ALL__";
 
+/// Internal single-row unit column used when there is no FROM source.
+pub const UNIT: &str = "__unit";
+
+/// Internal temporary column for tracking left row ids in manual LEFT joins.
+pub const LEFT_ROW_ID: &str = "__left_row_id";
+
+/// Prefix for temporary window-order columns built during window evaluation.
+pub const WINDOW_ORDER_PREFIX: &str = "__window_order_";
+
+/// Temporary boolean alias used in where-subquery mask materialization (lazy selects).
+pub const TMP_BOOL_ALIAS: &str = "__m__";
+
+/// Temporary alias for left-side values in ANY/ALL evaluation (lazy selects).
+pub const TMP_LEFT_ALIAS: &str = "__l__";
+
 /// Returns true if a name is considered an internal/executor-managed column.
 #[inline]
 pub fn is_internal(name: &str) -> bool {

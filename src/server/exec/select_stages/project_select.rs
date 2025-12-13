@@ -19,6 +19,7 @@ use crate::server::query::query_common::WindowFunc;
 use crate::server::query::query_common::TableRef;
 use crate::server::query::query_common::StrSliceBound;
 use crate::server::exec::exec_common::build_arith_expr;
+use crate::server::exec::internal::constants::{ARG_PREFIX, WINDOW_ORDER_PREFIX};
 use crate::scripts::get_script_registry;
 
 pub fn project_select(df: DataFrame, q: &Query, ctx: &mut DataContext) -> Result<DataFrame> {
@@ -366,7 +367,7 @@ pub fn project_select(df: DataFrame, q: &Query, ctx: &mut DataContext) -> Result
                     let col_name = if let AE::Term(AT::Col { name, previous: false }) = expr {
                         resolve_col_name_ctx(&df, ctx, name).unwrap_or_else(|_| name.clone())
                     } else {
-                        let temp_name = format!("__window_order_{}", temp_col_counter);
+                        let temp_name = format!("{}{}", WINDOW_ORDER_PREFIX, temp_col_counter);
                         temp_col_counter += 1;
                         let qualified_expr = qualify_arith_ctx(&df, ctx, expr, "WINDOW ORDER BY")?;
                         let order_expr = build_arith_expr(&qualified_expr, ctx);
@@ -387,7 +388,7 @@ pub fn project_select(df: DataFrame, q: &Query, ctx: &mut DataContext) -> Result
             
             // Remove temporary columns
             for i in 0..temp_col_counter {
-                let temp_name = format!("__window_order_{}", i);
+                let temp_name = format!("{}{}", WINDOW_ORDER_PREFIX, i);
                 if df.get_column_names().iter().any(|n| n.as_str() == temp_name) {
                     df = df.drop(&temp_name)?;
                 }
@@ -666,7 +667,7 @@ pub fn project_select(df: DataFrame, q: &Query, ctx: &mut DataContext) -> Result
                             let mut arg_exprs: Vec<Expr> = Vec::with_capacity(args.len());
                             for (i, a) in args.iter().enumerate() {
                                 let qa = qualify_arith_ctx(&df, ctx, a, "SELECT")?;
-                                arg_exprs.push(build_arith_expr(&qa, ctx).alias(format!("__arg{}", i)));
+                                arg_exprs.push(build_arith_expr(&qa, ctx).alias(format!("{}{}", ARG_PREFIX, i)));
                             }
                             let struct_expr = polars::lazy::dsl::as_struct(arg_exprs);
                             let base = item.alias.clone().unwrap_or_else(|| name.clone());
