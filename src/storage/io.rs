@@ -98,19 +98,6 @@ impl Store {
         }
         let mut out = dfs.remove(0);
         for df in dfs.into_iter() { out.vstack_mut(&df)?; }
-        // If this is a time table and data exists but _time is missing entirely, return a
-        // descriptive error suggesting migration/repair instead of failing later at planning time.
-        if is_time_table && out.height() > 0 && !out.get_column_names().iter().any(|c| c.as_str() == "_time") {
-            crate::tprintln!(
-                "[storage.filter_df] time table '{}' has non-empty parquet without '_time' column; cols={:?}",
-                table,
-                out.get_column_names()
-            );
-            anyhow::bail!(
-                "Time table '{}' is missing required column '_time' in stored data. Run REPAIR to rewrite or migrate legacy chunks.",
-                table
-            );
-        }
         // Ensure all requested columns exist; if missing in parquet, synthesize null columns based on schema
         let present: std::collections::HashSet<String> = out
             .get_column_names()
@@ -383,6 +370,16 @@ impl Store {
 
         fs::create_dir_all(self.db_dir(table))?;
 
+        // Ensure schema.json exists and has correct tableType before first write.
+        // This avoids classifying a freshly written `.time` table as regular on the initial batch.
+        {
+            let sp = self.schema_path(table);
+            if !sp.exists() {
+                // Initialize schema metadata; create_table sets tableType based on suffix `.time`.
+                let _ = self.create_table(table);
+            }
+        }
+
         // Build list of all columns seen in this batch
         let mut col_names: Vec<String> = Vec::new();
         for r in records {
@@ -393,7 +390,8 @@ impl Store {
         col_names.sort();
 
         // Load existing schema (if any) and infer from incoming records
-        let (mut schema, locks) = self.load_schema_with_locks(table).unwrap_or((std::collections::HashMap::new(), std::collections::HashSet::new()));
+        let (mut schema, locks) = self.load_schema_with_locks(table)
+            .unwrap_or((std::collections::HashMap::new(), std::collections::HashSet::new()));
         let inferred = super::Store::infer_dtypes(records, &col_names);
         // Merge respecting locks
         for (k, dt) in inferred {

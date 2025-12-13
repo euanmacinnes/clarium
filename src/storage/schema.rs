@@ -110,10 +110,20 @@ pub(crate) fn save_schema_with_locks(store: &Store, table: &str, schema: &HashMa
     for (k, dt) in schema.iter() { cols.insert(k.clone(), dtype_to_str(dt)); }
     root.insert("columns".into(), serde_json::json!(cols));
     root.insert("locks".into(), serde_json::json!(locks.iter().cloned().collect::<Vec<_>>()));
-    // Preserve existing tableType if present. Do NOT infer from table name here.
-    // Creation paths are responsible for setting an explicit tableType.
-    if !root.contains_key("tableType") {
-        root.insert("tableType".into(), serde_json::json!("regular"));
+    // Ensure tableType is present and consistent. If missing, set based on directory suffix.
+    // If present but inconsistent with `.time` suffix, correct to "time" and log.
+    let ends_time = table.ends_with(".time");
+    match root.get("tableType").and_then(|x| x.as_str()) {
+        Some(tt) => {
+            if ends_time && !tt.eq_ignore_ascii_case("time") {
+                crate::tprintln!("[SCHEMA] save_schema_with_locks: correcting tableType to 'time' for '{}' (was '{}')", table, tt);
+                root.insert("tableType".into(), serde_json::json!("time"));
+            }
+        }
+        None => {
+            let tt = if ends_time { "time" } else { "regular" };
+            root.insert("tableType".into(), serde_json::json!(tt));
+        }
     }
     std::fs::write(&p, serde_json::to_string_pretty(&serde_json::Value::Object(root))?)?;
     Ok(())
