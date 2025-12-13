@@ -8,6 +8,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::tprintln;
 use crate::storage::SharedStore;
+use argon2::{Argon2, PasswordHasher};
+use password_hash::SaltString;
 
 fn collect_sql_files_recursive(dir: &Path) -> Vec<PathBuf> {
     let mut out = Vec::new();
@@ -81,6 +83,9 @@ pub async fn run_install_checks(store: &SharedStore) -> Result<(usize, usize)> {
         "security.role_memberships",
         "security.policies",
         "security.resources",
+        // RBAC grants catalogs
+        "security.grants",
+        "security.future_grants",
         "security.fs_overrides",
         "security.publications",
         "security.pub_graph",
@@ -147,9 +152,96 @@ pub async fn ensure_installed(store: &SharedStore) -> Result<()> {
     // Best-effort: run, but do not fail hard if scripts are missing; checks will surface errors.
     let _ = run_installer(store, &ddl_root).await;
     let (_ok, _err) = run_install_checks(store).await?;
+    // Provision admin user if none exists
+    provision_admin_user(store).await?;
     let _ = INSTALL_ONCE.set(true);
     tprintln!("installer.ensure: completed");
     // Mark installing flag false at the end
     INSTALLING.store(false, Ordering::SeqCst);
     Ok(())
+}
+
+/// Ensure there is at least one admin user present.
+/// - Debug builds: create default admin 'clarium' with password 'clarium' if users table is empty.
+/// - Release builds: use environment variables CLARIUM_ADMIN_USER and CLARIUM_ADMIN_PASSWORD on first install.
+///   Optional Argon2 params: CLARIUM_ARGON2_M, CLARIUM_ARGON2_T, CLARIUM_ARGON2_P. If not provided, defaults are used.
+async fn provision_admin_user(store: &SharedStore) -> Result<()> {
+    // Count users
+    let cnt_val = crate::server::exec::execute_query_safe(store, "SELECT COUNT(1) AS c FROM security.users").await?;
+    let total = cnt_val.get("results").and_then(|r| r.get(0)).and_then(|row| row.get("c")).and_then(|v| v.as_i64()).unwrap_or(0);
+    if total > 0 { return Ok(()); }
+    #[cfg(debug_assertions)]
+    {
+        tprintln!("installer: provisioning default dev admin user 'clarium'");
+        let (user, pass) = ("clarium".to_string(), "clarium".to_string());
+        let phc = hash_password(&pass)?;
+        let now_ms = chrono::Utc::now().timestamp_millis();
+        let ins_user = format!(
+            "INSERT INTO security.users (user_id, display_name, password_hash, attrs_json, created_at, updated_at) VALUES ('{}', '{}', '{}', '{}', {}, {})",
+            user.replace("'", "''"),
+            "Clarium Admin",
+            phc.replace("'", "''"),
+            "{}",
+            now_ms,
+            now_ms
+        );
+        let ins_rm = format!(
+            "INSERT INTO security.role_memberships (user_id, role_id, valid_from, valid_to, created_at, updated_at) VALUES ('{}','admin', {}, NULL, {}, {})",
+            user.replace("'", "''"), now_ms, now_ms, now_ms
+        );
+        let _ = crate::server::exec::execute_query_safe(store, &ins_user).await;
+        let _ = crate::server::exec::execute_query_safe(store, &ins_rm).await;
+        return Ok(());
+    }
+    #[cfg(not(debug_assertions))]
+    {
+        use std::env;
+        let admin_user = env::var("CLARIUM_ADMIN_USER").unwrap_or_default();
+        let admin_pass = env::var("CLARIUM_ADMIN_PASSWORD").unwrap_or_default();
+        if admin_user.is_empty() || admin_pass.is_empty() {
+            tprintln!("installer: no users present. Please set CLARIUM_ADMIN_USER and CLARIUM_ADMIN_PASSWORD environment variables for first-time provisioning. Optionally set CLARIUM_ARGON2_M/CLARIUM_ARGON2_T/CLARIUM_ARGON2_P.");
+            return Ok(());
+        }
+        let phc = hash_password(&admin_pass)?;
+        let now_ms = chrono::Utc::now().timestamp_millis();
+        let ins_user = format!(
+            "INSERT INTO security.users (user_id, display_name, password_hash, attrs_json, created_at, updated_at) VALUES ('{}', '{}', '{}', '{}', {}, {})",
+            admin_user.replace("'", "''"),
+            format!("{} (admin)", admin_user).replace("'", "''"),
+            phc.replace("'", "''"),
+            "{}",
+            now_ms,
+            now_ms
+        );
+        let ins_rm = format!(
+            "INSERT INTO security.role_memberships (user_id, role_id, valid_from, valid_to, created_at, updated_at) VALUES ('{}','admin', {}, NULL, {}, {})",
+            admin_user.replace("'", "''"), now_ms, now_ms, now_ms
+        );
+        let _ = crate::server::exec::execute_query_safe(store, &ins_user).await;
+        let _ = crate::server::exec::execute_query_safe(store, &ins_rm).await;
+        tprintln!("installer: provisioned admin user '{}'.", admin_user);
+        return Ok(());
+    }
+}
+
+fn hash_password(password: &str) -> anyhow::Result<String> {
+    use anyhow::anyhow;
+    // Allow env overrides for Argon2 params in release builds
+    let argon2 = {
+        #[cfg(not(debug_assertions))]
+        {
+            use std::env;
+            let m = env::var("CLARIUM_ARGON2_M").ok().and_then(|s| s.parse::<u32>().ok()).unwrap_or(19456);
+            let t = env::var("CLARIUM_ARGON2_T").ok().and_then(|s| s.parse::<u32>().ok()).unwrap_or(2);
+            let p = env::var("CLARIUM_ARGON2_P").ok().and_then(|s| s.parse::<u32>().ok()).unwrap_or(1);
+            Argon2::new_with_secret(&[], argon2::Algorithm::Argon2id, argon2::Version::V0x13, argon2::Params::new(m, t, p, None).map_err(|e| anyhow!(e.to_string()))?)
+        }
+        #[cfg(debug_assertions)]
+        {
+            Argon2::default()
+        }
+    };
+    let salt = SaltString::generate(&mut rand::thread_rng());
+    let phc = argon2.hash_password(password.as_bytes(), &salt).map_err(|e| anyhow::anyhow!(e.to_string()))?.to_string();
+    Ok(phc)
 }

@@ -1,0 +1,35 @@
+# -------- Stage 1: base builder with system deps and cached dependencies --------
+FROM rust:1.89-slim-bookworm AS build-base
+WORKDIR /app
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libssl-dev pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+
+# Dependency cache warm-up (copy only manifests)
+RUN USER=root cargo new --bin clarium-build-skel
+WORKDIR /app/clarium-build-skel
+COPY Cargo.toml Cargo.lock ./
+RUN mkdir -p src && echo "fn main() {}" > src/main.rs
+RUN cargo build --release || true
+
+# -------- Stage 2: actual build (uses cached deps) --------
+FROM build-base AS build
+WORKDIR /app
+COPY src/ src/
+COPY scripts/ scripts/
+COPY Cargo.toml Cargo.lock ./
+RUN cargo build --release
+
+# -------- Stage 3: minimal hardened runtime (non-root) --------
+FROM gcr.io/distroless/cc-debian12:nonroot
+USER 10001:10001
+WORKDIR /opt/clarium
+COPY --from=build /app/target/release/clarium /usr/local/bin/clarium
+COPY --from=build /app/scripts/ ./scripts/
+ENV CLARIUM_DB_FOLDER=/var/lib/clarium/dbs \
+    CLARIUM_HTTP_PORT=7878 \
+    CLARIUM_PG_PORT=5433 \
+    CLARIUM_PGWIRE=true
+EXPOSE 7878 5433
+VOLUME ["/var/lib/clarium/dbs"]
+ENTRYPOINT ["/usr/local/bin/clarium"]

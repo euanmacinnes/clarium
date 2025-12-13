@@ -25,6 +25,7 @@ use getrandom::getrandom;
 use anyhow::Context;
 use std::panic::{AssertUnwindSafe};
 use futures_util::FutureExt; // for catch_unwind on async blocks
+use std::time::{Duration, Instant};
 
 use crate::{storage::{SharedStore, Record}, security};
 pub mod query;
@@ -74,6 +75,40 @@ pub struct AppState {
     pub csrf_tokens: std::sync::Arc<RwLock<HashMap<String, String>>>,
     /// Session id -> (database, schema) mapping
     pub session_defaults: std::sync::Arc<RwLock<HashMap<String, (String, String)>>>,
+    /// Session id -> metadata (issued_at, last_seen)
+    pub session_meta: std::sync::Arc<RwLock<HashMap<String, SessionMeta>>>,
+    /// Brute-force protection: (ip, username) -> attempt state (login)
+    pub login_attempts: std::sync::Arc<RwLock<HashMap<(String, String), AttemptState>>>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct SessionMeta {
+    pub issued_at: Instant,
+    pub last_seen: Instant,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct AttemptState {
+    pub window_start: Instant,
+    pub count_in_window: u32,
+    pub failures: u32,
+    pub backoff_until: Option<Instant>,
+}
+
+fn session_idle_timeout() -> Duration {
+    let secs = std::env::var("CLARIUM_SESSION_IDLE_SECS")
+        .ok()
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(30 * 60);
+    Duration::from_secs(secs)
+}
+
+fn session_absolute_lifetime() -> Duration {
+    let secs = std::env::var("CLARIUM_SESSION_ABS_SECS")
+        .ok()
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(24 * 60 * 60);
+    Duration::from_secs(secs)
 }
 
 /// Start the clarium HTTP server (and optional pgwire) bound to the given ports.
@@ -223,6 +258,8 @@ pub async fn run_with_ports(http_port: u16, pg_port: Option<u16>, db_root: &str)
         sessions: std::sync::Arc::new(RwLock::new(HashMap::new())),
         csrf_tokens: std::sync::Arc::new(RwLock::new(HashMap::new())),
         session_defaults: std::sync::Arc::new(RwLock::new(HashMap::new())),
+        session_meta: std::sync::Arc::new(RwLock::new(HashMap::new())),
+        login_attempts: std::sync::Arc::new(RwLock::new(HashMap::new())),
     };
 
     // Optionally start a basic pgwire listener on the provided port
@@ -551,6 +588,33 @@ fn parse_cookie(headers: &HeaderMap, name: &str) -> Option<String> {
 
 async fn get_username_from_headers(state: &AppState, headers: &HeaderMap) -> Option<String> {
     let sid = parse_cookie(headers, SESSION_COOKIE)?;
+    // Enforce session timeouts
+    {
+        let mut meta_map = state.session_meta.write().await;
+        if let Some(meta) = meta_map.get_mut(&sid) {
+            let now = Instant::now();
+            if now.duration_since(meta.issued_at) > session_absolute_lifetime()
+                || now.duration_since(meta.last_seen) > session_idle_timeout()
+            {
+                // expire session: remove from all maps
+                drop(meta_map);
+                let mut s = state.sessions.write().await; s.remove(&sid);
+                let mut c = state.csrf_tokens.write().await; c.remove(&sid);
+                let mut d = state.session_defaults.write().await; d.remove(&sid);
+                let mut m = state.session_meta.write().await; m.remove(&sid);
+                return None;
+            } else {
+                meta.last_seen = now;
+            }
+        } else {
+            // No metadata -> treat as invalid
+            let mut s = state.sessions.write().await; s.remove(&sid);
+            let mut c = state.csrf_tokens.write().await; c.remove(&sid);
+            let mut d = state.session_defaults.write().await; d.remove(&sid);
+            let mut m = state.session_meta.write().await; m.remove(&sid);
+            return None;
+        }
+    }
     let map = state.sessions.read().await;
     map.get(&sid).cloned()
 }
@@ -579,6 +643,11 @@ fn clear_session_cookie() -> HeaderValue {
 }
 
 async fn login(State(state): State<AppState>, Json(payload): Json<LoginPayload>) -> impl IntoResponse {
+    // Basic rate limiting
+    let client_ip = extract_client_ip(None);
+    if !check_login_rate_limit(&state, &client_ip, &payload.username).await {
+        return (StatusCode::TOO_MANY_REQUESTS, HeaderMap::new(), Json(serde_json::json!({"status":"rate_limited"})));
+    }
     match security::authenticate(&state.db_root, &payload.username, &payload.password) {
         Ok(true) => {
             // generate session id
@@ -605,11 +674,22 @@ async fn login(State(state): State<AppState>, Json(payload): Json<LoginPayload>)
                 let mut dmap = state.session_defaults.write().await;
                 dmap.insert(sid.clone(), (env_default_db(), env_default_schema()));
             }
+            // initialize session meta
+            {
+                let mut mmap = state.session_meta.write().await;
+                let now = Instant::now();
+                mmap.insert(sid.clone(), SessionMeta { issued_at: now, last_seen: now });
+            }
+            // record success and reset rate limiter
+            record_login_success(&state, &client_ip, &payload.username).await;
             let mut headers = HeaderMap::new();
             headers.insert("Set-Cookie", set_session_cookie(&sid));
             (StatusCode::OK, headers, Json(serde_json::json!({"status":"ok"})))
         }
-        Ok(false) => (StatusCode::UNAUTHORIZED, HeaderMap::new(), Json(serde_json::json!({"status":"unauthorized"}))),
+        Ok(false) => {
+            record_login_failure(&state, &client_ip, &payload.username).await;
+            (StatusCode::UNAUTHORIZED, HeaderMap::new(), Json(serde_json::json!({"status":"unauthorized"})))
+        },
         Err(e) => {
             error!("login error: {e}");
             (StatusCode::INTERNAL_SERVER_ERROR, HeaderMap::new(), Json(serde_json::json!({"status":"error","error": e.to_string()})))
@@ -628,6 +708,9 @@ async fn logout(State(state): State<AppState>, headers: HeaderMap) -> impl IntoR
         // also remove csrf token
         let mut cmap = state.csrf_tokens.write().await;
         cmap.remove(&sid);
+        // and defaults + meta
+        let mut dmap = state.session_defaults.write().await; dmap.remove(&sid);
+        let mut mmap = state.session_meta.write().await; mmap.remove(&sid);
     }
     let mut h = HeaderMap::new();
     h.insert("Set-Cookie", clear_session_cookie());
@@ -646,11 +729,8 @@ async fn write(
     if !validate_csrf(&state, &headers).await {
         return (StatusCode::FORBIDDEN, Json(serde_json::json!({"status":"forbidden","error":"invalid csrf"})));
     }
-    // authorize insert
-    let allowed = match security::authorize(&state.db_root, &username, security::CommandKind::Insert, Some(&database)) {
-        Ok(b) => b,
-        Err(e) => { error!("auth error: {e}"); false }
-    };
+    // authorize insert (enhanced RBAC in debug builds; legacy parquet authorizer in release)
+    let allowed = crate::identity::authorizer::check_command_allowed_async(&state.store, &username, security::CommandKind::Insert, Some(&database)).await;
     if !allowed {
         return (StatusCode::FORBIDDEN, Json(serde_json::json!({"status":"forbidden"})));
     }
@@ -812,27 +892,24 @@ async fn query_handler(
     Json(payload): Json<QueryPayload>,
 ) -> impl IntoResponse {
     let Some(username) = get_username_from_headers(&state, &headers).await else {
-        return (StatusCode::UNAUTHORIZED, Json(serde_json::json!({"status":"unauthorized"})));
+        return (StatusCode::UNAUTHORIZED, Json(serde_json::json!({"status":"unauthorized"}))).into_response();
     };
     if !validate_csrf(&state, &headers).await {
-        return (StatusCode::FORBIDDEN, Json(serde_json::json!({"status":"forbidden","error":"invalid csrf"})));
+        return (StatusCode::FORBIDDEN, Json(serde_json::json!({"status":"forbidden","error":"invalid csrf"}))).into_response();
     }
     // Transaction control statements: accept as no-ops for client compatibility
     if let Some(_tx) = detect_transaction_cmd(&payload.query) {
-        return (StatusCode::OK, Json(serde_json::json!({"status":"ok","results": {"transaction":"ok"} })));
+        return (StatusCode::OK, Json(serde_json::json!({"status":"ok","results": {"transaction":"ok"} }))).into_response();
     }
     // Parse and authorize
     let cmd = match query::parse(&payload.query) {
         Ok(c) => c,
-        Err(e) => { return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"status":"error","error": e.to_string()}))); }
+        Err(e) => { return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"status":"error","error": e.to_string()}))).into_response(); }
     };
     let (ck, db_opt) = to_ck_and_db(&cmd);
-    let allowed = match security::authorize(&state.db_root, &username, ck, db_opt.as_deref()) {
-        Ok(b) => b,
-        Err(e) => { error!("auth error: {e}"); false }
-    };
+    let allowed = crate::identity::authorizer::check_command_allowed_async(&state.store, &username, ck, db_opt.as_deref()).await;
     if !allowed {
-        return (StatusCode::FORBIDDEN, Json(serde_json::json!({"status":"forbidden"})));
+        return (StatusCode::FORBIDDEN, Json(serde_json::json!({"status":"forbidden"}))).into_response();
     }
     // Determine per-session defaults
     let (cur_db, cur_schema) = {
@@ -846,8 +923,26 @@ async fn query_handler(
     let exec_fut = async {
         crate::server::exec::execute_query_with_defaults(&state.store, &payload.query, &defaults).await
     };
-    match AssertUnwindSafe(exec_fut).catch_unwind().await {
-        Ok(Ok(value)) => (StatusCode::OK, Json(serde_json::json!({"status":"ok","results": value}))),
+    let exec_result = AssertUnwindSafe(exec_fut).catch_unwind().await;
+    match exec_result {
+        Ok(Ok(value)) => {
+            // If this was a self privilege change, rotate session id for safety
+            if let Ok(parsed_cmd) = query::parse(&payload.query) {
+                if let query::Command::UserAlter { username: u, .. } = parsed_cmd {
+                    if u == username {
+                        if let Some(old_sid) = get_sid_from_headers(&headers) {
+                            if let Some(new_cookie) = rotate_session_id(&state, &old_sid).await {
+                                let mut h = HeaderMap::new();
+                                h.insert("Set-Cookie", new_cookie);
+                                let resp = (StatusCode::OK, h, Json(serde_json::json!({"status":"ok","results": value})) ).into_response();
+                                return resp;
+                            }
+                        }
+                    }
+                }
+            }
+            return (StatusCode::OK, Json(serde_json::json!({"status":"ok","results": value})) ).into_response();
+        }
         Ok(Err(e)) => {
             // Prefer AppError mapping when available
             if let Some(app) = e.downcast_ref::<crate::error::AppError>() {
@@ -856,11 +951,11 @@ async fn query_handler(
                     "status":"error",
                     "code": app.code_str(),
                     "message": app.message()
-                })));
+                }))).into_response();
             }
             // Treat other execution failures as semantic errors (unprocessable)
             error!("query failed: {e}");
-            (StatusCode::UNPROCESSABLE_ENTITY, Json(serde_json::json!({"status":"error","code":"exec_error","message": e.to_string()})))
+            return (StatusCode::UNPROCESSABLE_ENTITY, Json(serde_json::json!({"status":"error","code":"exec_error","message": e.to_string()}))).into_response();
         }
         Err(panic_payload) => {
             // Convert panics to a 500 error response without crashing the server task
@@ -868,11 +963,11 @@ async fn query_handler(
                       else if let Some(s) = panic_payload.downcast_ref::<String>() { s.as_str() }
                       else { "panic" };
             error!(target: "panic", "HTTP query_handler panic: {}", msg);
-            (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({
+            return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({
                 "status":"error",
                 "code":"internal_panic",
                 "message":"internal server error"
-            })))
+            }))).into_response();
         }
     }
 }
@@ -902,7 +997,16 @@ async fn ws_handler(State(state): State<AppState>, headers: HeaderMap, ws: WebSo
                         // authorize per message
                         let auth_ok = if let Ok(cmd) = query::parse(&text) {
                             let (ck, db_opt) = to_ck_and_db(&cmd);
-                            security::authorize(&state.db_root, &username, ck, db_opt.as_deref()).unwrap_or_default()
+                            {
+                                #[cfg(debug_assertions)]
+                                {
+                                    crate::identity::check_command_allowed(&state.db_root, &username, ck, db_opt.as_deref())
+                                }
+                                #[cfg(not(debug_assertions))]
+                                {
+                                    security::authorize(&state.db_root, &username, ck, db_opt.as_deref()).unwrap_or_default()
+                                }
+                            }
                         } else { false };
                         if !auth_ok {
                             let _ = socket.send(Message::Text(serde_json::json!({"status":"forbidden","error":"forbidden"}).to_string().into())).await;
@@ -956,6 +1060,97 @@ async fn ws_handler(State(state): State<AppState>, headers: HeaderMap, ws: WebSo
             }
         }
     })
+}
+
+// --- Helpers: session rotation and login rate limiting ---
+
+async fn rotate_session_id(state: &AppState, old_sid: &str) -> Option<HeaderValue> {
+    // Generate new SID and CSRF
+    let mut bytes = [0u8; 16];
+    let _ = getrandom(&mut bytes);
+    let mut new_sid = String::with_capacity(32);
+    use std::fmt::Write as _;
+    for b in &bytes { let _ = write!(&mut new_sid, "{:02x}", b); }
+    let mut csrf_bytes = [0u8; 32];
+    let _ = getrandom(&mut csrf_bytes);
+    let mut new_csrf = String::with_capacity(64);
+    for b in &csrf_bytes { let _ = write!(&mut new_csrf, "{:02x}", b); }
+
+    let mut sessions = state.sessions.write().await;
+    if let Some(username) = sessions.remove(old_sid) {
+        sessions.insert(new_sid.clone(), username);
+        drop(sessions);
+        // Move defaults
+        let mut d = state.session_defaults.write().await;
+        if let Some(val) = d.remove(old_sid) { d.insert(new_sid.clone(), val); }
+        drop(d);
+        // Replace CSRF
+        let mut c = state.csrf_tokens.write().await;
+        c.remove(old_sid);
+        c.insert(new_sid.clone(), new_csrf);
+        drop(c);
+        // Update meta
+        let mut m = state.session_meta.write().await;
+        let now = Instant::now();
+        m.insert(new_sid.clone(), SessionMeta { issued_at: now, last_seen: now });
+        m.remove(old_sid);
+        drop(m);
+        Some(set_session_cookie(&new_sid))
+    } else {
+        None
+    }
+}
+
+fn extract_client_ip(headers: Option<&HeaderMap>) -> String {
+    if let Some(h) = headers {
+        if let Some(v) = h.get("x-forwarded-for").or_else(|| h.get("X-Forwarded-For")) {
+            if let Ok(s) = v.to_str() { return s.split(',').next().unwrap_or("").trim().to_string(); }
+        }
+        if let Some(v) = h.get("x-real-ip").or_else(|| h.get("X-Real-IP")) {
+            if let Ok(s) = v.to_str() { return s.to_string(); }
+        }
+    }
+    // Fallback: unknown
+    "unknown".to_string()
+}
+
+async fn check_login_rate_limit(state: &AppState, ip: &str, username: &str) -> bool {
+    let mut map = state.login_attempts.write().await;
+    let key = (ip.to_string(), username.to_string());
+    let now = Instant::now();
+    let entry = map.entry(key).or_insert(AttemptState { window_start: now, count_in_window: 0, failures: 0, backoff_until: None });
+    // Backoff enforcement
+    if let Some(until) = entry.backoff_until {
+        if now < until { return false; }
+        entry.backoff_until = None;
+    }
+    // Sliding window of 60 seconds
+    if now.duration_since(entry.window_start) > Duration::from_secs(60) {
+        entry.window_start = now;
+        entry.count_in_window = 0;
+    }
+    entry.count_in_window += 1;
+    // Hard cap attempts per minute
+    if entry.count_in_window > 20 {
+        return false;
+    }
+    true
+}
+
+async fn record_login_failure(state: &AppState, ip: &str, username: &str) {
+    let mut map = state.login_attempts.write().await;
+    let key = (ip.to_string(), username.to_string());
+    let now = Instant::now();
+    let entry = map.entry(key).or_insert(AttemptState { window_start: now, count_in_window: 0, failures: 0, backoff_until: None });
+    entry.failures = entry.failures.saturating_add(1);
+    let backoff_secs = 2u64.saturating_pow(entry.failures.min(8));
+    entry.backoff_until = Some(now + Duration::from_secs(backoff_secs));
+}
+
+async fn record_login_success(state: &AppState, ip: &str, username: &str) {
+    let mut map = state.login_attempts.write().await;
+    let key = (ip.to_string(), username.to_string());
+    map.remove(&key);
 }
 
 

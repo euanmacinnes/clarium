@@ -1,0 +1,43 @@
+version: "3.9"
+
+services:
+  clarium-dev:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+      args:
+        - FEATURES=
+    image: clarium:dev
+    environment:
+      CLARIUM_DB_FOLDER: /var/lib/clarium/dbs
+      CLARIUM_HTTP_PORT: 7878
+      CLARIUM_PG_PORT: 5433
+      CLARIUM_PGWIRE: "true"
+    ports:
+      - "7878:7878"
+      - "5433:5433"
+    volumes:
+      - clarium-data:/var/lib/clarium/dbs
+    restart: unless-stopped
+
+  clarium-distroless:
+    build:
+      context: .
+      dockerfile: Dockerfile.distroless
+      args:
+        - FEATURES=
+    image: clarium:distroless
+    environment:
+      CLARIUM_DB_FOLDER: /var/lib/clarium/dbs
+      CLARIUM_HTTP_PORT: 7878
+      CLARIUM_PG_PORT: 5433
+      CLARIUM_PGWIRE: "true"
+    ports:
+      - "7878:7878"
+      - "5433:5433"
+    volumes:
+      - clarium-data:/var/lib/clarium/dbs
+    restart: unless-stopped
+
+volumes:
+  clarium-data: {}

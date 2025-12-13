@@ -4,7 +4,7 @@ use crate::system_catalog::registry;
 use crate::storage::SharedStore;
 use super::role_common::synthesize_core_roles;
 
-pub struct PgRoles;
+pub struct PgAuthId;
 
 const COLS: &[ColumnDef] = &[
     ColumnDef { name: "oid", coltype: ColType::Integer },
@@ -15,15 +15,15 @@ const COLS: &[ColumnDef] = &[
     ColumnDef { name: "rolcreatedb", coltype: ColType::Boolean },
     ColumnDef { name: "rolcanlogin", coltype: ColType::Boolean },
     ColumnDef { name: "rolreplication", coltype: ColType::Boolean },
+    ColumnDef { name: "rolbypassrls", coltype: ColType::Boolean },
     ColumnDef { name: "rolconnlimit", coltype: ColType::Integer },
     ColumnDef { name: "rolpassword", coltype: ColType::Text },
     ColumnDef { name: "rolvaliduntil", coltype: ColType::Text },
-    ColumnDef { name: "rolbypassrls", coltype: ColType::Boolean },
 ];
 
-impl SystemTable for PgRoles {
+impl SystemTable for PgAuthId {
     fn schema(&self) -> &'static str { "pg_catalog" }
-    fn name(&self) -> &'static str { "pg_roles" }
+    fn name(&self) -> &'static str { "pg_authid" }
     fn columns(&self) -> &'static [ColumnDef] { COLS }
     fn build(&self, _store: &SharedStore) -> Option<DataFrame> {
         let rows = synthesize_core_roles();
@@ -31,4 +31,4 @@ impl SystemTable for PgRoles {
     }
 }
 
-pub fn register() { registry::register(Box::new(PgRoles)); }
+pub fn register() { registry::register(Box::new(PgAuthId)); }

@@ -501,6 +501,8 @@ pub fn register_defaults() {
     pg_namespace::register();
     pg_database::register();
     pg_roles::register();
+    pg_authid::register();
+    pg_auth_members::register();
     pg_attribute::register();
     pg_attrdef::register();
     pg_class::register();
@@ -554,8 +556,6 @@ pub fn register_defaults() {
         ("pg_db_role_setting", COLS_PG_DB_ROLE_SETTING),
         ("pg_ts_config_map", COLS_PG_TS_CONFIG_MAP),
         ("pg_transform", COLS_PG_TRANSFORM),
-        ("pg_authid", COLS_PG_AUTHID),
-        ("pg_auth_members", COLS_PG_AUTH_MEMBERS),
         ("pg_statistic_ext", COLS_PG_STATISTIC_EXT),
         ("pg_statistic_ext_data", COLS_PG_STATISTIC_EXT_DATA),
         ("pg_statistic", COLS_PG_STATISTIC),
@@ -602,6 +602,9 @@ use crate::system_catalog::registry::{self as reg, ColumnDef, ColType, NoOpSyste
 pub mod pg_namespace;
 pub mod pg_database;
 pub mod pg_roles;
+pub mod pg_authid;
+pub mod pg_auth_members;
+pub mod role_common;
 pub mod pg_attribute;
 pub mod pg_attrdef;
 pub mod pg_type;

@@ -1,0 +1,39 @@
+# -------- Dev image: Debian slim, full toolchain, faster inner loop --------
+FROM rust:1.89-slim-bookworm AS build
+WORKDIR /app
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+       libssl-dev pkg-config ca-certificates curl tini \
+    && update-ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Cache deps first for faster rebuilds
+COPY Cargo.toml Cargo.lock ./
+RUN mkdir -p src && echo "fn main() {}" > src/main.rs \
+    && cargo build --release || true
+
+# Real sources
+COPY src/ src/
+COPY scripts/ scripts/
+RUN cargo build --release
+
+# Runtime in Debian slim with shell + certs for debugging
+FROM debian:bookworm-slim
+WORKDIR /opt/clarium
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates tzdata \
+    && update-ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=build /app/target/release/clarium /usr/local/bin/clarium
+COPY --from=build /app/scripts/ ./scripts/
+
+ENV CLARIUM_DB_FOLDER=/var/lib/clarium/dbs \
+    CLARIUM_HTTP_PORT=7878 \
+    CLARIUM_PG_PORT=5433 \
+    CLARIUM_PGWIRE=true
+
+EXPOSE 7878 5433
+VOLUME ["/var/lib/clarium/dbs"]
+ENTRYPOINT ["/usr/bin/tini","--","/usr/local/bin/clarium"]
