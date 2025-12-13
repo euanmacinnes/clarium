@@ -169,6 +169,7 @@ mod vector_utils_tests;
 mod views_with_tvfs_tests;
 mod where_tests;
 mod windowing_tests;
+mod qualified_naming_tests;
 
 mod partitioned_table_tests {
     use super::super::{run_select};

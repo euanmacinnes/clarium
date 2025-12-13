@@ -1,11 +1,9 @@
 use anyhow::Result;
 use serde_json::Value;
-use polars::prelude::*;
-use std::collections::BTreeSet;
-use std::path::Path;
+// use polars::prelude::*; // not needed directly here
 
 use crate::server::query::Command;
-use crate::scripts::scripts_dir_for;
+// use crate::scripts::scripts_dir_for; // unused in this module
 use crate::storage::SharedStore;
 use crate::server::graphstore::graphstore_status_df;
 use crate::lua_bc::DEFAULT_DB;

@@ -39,7 +39,7 @@ fn hash_password(password: &str) -> Result<String> {
     Ok(phc)
 }
 
-fn verify_password(hash: &str, password: &str) -> bool {
+pub fn verify_password(hash: &str, password: &str) -> bool {
     if let Ok(parsed) = PasswordHash::new(hash) {
         let argon2 = Argon2::default();
         argon2.verify_password(password.as_bytes(), &parsed).is_ok()

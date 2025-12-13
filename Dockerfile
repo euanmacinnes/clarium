@@ -1,6 +1,6 @@
 # Clarium (formerly Timeline) Rust service container
 
-FROM rust:1.89-slim-bookworm AS build
+FROM rust:1.92-slim-bookworm AS build
 LABEL authors="Euan MacInnes"
 
 WORKDIR /app

@@ -241,7 +241,10 @@ fn hash_password(password: &str) -> anyhow::Result<String> {
             Argon2::default()
         }
     };
-    let salt = SaltString::generate(&mut rand::thread_rng());
+    // Generate salt bytes via getrandom for portability (no rand crate)
+    let mut salt_bytes = [0u8; 16];
+    getrandom::getrandom(&mut salt_bytes).map_err(|e| anyhow!(e.to_string()))?;
+    let salt = SaltString::encode_b64(&salt_bytes).map_err(|e| anyhow!(e.to_string()))?;
     let phc = argon2.hash_password(password.as_bytes(), &salt).map_err(|e| anyhow::anyhow!(e.to_string()))?.to_string();
     Ok(phc)
 }

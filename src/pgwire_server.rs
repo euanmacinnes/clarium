@@ -23,6 +23,7 @@ use crate::tprintln;
 
 use crate::{storage::SharedStore, server::exec};
 use crate::identity::{AuthProvider, LocalAuthProvider, SessionManager, LoginRequest, RequestContext, Principal};
+use crate::identity::login_via_sql;
 use crate::server::query::{self, Command};
 use crate::server::exec::exec_select::handle_select;
 use polars::prelude::AnyValue;
@@ -129,10 +130,8 @@ async fn handle_conn(socket: &mut tokio::net::TcpStream, store: SharedStore, con
                 request_password(socket).await?;
                 let password = read_password_message(socket).await?;
                 debug!(target: "pgwire", "conn_id={} password received, authenticating user '{}'", conn_id, user);
-                let db_root = store.root_path().to_string_lossy().to_string();
-                let provider = LocalAuthProvider::new(db_root, SessionManager::default());
                 let lr = LoginRequest { username: user.clone(), password: password.clone(), db: None, ip: Some(peer.to_string()) };
-                match provider.login(&lr) {
+                match login_via_sql(&store, &SessionManager::default(), &lr).await {
                     Ok(resp) => {
                         debug!(target: "pgwire", "conn_id={} login successful for user '{}' (sid={})", conn_id, user, resp.session.session_id);
                         // Initialize session state honoring dbname/database if provided
@@ -177,10 +176,8 @@ async fn handle_conn(socket: &mut tokio::net::TcpStream, store: SharedStore, con
             request_password(socket).await?;
             let password = read_password_message(socket).await?;
             debug!(target: "pgwire", "conn_id={} password received, authenticating user '{}'", conn_id, user);
-            let db_root = store.root_path().to_string_lossy().to_string();
-            let provider = LocalAuthProvider::new(db_root, SessionManager::default());
             let lr = LoginRequest { username: user.clone(), password: password.clone(), db: None, ip: Some(peer.to_string()) };
-            match provider.login(&lr) {
+            match login_via_sql(&store, &SessionManager::default(), &lr).await {
                 Ok(resp) => {
                     debug!(target: "pgwire", "conn_id={} login successful for user '{}' (sid={})", conn_id, user, resp.session.session_id);
                     send_auth_ok_and_params(socket, &params).await?;

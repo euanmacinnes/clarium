@@ -648,14 +648,17 @@ async fn login(State(state): State<AppState>, Json(payload): Json<LoginPayload>)
     if !check_login_rate_limit(&state, &client_ip, &payload.username).await {
         return (StatusCode::TOO_MANY_REQUESTS, HeaderMap::new(), Json(serde_json::json!({"status":"rate_limited"})));
     }
-    match security::authenticate(&state.db_root, &payload.username, &payload.password) {
-        Ok(true) => {
-            // generate session id
-            let mut bytes = [0u8; 16];
-            let _ = getrandom(&mut bytes);
-            let mut sid = String::with_capacity(32);
-            use std::fmt::Write as _;
-            for b in &bytes { let _ = write!(&mut sid, "{:02x}", b); }
+    // Use unified SQL-backed login used by pgwire as well
+    use std::fmt::Write as _;
+    let lr = crate::identity::LoginRequest {
+        username: payload.username.clone(),
+        password: payload.password.clone(),
+        db: None,
+        ip: Some(client_ip.clone()),
+    };
+    match crate::identity::login_via_sql(&state.store, &crate::identity::SessionManager::default(), &lr).await {
+        Ok(resp) => {
+            let sid = resp.session.session_id.clone();
             // generate CSRF token
             let mut csrf_bytes = [0u8; 32];
             let _ = getrandom(&mut csrf_bytes);
@@ -686,13 +689,10 @@ async fn login(State(state): State<AppState>, Json(payload): Json<LoginPayload>)
             headers.insert("Set-Cookie", set_session_cookie(&sid));
             (StatusCode::OK, headers, Json(serde_json::json!({"status":"ok"})))
         }
-        Ok(false) => {
+        Err(_e) => {
+            // invalid credentials or lookup failure
             record_login_failure(&state, &client_ip, &payload.username).await;
             (StatusCode::UNAUTHORIZED, HeaderMap::new(), Json(serde_json::json!({"status":"unauthorized"})))
-        },
-        Err(e) => {
-            error!("login error: {e}");
-            (StatusCode::INTERNAL_SERVER_ERROR, HeaderMap::new(), Json(serde_json::json!({"status":"error","error": e.to_string()})))
         }
     }
 }
@@ -730,7 +730,7 @@ async fn write(
         return (StatusCode::FORBIDDEN, Json(serde_json::json!({"status":"forbidden","error":"invalid csrf"})));
     }
     // authorize insert (enhanced RBAC in debug builds; legacy parquet authorizer in release)
-    let allowed = crate::identity::authorizer::check_command_allowed_async(&state.store, &username, security::CommandKind::Insert, Some(&database)).await;
+    let allowed = crate::identity::check_command_allowed_async(&state.store, &username, security::CommandKind::Insert, Some(&database)).await;
     if !allowed {
         return (StatusCode::FORBIDDEN, Json(serde_json::json!({"status":"forbidden"})));
     }
@@ -907,7 +907,7 @@ async fn query_handler(
         Err(e) => { return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"status":"error","error": e.to_string()}))).into_response(); }
     };
     let (ck, db_opt) = to_ck_and_db(&cmd);
-    let allowed = crate::identity::authorizer::check_command_allowed_async(&state.store, &username, ck, db_opt.as_deref()).await;
+    let allowed = crate::identity::check_command_allowed_async(&state.store, &username, ck, db_opt.as_deref()).await;
     if !allowed {
         return (StatusCode::FORBIDDEN, Json(serde_json::json!({"status":"forbidden"}))).into_response();
     }
@@ -994,19 +994,10 @@ async fn ws_handler(State(state): State<AppState>, headers: HeaderMap, ws: WebSo
                             let _ = socket.send(Message::Text(serde_json::json!({"status":"ok","results": {"transaction":"ok"}}).to_string().into())).await;
                             continue;
                         }
-                        // authorize per message
+                        // authorize per message using unified async RBAC gate
                         let auth_ok = if let Ok(cmd) = query::parse(&text) {
                             let (ck, db_opt) = to_ck_and_db(&cmd);
-                            {
-                                #[cfg(debug_assertions)]
-                                {
-                                    crate::identity::check_command_allowed(&state.db_root, &username, ck, db_opt.as_deref())
-                                }
-                                #[cfg(not(debug_assertions))]
-                                {
-                                    security::authorize(&state.db_root, &username, ck, db_opt.as_deref()).unwrap_or_default()
-                                }
-                            }
+                            crate::identity::check_command_allowed_async(&state.store, &username, ck, db_opt.as_deref()).await
                         } else { false };
                         if !auth_ok {
                             let _ = socket.send(Message::Text(serde_json::json!({"status":"forbidden","error":"forbidden"}).to_string().into())).await;

@@ -1,5 +1,5 @@
 # -------- Dev image: Debian slim, full toolchain, faster inner loop --------
-FROM rust:1.89-slim-bookworm AS build
+FROM rust:1.92-slim-bookworm AS build
 WORKDIR /app
 
 RUN apt-get update \
