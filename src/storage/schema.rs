@@ -5,6 +5,33 @@ use crate::tprintln;
 use super::Store;
 use crate::system_catalog::registry as sysreg;
 
+/// If a table directory name ends with `.time` but its `schema.json` lacks
+/// `tableType: "time"`, upgrade it in place. Returns true if a change was made.
+pub(crate) fn ensure_time_tabletype_for_legacy_dir(store: &Store, table: &str) -> anyhow::Result<bool> {
+    // Only act on legacy `.time` directory naming
+    if !table.ends_with(".time") { return Ok(false); }
+    let p = store.schema_path(table);
+    if !p.exists() { return Ok(false); }
+    let text = match std::fs::read_to_string(&p) { Ok(t) => t, Err(_) => return Ok(false) };
+    let mut changed = false;
+    if let Ok(mut v) = serde_json::from_str::<serde_json::Value>(&text) {
+        if let Some(obj) = v.as_object_mut() {
+            let needs = match obj.get("tableType").and_then(|x| x.as_str()) {
+                Some(tt) => !tt.eq_ignore_ascii_case("time"),
+                None => true,
+            };
+            if needs {
+                crate::tprintln!("[SCHEMA] auto-upgrade: setting tableType='time' for legacy dir '{}'", table);
+                obj.insert("tableType".into(), serde_json::json!("time"));
+                if std::fs::write(&p, serde_json::to_string_pretty(&serde_json::Value::Object(obj.clone())).unwrap_or_else(|_| text.clone())).is_ok() {
+                    changed = true;
+                }
+            }
+        }
+    }
+    Ok(changed)
+}
+
 pub(crate) fn get_primary_key(store: &Store, table: &str) -> Option<Vec<String>> {
     let p = store.schema_path(table);
     if !p.exists() { return None; }

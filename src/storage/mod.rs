@@ -79,6 +79,8 @@ impl Store {
     /// We only trust the persisted schema metadata (and system registry when
     /// applicable). If metadata is absent or invalid, we default to `false`.
     pub fn is_time_table(&self, table: &str) -> bool {
+        // Auto-upgrade legacy `.time` directories that are missing explicit tableType
+        let _ = crate::storage::schema::ensure_time_tabletype_for_legacy_dir(self, table);
         let schema_path = self.schema_path(table);
         if schema_path.exists() {
             if let Ok(text) = std::fs::read_to_string(&schema_path) {

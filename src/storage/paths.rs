@@ -48,6 +48,8 @@ impl Store {
             return p_time;
         }
         if reg_exists && time_exists {
+            // If caller explicitly requested a time table, honor that preference.
+            if explicit_time { return p_time; }
             return p_regular;
         }
         // Neither exists: pick based on explicit intent, otherwise regular

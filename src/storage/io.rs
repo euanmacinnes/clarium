@@ -19,6 +19,8 @@ pub(crate) fn parse_chunk_min_max(name: &str) -> Option<(i64, i64)> {
 
 impl Store {
     pub fn filter_df(&self, table: &str, cols: &[String], t0: Option<i64>, t1: Option<i64>) -> Result<DataFrame> {
+        // Opportunistic upgrade for legacy `.time` dirs
+        let _ = crate::storage::schema::ensure_time_tabletype_for_legacy_dir(self, table);
         let dir = self.db_dir(table);
         let mut wanted: Vec<String> = cols.iter().cloned().collect();
         // Ensure _time present only for time-series tables (metadata-first detection)
@@ -96,6 +98,19 @@ impl Store {
         }
         let mut out = dfs.remove(0);
         for df in dfs.into_iter() { out.vstack_mut(&df)?; }
+        // If this is a time table and data exists but _time is missing entirely, return a
+        // descriptive error suggesting migration/repair instead of failing later at planning time.
+        if is_time_table && out.height() > 0 && !out.get_column_names().iter().any(|c| c.as_str() == "_time") {
+            crate::tprintln!(
+                "[storage.filter_df] time table '{}' has non-empty parquet without '_time' column; cols={:?}",
+                table,
+                out.get_column_names()
+            );
+            anyhow::bail!(
+                "Time table '{}' is missing required column '_time' in stored data. Run REPAIR to rewrite or migrate legacy chunks.",
+                table
+            );
+        }
         // Ensure all requested columns exist; if missing in parquet, synthesize null columns based on schema
         let present: std::collections::HashSet<String> = out
             .get_column_names()
@@ -141,6 +156,8 @@ impl Store {
     }
 
     pub fn read_df(&self, table: &str) -> Result<DataFrame> {
+        // Opportunistic upgrade for legacy `.time` dirs
+        let _ = crate::storage::schema::ensure_time_tabletype_for_legacy_dir(self, table);
         let dir = self.db_dir(table);
         let mut dfs: Vec<DataFrame> = Vec::new();
         if dir.exists() {
@@ -191,6 +208,11 @@ impl Store {
         }
         let mut out = dfs.remove(0);
         for df in dfs.into_iter() { out.vstack_mut(&df)?; }
+        // Validate presence of _time for time tables; if missing, emit diagnostic
+        if self.is_time_table(table) && !out.get_column_names().iter().any(|c| c.as_str() == "_time") {
+            crate::tprintln!("[STORAGE] read_df: time table '{}' missing '_time' column in parquet; data may be legacy or corrupted", table);
+            // Do not fabricate _time for non-empty data; return as-is. Upstream stages will surface helpful errors.
+        }
         Ok(out)
     }
 

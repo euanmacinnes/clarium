@@ -27,7 +27,7 @@ pub fn print_query_result(val: &Value) -> bool {
     let cols_v = match cols_opt { Some(v) => v, None => return false };
     let rows_v = match rows_opt { Some(v) => v, None => return false };
     let cols = match normalize_columns(&cols_v) { Some(v) => v, None => return false };
-    let rows = match normalize_rows(&rows_v) { Some(v) => v, None => return false };
+    let mut rows = match normalize_rows(&rows_v) { Some(v) => v, None => return false };
 
     // If there are no rows, stick to JSON as per requirement (only print table when rows are returned)
     if rows.is_empty() { return false; }
@@ -36,24 +36,53 @@ pub fn print_query_result(val: &Value) -> bool {
     let termw = get_terminal_width();
     crate::tprintln!("[cli.outputformatter] detected terminal width={} columns", termw);
 
-    let mut widths: Vec<usize> = cols.iter().map(|s| s.len().min(termw)).collect();
+    // Prepare sanitized headers (tabs expanded, controls handled). Header stays single-line.
+    let cols_clean: Vec<String> = cols.iter().map(|c| sanitize_no_newlines(c, 4)).collect();
+
+    // Compute column widths considering multi-line cells. We split on newlines for each cell,
+    // sanitize each line (tabs/controls), and take the max visible width among all lines.
+    let mut widths: Vec<usize> = cols_clean.iter().map(|s| display_len(s).min(termw)).collect();
     for r in &rows {
         for (i, cell) in r.iter().enumerate().take(cols.len()) {
-            let w = display_len(cell);
-            if w > widths[i] { widths[i] = w.min(termw); }
+            for line in split_cell_lines(cell) {
+                let safe = sanitize_no_newlines(&line, 4);
+                let w = display_len(&safe);
+                if w > widths[i] { widths[i] = w.min(termw); }
+            }
         }
     }
 
     // Header
     let sep = build_separator(&widths);
     println!("{}", fit_line_to_width(&sep, termw));
-    let header = build_row_header_colored(&cols, &widths);
+    let header = build_row_header_colored(&cols_clean, &widths);
     println!("{}", fit_line_to_width(&header, termw));
     println!("{}", fit_line_to_width(&sep, termw));
-    // Rows
+    // Rows: expand logical rows into multiple physical lines when cells contain newlines
     for r in &rows {
-        let line = build_row(r, &widths);
-        println!("{}", fit_line_to_width(&line, termw));
+        // Split each cell into lines
+        let per_cell_lines: Vec<Vec<String>> = r
+            .iter()
+            .map(|cell| {
+                let parts = split_cell_lines(cell);
+                parts.into_iter().map(|p| sanitize_no_newlines(&p, 4)).collect()
+            })
+            .collect();
+        let height = per_cell_lines.iter().map(|v| v.len()).max().unwrap_or(1);
+        for k in 0..height {
+            let mut line_cells: Vec<String> = Vec::with_capacity(widths.len());
+            for (i, _w) in widths.iter().enumerate() {
+                if i < per_cell_lines.len() {
+                    let v = &per_cell_lines[i];
+                    let s = if k < v.len() { v[k].clone() } else { String::new() };
+                    line_cells.push(s);
+                } else {
+                    line_cells.push(String::new());
+                }
+            }
+            let line = build_row(&line_cells, &widths);
+            println!("{}", fit_line_to_width(&line, termw));
+        }
     }
     println!("{}", fit_line_to_width(&sep, termw));
 
@@ -258,6 +287,44 @@ fn is_numeric_like(s: &str) -> bool {
         return false;
     }
     has_digit
+}
+
+// --- Newline-aware table helpers ---
+// Split a cell string into lines by normalizing CRLF/CR to LF and splitting on '\n'.
+fn split_cell_lines(s: &str) -> Vec<String> {
+    if s.is_empty() { return vec![String::new()]; }
+    let normalized = s.replace("\r\n", "\n").replace('\r', "\n");
+    normalized.split('\n').map(|x| x.to_string()).collect()
+}
+
+// Sanitize a single line (no newlines expected): expand tabs and replace control characters with spaces.
+fn sanitize_no_newlines(s: &str, tabw: usize) -> String {
+    let tabw = tabw.max(1);
+    let mut out = String::with_capacity(s.len());
+    let mut col = 0usize;
+    for ch in s.chars() {
+        match ch {
+            '\t' => {
+                let spaces = tabw - (col % tabw);
+                out.push_str(&" ".repeat(spaces));
+                col += spaces;
+            }
+            // Should not appear here; if they do, neutralize as space
+            '\n' | '\r' => {
+                out.push(' ');
+                col += 1;
+            }
+            c if c.is_control() => {
+                out.push(' ');
+                col += 1;
+            }
+            c => {
+                out.push(c);
+                col += 1;
+            }
+        }
+    }
+    out
 }
 
 fn extract_elapsed_ms(v: &Value) -> Option<u64> {

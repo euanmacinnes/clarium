@@ -248,7 +248,6 @@ pub fn parse_arith_expr(tokens: &[String]) -> Result<ArithExpr> {
         // find matching ')' for the opening at name_end
         let mut depth: i32 = 0;
         let mut j = name_end;
-        let sbytes = s.as_bytes();
         while j < s.len() {
             let ch = s[j..].chars().next().unwrap();
             if ch == '(' { depth += 1; }
@@ -419,7 +418,6 @@ pub fn parse_arith_expr(tokens: &[String]) -> Result<ArithExpr> {
                         j += 1; // consume '-'
                         // skip ws between - and number
                         while j < bytes.len() && bytes[j].is_ascii_whitespace() { j += 1; }
-                        let start = j;
                         let mut dot = false;
                         while j < bytes.len() {
                             let ch = bytes[j] as char;
@@ -595,7 +593,7 @@ pub fn parse_arith_expr(tokens: &[String]) -> Result<ArithExpr> {
                             // parse until matching closing ']' at depth 1, respecting quotes and parentheses within
                             let mut k = j2 + 1;
                             let mut depth_br = 1i32;
-                            let mut depth_paren = 0i32;
+                            let mut _depth_paren = 0i32;
                             let mut in_str = false;
                             let mut str_ch = '\'';
                             let mut inner = String::new();
@@ -618,8 +616,8 @@ pub fn parse_arith_expr(tokens: &[String]) -> Result<ArithExpr> {
                                 }
                                 match ch {
                                     '\'' | '"' => { in_str = true; str_ch = ch; inner.push(ch); k += ch_len; }
-                                    '(' => { depth_paren += 1; inner.push(ch); k += ch_len; }
-                                    ')' => { depth_paren -= 1; inner.push(ch); k += ch_len; }
+                                    '(' => { _depth_paren += 1; inner.push(ch); k += ch_len; }
+                                    ')' => { _depth_paren -= 1; inner.push(ch); k += ch_len; }
                                     '[' => { depth_br += 1; inner.push(ch); k += ch_len; }
                                     ']' => {
                                         depth_br -= 1;
@@ -755,7 +753,7 @@ pub fn parse_arith_expr(tokens: &[String]) -> Result<ArithExpr> {
                     // CASE expression: CASE WHEN cond THEN val [WHEN ...] [ELSE val] END
                     if name.eq_ignore_ascii_case("CASE") {
                         // Find matching END keyword
-                        let case_start = i;
+                        let _case_start = i;
                         let mut depth = 1; // Track nested CASE expressions
                         let mut end_pos = j;
                         let src_up = src.to_uppercase();

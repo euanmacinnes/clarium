@@ -237,7 +237,9 @@ pub enum ScriptCacheScope {
 
 
 pub fn parse(input: &str) -> Result<Command> {
-    let s = input.trim();
+    // Preprocess: strip SQL comments while preserving content within quotes
+    let cleaned = strip_sql_comments(input);
+    let s = cleaned.trim();
     let sup = s.to_uppercase();
     if sup.starts_with("EXPLAIN ") {
         let rest = s[7..].trim();

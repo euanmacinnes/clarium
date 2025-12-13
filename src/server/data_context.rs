@@ -900,7 +900,20 @@ impl DataContext {
                     out
                 } else {
                     let guard = store.0.lock();
-                    match guard.read_df(&effective) {
+                    // For time tables, prefer filter_df so `_time` is ensured and time pruning can apply later
+                    let use_time_path = guard.is_time_table(&effective);
+                    let result_df = if use_time_path {
+                        let (schema_map, _locks) = guard.load_schema_with_locks(&effective).unwrap_or_default();
+                        let mut cols: Vec<String> = schema_map.keys().cloned().collect();
+                        cols.sort();
+                        match guard.filter_df(&effective, &cols, None, None) {
+                            Ok(df) => Ok(df),
+                            Err(e) => Err(e),
+                        }
+                    } else {
+                        guard.read_df(&effective)
+                    };
+                    match result_df {
                         Ok(out) => {
                             tracing::debug!(target: "clarium::exec", "load_source_df: read_df('{}') -> cols={:?} rows={}", effective, out.get_column_names(), out.height());
                             out

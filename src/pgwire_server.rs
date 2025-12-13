@@ -426,7 +426,6 @@ async fn handle_query(socket: &mut tokio::net::TcpStream, store: &SharedStore, _
         let q_trim = stmt.trim();
         debug!("pgwire simple query [{}]: {}", idx, q_trim);
         // Intercept transaction control and common SHOW/SELECT meta that ORMs send
-        let up = q_trim.to_uppercase();
 
         let q_effective = exec::normalize_query_with_defaults(q_trim, &state.current_database, &state.current_schema);
         let upper = q_trim.chars().take(32).collect::<String>().to_uppercase();
@@ -496,7 +495,7 @@ async fn handle_query(socket: &mut tokio::net::TcpStream, store: &SharedStore, _
             let ctx = RequestContext { principal: state.principal.clone(), request_id: None, database: Some(state.current_database.clone()), filestore: None };
             match exec::execute_query_safe_with_ctx(store, &q_effective, &ctx).await {
                 Ok(val) => {
-                    let (cols, data): (Vec<String>, Vec<Vec<Option<String>>>) = (Vec::new(), Vec::new());
+                    let (_cols, data): (Vec<String>, Vec<Vec<Option<String>>>) = (Vec::new(), Vec::new());
                     let tag = if upper.starts_with("SELECT") { format!("SELECT {}", data.len()) }
                         else if upper.starts_with("CALCULATE") { let saved = match &val { serde_json::Value::Object(m) => m.get("saved").and_then(|v| v.as_u64()).unwrap_or(0), _ => 0 }; format!("CALCULATE {}", saved) }
                         else if upper.starts_with("DELETE") { "DELETE".to_string() }
@@ -699,7 +698,6 @@ async fn handle_bind(socket: &mut tokio::net::TcpStream, state: &mut ConnState) 
     // Helper: format an element (unescaped text value) for an element type OID into canonical array literal cell.
     // For text-like, quote and escape; for numeric/bool, validate and return bare; for NULL use bare NULL when input is None.
     fn format_array_element_for_oid(elem_oid: i32, val_opt: &Option<String>) -> Option<String> {
-        use crate::pgwire_server::inline::anyvalue_to_opt_string; // not used directly but keep import style consistent
         match val_opt {
             None => Some("NULL".to_string()),
             Some(v) => {

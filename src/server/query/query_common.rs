@@ -15,6 +15,98 @@ pub fn upper_shadow(s: &str) -> String {
     out
 }
 
+/// Strip SQL comments from the input while preserving content inside string literals.
+/// Supported comment styles:
+/// - Line comments starting with `--` until end of line
+/// - Block comments delimited by `/* ... */` (nesting is supported defensively)
+/// Newlines inside comments are preserved to keep line numbers stable; other
+/// commented characters are removed. Quotes inside strings are respected and
+/// not treated as comment delimiters.
+pub fn strip_sql_comments(input: &str) -> String {
+    let bytes = input.as_bytes();
+    let mut out = String::with_capacity(input.len());
+    let mut i = 0usize;
+    let mut in_squote = false;
+    let mut in_dquote = false;
+    let mut block_depth: i32 = 0;
+    let mut line_comment = false;
+
+    while i < bytes.len() {
+        let ch = bytes[i] as char;
+
+        // Handle inside line comment
+        if line_comment {
+            if ch == '\n' {
+                out.push('\n');
+                line_comment = false;
+            } else if ch == '\r' {
+                out.push('\r');
+                // Do not reset here; Windows CRLF will reset on next \n
+            }
+            i += 1;
+            continue;
+        }
+
+        // Handle inside block comment
+        if block_depth > 0 {
+            // Preserve newlines, skip other chars
+            if ch == '\n' || ch == '\r' {
+                out.push(ch);
+                i += 1;
+                continue;
+            }
+            // Detect nested /* */
+            if ch == '/' && i + 1 < bytes.len() && bytes[i + 1] as char == '*' {
+                block_depth += 1;
+                i += 2;
+                continue;
+            }
+            if ch == '*' && i + 1 < bytes.len() && bytes[i + 1] as char == '/' {
+                block_depth -= 1;
+                i += 2;
+                continue;
+            }
+            i += 1;
+            continue;
+        }
+
+        // Not inside any comment
+        if !in_dquote && ch == '\'' {
+            in_squote = !in_squote;
+            out.push(ch);
+            i += 1;
+            continue;
+        }
+        if !in_squote && ch == '"' {
+            in_dquote = !in_dquote;
+            out.push(ch);
+            i += 1;
+            continue;
+        }
+
+        if !in_squote && !in_dquote {
+            // Start of line comment?
+            if ch == '-' && i + 1 < bytes.len() && bytes[i + 1] as char == '-' {
+                line_comment = true;
+                i += 2;
+                continue;
+            }
+            // Start of block comment?
+            if ch == '/' && i + 1 < bytes.len() && bytes[i + 1] as char == '*' {
+                block_depth = 1;
+                i += 2;
+                continue;
+            }
+        }
+
+        // Default: copy through
+        out.push(ch);
+        i += 1;
+    }
+
+    out
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum CompOp { Gt, Ge, Lt, Le, Eq, Ne, Like, NotLike }
 
