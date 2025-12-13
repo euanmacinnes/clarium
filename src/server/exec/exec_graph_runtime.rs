@@ -5,6 +5,7 @@
 
 use anyhow::{anyhow, Result};
 use polars::prelude::*;
+use crate::server::exec::internal::constants::MASK;
 use serde::Deserialize;
 use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
@@ -211,7 +212,7 @@ pub fn graph_neighbors_df(
                             bools.push(ge && le);
                         } else { bools.push(false); }
                     }
-                    let mask_series = Series::new("__mask".into(), bools);
+                    let mask_series = Series::new(MASK.into(), bools);
                     edges_df = edges_df.filter(mask_series.bool()?)?;
                 }
             }
@@ -323,7 +324,7 @@ pub fn graph_paths_df(
                             bools.push(ge && le);
                         } else { bools.push(false); }
                     }
-                    let mask_series = Series::new("__mask".into(), bools);
+                    let mask_series = Series::new(MASK.into(), bools);
                     edges_df = edges_df.filter(mask_series.bool()?)?;
                 }
             }

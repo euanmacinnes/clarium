@@ -1,6 +1,7 @@
 use anyhow::{Result, anyhow};
 use std::path::{Path, PathBuf};
 use polars::prelude::*;
+use crate::server::exec::internal::constants::MASK;
 use argon2::{Argon2, PasswordHasher, PasswordVerifier};
 use password_hash::{SaltString, PasswordHash};
 
@@ -100,7 +101,7 @@ pub fn add_user(db_root: &str, scope: Scope, username: &str, password: &str, per
             };
             mask_vec.push(keep);
         }
-        let mask_series = Series::new("__mask".into(), mask_vec);
+        let mask_series = Series::new(MASK.into(), mask_vec);
         df = df.filter(mask_series.bool()?)?;
     }
     let hash = hash_password(password)?;

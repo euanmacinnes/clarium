@@ -6,6 +6,7 @@ use polars::prelude::*;
 use polars::prelude::AnyValue;
 use tracing::debug;
 use crate::tprintln;
+use crate::server::exec::internal::constants::{TMP, ARG_PREFIX};
 
 use crate::server::data_context::{DataContext, SelectStage};
 use crate::server::query::query_common::Query;
@@ -124,8 +125,8 @@ pub fn by_or_groupby(store: &SharedStore, mut df: DataFrame, q: &Query, ctx: &mu
                             qualify(&part, ctx, ex)?
                         };
                         let expr = build_arith_expr(&qa, ctx);
-                        let out = part.clone().lazy().select([expr.alias("__tmp__")]).collect()?;
-                        out.column("__tmp__")?.as_series().cloned()
+                        let out = part.clone().lazy().select([expr.alias(TMP)]).collect()?;
+                        out.column(TMP)?.as_series().cloned()
                     } else {
                         // Plain column
                         let qn = ctx.resolve_column(&part, &item.column).unwrap_or_else(|_| item.column.clone());
@@ -763,9 +764,9 @@ pub fn by_or_groupby(store: &SharedStore, mut df: DataFrame, q: &Query, ctx: &mu
             use crate::server::exec::exec_common::build_arith_expr;
             let mut arg_eval_cache: std::collections::HashMap<usize, DataFrame> = std::collections::HashMap::new();
             for (pi, plan) in udf_plans.iter().enumerate() {
-                // Build a df with each arg as a column __argN
+                // Build a df with each arg as a column ARG_PREFIX + N
                 let mut exprs: Vec<Expr> = Vec::with_capacity(plan.args.len());
-                for (ai, a) in plan.args.iter().enumerate() { exprs.push(build_arith_expr(a, ctx).alias(format!("__arg{}", ai))); }
+                for (ai, a) in plan.args.iter().enumerate() { exprs.push(build_arith_expr(a, ctx).alias(format!("{}{}", ARG_PREFIX, ai))); }
                 let arg_df = df.clone().lazy().select(exprs).collect()?;
                 arg_eval_cache.insert(pi, arg_df);
             }
@@ -862,7 +863,7 @@ pub fn by_or_groupby(store: &SharedStore, mut df: DataFrame, q: &Query, ctx: &mu
                     // Build JSON arrays for args
                     let mut jargs: Vec<serde_json::Value> = Vec::with_capacity(plan.args.len());
                     for (ai, _aexpr) in plan.args.iter().enumerate() {
-                        let s = arg_df.column(&format!("__arg{}", ai)).unwrap();
+                        let s = arg_df.column(&format!("{}{}", ARG_PREFIX, ai)).unwrap();
                         let mut arr: Vec<serde_json::Value> = Vec::with_capacity(rows.len());
                         for &r in &rows {
                             let av = s.get(r).unwrap_or(polars::prelude::AnyValue::Null);

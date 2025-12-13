@@ -569,7 +569,7 @@ fn ann_order_dataframe(
                                                                                     };
                                                                                     scores.push(s);
                                                                                 }
-                                                                                df_w.with_column(Series::new("__ann_score".into(), scores))?;
+                                                                                df_w.with_column(Series::new(ANN_SCORE.into(), scores))?;
                                                                                 // Build final sort: score + secondary keys + row-id
                                                                                 let final_desc = !asc_hint;
                                                                                 let (exprs, desc) = build_sort_keys(&df_w, rid_col_name.as_deref(), final_desc);
@@ -609,7 +609,7 @@ fn ann_order_dataframe(
                                                                             };
                                                                             scores.push(s);
                                                                         }
-                                                                        df_w.with_column(Series::new("__ann_score".into(), scores))?;
+                                                                        df_w.with_column(Series::new(ANN_SCORE.into(), scores))?;
                                                                         let final_desc = !asc_hint;
                                                                         let (exprs, desc) = build_sort_keys(&df_w, rid_col_name.as_deref(), final_desc);
                                                                         let opts = polars::prelude::SortMultipleOptions {
@@ -694,10 +694,10 @@ fn ann_order_dataframe(
                 };
                 scores2.push(s);
             }
-            out.with_column(Series::new("__ann_score".into(), scores2))?;
+            out.with_column(Series::new(ANN_SCORE.into(), scores2))?;
             if out.height() > 0 {
                 let id0 = out.column("id").ok().and_then(|c| c.get(0).ok()).map(|av| av.to_string()).unwrap_or("?".to_string());
-                let s0 = out.column("__ann_score").ok().and_then(|c| c.get(0).ok()).map(|av| av.to_string()).unwrap_or("?".to_string());
+                let s0 = out.column(ANN_SCORE).ok().and_then(|c| c.get(0).ok()).map(|av| av.to_string()).unwrap_or("?".to_string());
                 crate::tprintln!("[ANN] topk pre-sort preview: first_id={} first_score={}", id0, s0);
             }
             let (exprs, desc) = build_sort_keys(&out, rid_col_name.as_deref(), final_desc);
@@ -741,7 +741,7 @@ fn ann_order_dataframe(
                 };
                 scores2.push(s);
             }
-            out.with_column(Series::new("__ann_score".into(), scores2))?;
+            out.with_column(Series::new(ANN_SCORE.into(), scores2))?;
             let (exprs, desc) = build_sort_keys(&out, rid_col_name.as_deref(), final_desc);
             let opts = polars::prelude::SortMultipleOptions { descending: desc, nulls_last: vec![true; exprs.len()], maintain_order: true, multithreaded: true, limit: Some(out.height() as polars::prelude::IdxSize) };
             let orig_cols: Vec<_> = df.get_column_names().iter().map(|s| col(s.as_str())).collect();
@@ -815,7 +815,7 @@ fn ann_order_dataframe(
         scores.push(score);
     }
     let final_desc = !asc_hint;
-    let score_series = Series::new("__ann_score".into(), scores);
+    let score_series = Series::new(ANN_SCORE.into(), scores);
     let mut df2 = df.clone();
     df2.with_column(score_series)?;
     // Build sort keys: primary by __ann_score, then by secondary ORDER BY keys, then stable row-id tie-break

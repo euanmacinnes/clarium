@@ -6,6 +6,7 @@ use std::cell::RefCell;
 
 use anyhow::Result;
 use polars::prelude::{DataFrame, Series, NamedFrom};
+use crate::server::exec::internal::constants::ROW_ID;
 use tracing::debug;
 
 use crate::server::query::*;
@@ -620,9 +621,9 @@ impl DataContext {
 
     /// Resolve a stable row-id column present in the current DataFrame.
     /// Preference order:
-    /// 1) Qualified form "<prefix>.__row_id" when a single such column exists.
+    /// 1) Qualified form "<prefix>.{ROW_ID}" when a single such column exists.
     ///    If multiple exist, prefer those under current db/schema when available.
-    /// 2) Unqualified "__row_id" if it exists uniquely.
+    /// 2) Unqualified ROW_ID if it exists uniquely.
     /// 3) Legacy form "__row_id.<alias>" if it exists uniquely.
     /// Otherwise returns Ok(None).
     pub fn resolve_row_id(&self, df: &DataFrame) -> anyhow::Result<Option<String>> {
@@ -634,9 +635,9 @@ impl DataContext {
         let mut legacy: Vec<String> = Vec::new();
         for c in cols {
             let s = c.as_str();
-            if s.eq_ignore_ascii_case("__row_id") {
+            if s.eq_ignore_ascii_case(ROW_ID) {
                 unqualified.push(c.to_string());
-            } else if s.to_ascii_lowercase().ends_with(".__row_id") {
+            } else if s.to_ascii_lowercase().ends_with(&format!(".{}", ROW_ID)) {
                 qualified.push(c.to_string());
             } else if s.to_ascii_lowercase().starts_with("__row_id.") {
                 legacy.push(c.to_string());
@@ -675,7 +676,7 @@ impl DataContext {
             }
             if prefixes.len() == 1 {
                 let pref = prefixes.into_iter().next().unwrap();
-                let candidate = format!("{}.{}", pref, "__row_id");
+                let candidate = format!("{}.{}", pref, ROW_ID);
                 if let Some(actual) = df.get_column_names().iter().find(|n| n.as_str().eq_ignore_ascii_case(&candidate)) {
                     crate::tprintln!("[resolve_row_id] single-prefix fast-path: {}", actual);
                     return Ok(Some(actual.to_string()));
