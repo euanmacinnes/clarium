@@ -10,14 +10,9 @@ use crate::{server::query, storage::SharedStore};
 
 pub fn handle_insert(store: &SharedStore, table: String, columns: Vec<String>, values: Vec<Vec<query::ArithTerm>>) -> Result<serde_json::Value> {
     let __t0 = std::time::Instant::now();
-    // Convert dot notation (schema.table) to slash notation (schema/table) for storage
-    // But preserve .time suffix for time tables
-    let table_path = if table.ends_with(".time") {
-        let base = &table[..table.len() - 5]; // Remove ".time"
-        format!("{}.time", base.replace('.', "/"))
-    } else {
-        table.replace('.', "/")
-    };
+    // Convert dot notation (schema.table) to slash notation (schema/table) for storage.
+    // Do not rely on suffix to classify; classification will come from schema metadata.
+    let table_path = table.replace('.', "/");
 
     // Ensure table exists (lock only for this short scope)
     {
@@ -26,8 +21,12 @@ pub fn handle_insert(store: &SharedStore, table: String, columns: Vec<String>, v
         // guard dropped here
     }
 
-    // Time-table insert path
-    if table_path.ends_with(".time") {
+    // Time-table insert path — determined by schema metadata, not by name suffix
+    let is_time_table = {
+        let guard = store.0.lock();
+        guard.is_time_table(&table_path)
+    };
+    if is_time_table {
         // Find _time column index (accept ID or _time)
         let time_col_idx = columns.iter().position(|c| {
             let c_upper = c.to_uppercase();

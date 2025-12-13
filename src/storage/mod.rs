@@ -73,8 +73,11 @@ impl Store {
     /// Return the configured root folder for this Store.
     pub fn root_path(&self) -> &PathBuf { &self.root }
 
-    /// Determine if a logical table is a time-series table using metadata first,
-    /// and falling back to legacy name heuristics if metadata is absent.
+    /// Determine if a logical table is a time-series table using metadata only.
+    ///
+    /// IMPORTANT: Do not rely on directory name heuristics like a ".time" suffix.
+    /// We only trust the persisted schema metadata (and system registry when
+    /// applicable). If metadata is absent or invalid, we default to `false`.
     pub fn is_time_table(&self, table: &str) -> bool {
         let schema_path = self.schema_path(table);
         if schema_path.exists() {
@@ -94,17 +97,11 @@ impl Store {
                 }
             }
         }
-        // Fallback to name-based heuristic
-        let name = table.replace('\\', "/");
-        let by_suffix = name.ends_with(".time");
-        let by_token = name.split('.').last().map(|t| t.eq_ignore_ascii_case("time")).unwrap_or(false);
-        let guess = by_suffix || by_token;
         crate::tprintln!(
-            "[storage.is_time_table] table='{}' no/invalid schema.json -> heuristic {}",
-            table,
-            guess
+            "[storage.is_time_table] table='{}' no/invalid schema.json -> default false",
+            table
         );
-        guess
+        false
     }
 
     /// Create an empty logical database (table directory) and initialize schema.json.

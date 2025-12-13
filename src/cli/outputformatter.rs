@@ -277,7 +277,7 @@ fn extract_elapsed_ms_from(v: Option<&Value>) -> Option<u64> {
 
 fn get_terminal_width() -> usize {
     let size = terminal_size();
-    if let Some((Width(w), Height(h))) = size {
+    if let Some((Width(w), Height(_h))) = size {
         return (w-4) as usize;
     }
     

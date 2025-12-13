@@ -483,7 +483,7 @@ pub async fn execute_query(store: &SharedStore, text: &str) -> Result<serde_json
                 let dest = dest.trim();
                 let guard = store.0.lock();
                 guard.create_table(dest).ok();
-                if dest.ends_with(".time") {
+                if guard.is_time_table(dest) {
                     // Expect exactly one _time column and ensure uniqueness
                     let time_cols = df.get_column_names().into_iter().filter(|n| n.as_str() == "_time").count();
                     if time_cols != 1 { anyhow::bail!("INTO time table requires exactly one _time column in the projection"); }

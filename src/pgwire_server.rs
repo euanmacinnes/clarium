@@ -22,7 +22,7 @@ use crate::pgwire_server::structs::*;
 use crate::tprintln;
 
 use crate::{storage::SharedStore, server::exec};
-use crate::identity::{AuthProvider, LocalAuthProvider, SessionManager, LoginRequest, RequestContext, Principal};
+use crate::identity::{SessionManager, LoginRequest, RequestContext};
 use crate::identity::login_via_sql;
 use crate::server::query::{self, Command};
 use crate::server::exec::exec_select::handle_select;

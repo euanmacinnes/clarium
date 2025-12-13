@@ -87,6 +87,10 @@ ann_hnsw = ["dep:hnsw_rs"]
 # Optional mmap-backed loading for ANN HNSW artifacts
 ann_hnsw_mmap = []
 
+# Optional type support flags used in cfg checks
+# Declared to satisfy `check-cfg` and allow conditional code to compile cleanly.
+pgvector_type = []
+
 # Dev-only SeaORM runner in clarium_test_suite
 seaorm_dev = ["dep:sea-orm", "dep:sea-query"]
 
