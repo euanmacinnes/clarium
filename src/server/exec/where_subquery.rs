@@ -12,6 +12,7 @@ use crate::server::data_context::DataContext;
 use crate::storage::SharedStore;
 use crate::server::exec::exec_common::{build_where_expr};
 use crate::server::exec::exec_common::build_arith_expr as build_arith_expr_public;
+use crate::server::exec::internal::constants::{TMP_BOOL_ALIAS, TMP_LEFT_ALIAS};
 use crate::server::exec::exec_select::run_select_with_context;
 
 /// Returns true if the WHERE expression contains any subquery operator.
@@ -31,9 +32,9 @@ pub(crate) fn eval_where_mask(df: &DataFrame, ctx: &DataContext, store: &SharedS
         WE::And(a, b) => {
             // If neither child contains subqueries, delegate the entire AND to Polars
             if !where_contains_subquery(a) && !where_contains_subquery(b) {
-                let expr = build_where_expr(w, ctx).alias("__m__");
+                let expr = build_where_expr(w, ctx).alias(TMP_BOOL_ALIAS);
                 let mdf = df.clone().lazy().select([expr]).collect()?;
-                Ok(mdf.column("__m__")?.bool()?.clone())
+                Ok(mdf.column(TMP_BOOL_ALIAS)?.bool()?.clone())
             } else {
                 let la = eval_where_mask(df, ctx, store, a)?;
                 let lb = eval_where_mask(df, ctx, store, b)?;
@@ -50,9 +51,9 @@ pub(crate) fn eval_where_mask(df: &DataFrame, ctx: &DataContext, store: &SharedS
         WE::Or(a, b) => {
             // If neither child contains subqueries, delegate the entire OR to Polars
             if !where_contains_subquery(a) && !where_contains_subquery(b) {
-                let expr = build_where_expr(w, ctx).alias("__m__");
+                let expr = build_where_expr(w, ctx).alias(TMP_BOOL_ALIAS);
                 let mdf = df.clone().lazy().select([expr]).collect()?;
-                Ok(mdf.column("__m__")?.bool()?.clone())
+                Ok(mdf.column(TMP_BOOL_ALIAS)?.bool()?.clone())
             } else {
                 let la = eval_where_mask(df, ctx, store, a)?;
                 let lb = eval_where_mask(df, ctx, store, b)?;
@@ -67,9 +68,9 @@ pub(crate) fn eval_where_mask(df: &DataFrame, ctx: &DataContext, store: &SharedS
         }
         WE::Comp { .. } | WE::IsNull { .. } => {
             // Delegate to Polars for simple predicates
-            let expr = build_where_expr(w, ctx).alias("__m__");
+            let expr = build_where_expr(w, ctx).alias(TMP_BOOL_ALIAS);
             let mdf = df.clone().lazy().select([expr]).collect()?;
-            Ok(mdf.column("__m__")?.bool()?.clone())
+            Ok(mdf.column(TMP_BOOL_ALIAS)?.bool()?.clone())
         }
         WE::Exists { negated, subquery } => {
             // For each row, execute correlated subquery and check non-empty
@@ -86,12 +87,12 @@ pub(crate) fn eval_where_mask(df: &DataFrame, ctx: &DataContext, store: &SharedS
         }
         WE::Any { left, op, subquery, negated } | WE::All { left, op, subquery, negated } => {
             // Precompute left values for all rows
-            let ldf = df.clone().lazy().select([build_arith_expr_public(left, ctx).alias("__l__")]).collect()?;
+            let ldf = df.clone().lazy().select([build_arith_expr_public(left, ctx).alias(TMP_LEFT_ALIAS)]).collect()?;
             // Evaluate per row with correlated subquery
             let is_all = matches!(w, WE::All { .. });
             let mut out: Vec<Option<bool>> = Vec::with_capacity(df.height());
             for i in 0..df.height() {
-                let lhs = ldf.column("__l__")?.get(i)?;
+                let lhs = ldf.column(TMP_LEFT_ALIAS)?.get(i)?;
                 // Build and run correlated subquery for this row
                 let sq = substitute_outer_refs_in_query(df, i, subquery, ctx)?;
                 let sq_df = run_select_with_context(store, &sq, Some(ctx)).unwrap_or(DataFrame::new(Vec::new())?);

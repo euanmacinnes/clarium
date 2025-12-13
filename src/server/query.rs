@@ -190,6 +190,8 @@ pub enum Command {
     DescribeObject { name: String },
     Slice(SlicePlan),
     Insert { table: String, columns: Vec<String>, values: Vec<Vec<ArithTerm>> },
+    // INSERT INTO <table> [(col1, col2, ...)] SELECT ...
+    InsertSelect { table: String, columns: Vec<String>, query: Query },
     // EXPLAIN <stmt>
     Explain { sql: String },
     // FILESTORE SHOW variants

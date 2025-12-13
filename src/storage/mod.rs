@@ -182,15 +182,13 @@ impl Store {
         match dt {
             DataType::String => "string".into(),
             DataType::Int64 => "int64".into(),
-            // Treat List(Float64) as our logical 'vector' type for schema purposes
-            DataType::List(inner) => {
-                if matches!(**inner, DataType::Float64) || matches!(**inner, DataType::Int64) {
-                    "vector".into()
-                } else {
-                    // default label for other lists
-                    "list".into()
-                }
-            }
+            // Prefer explicit array syntax using [] and preserve inner dtype
+            DataType::List(inner) => match inner.as_ref() {
+                DataType::Float64 => "float64[]".into(),
+                DataType::Int64 => "int64[]".into(),
+                DataType::String => "string[]".into(),
+                _ => "list".into(),
+            },
             _ => "float64".into(),
         }
     }
@@ -198,8 +196,12 @@ impl Store {
         match s.to_ascii_lowercase().as_str() {
             "utf8" | "string" => DataType::String,
             "int64" => DataType::Int64,
-            // Map logical 'vector' to List(Float64)
+            // Back-compat: logical 'vector' maps to List(Float64)
             "vector" => DataType::List(Box::new(DataType::Float64)),
+            // New explicit array syntax
+            "float64[]" | "double[]" => DataType::List(Box::new(DataType::Float64)),
+            "int64[]" | "bigint[]" => DataType::List(Box::new(DataType::Int64)),
+            "string[]" | "utf8[]" | "text[]" => DataType::List(Box::new(DataType::String)),
             _ => DataType::Float64,
         }
     }
@@ -226,21 +228,45 @@ impl Store {
             let mut any_string_label = false;
             let mut any_float = false;
             let mut any_list = false;
+            let mut any_list_float = false;
+            let mut any_list_int = false;
+            let mut any_list_string = false;
             let mut saw_value = false;
             for r in records {
                 if let Some(val) = r.sensors.get(name) {
                     match val {
                         serde_json::Value::Array(arr) => {
-                            // Treat any array as a vector (List(Float64)) if elements are numeric or string-encoded numbers
-                            if !arr.is_empty() {
-                                any_list = true;
-                                saw_value = true;
+                            if !arr.is_empty() { any_list = true; saw_value = true; }
+                            for e in arr {
+                                match e {
+                                    serde_json::Value::Number(n) => {
+                                        if n.as_i64().is_some() { any_list_int = true; }
+                                        else { any_list_float = true; }
+                                    }
+                                    serde_json::Value::String(s) => {
+                                        if s.parse::<i64>().is_ok() { any_list_int = true; }
+                                        else if s.parse::<f64>().is_ok() { any_list_float = true; }
+                                        else { any_list_string = true; }
+                                    }
+                                    _ => { any_list_string = true; }
+                                }
                             }
                         }
                         serde_json::Value::String(s) => {
-                            if s.parse::<i64>().is_ok() { saw_value = true; }
+                            let st = s.trim();
+                            if (st.starts_with('[') && st.ends_with(']')) || st.contains(',') {
+                                // looks like an encoded array
+                                any_list = true; saw_value = true;
+                                let inner = st.trim_start_matches('[').trim_end_matches(']');
+                                for part in inner.split(',') {
+                                    let p = part.trim(); if p.is_empty() { continue; }
+                                    if p.parse::<i64>().is_ok() { any_list_int = true; }
+                                    else if p.parse::<f64>().is_ok() { any_list_float = true; }
+                                    else { any_list_string = true; }
+                                }
+                            } else if s.parse::<i64>().is_ok() { saw_value = true; }
                             else if s.parse::<f64>().is_ok() { any_float = true; saw_value = true; }
-                            else { any_string_label = true; break; }
+                            else { any_string_label = true; }
                         }
                         serde_json::Value::Number(n) => {
                             if n.as_i64().is_some() { saw_value = true; } else { any_float = true; saw_value = true; }
@@ -249,13 +275,17 @@ impl Store {
                     }
                 }
             }
-            let dt = if any_list { DataType::List(Box::new(DataType::Float64)) }
+            let dt = if any_list {
+                    if any_list_string { DataType::List(Box::new(DataType::String)) }
+                    else if any_list_float { DataType::List(Box::new(DataType::Float64)) }
+                    else { DataType::List(Box::new(DataType::Int64)) }
+                }
                 else if any_string_label { DataType::String }
                 else if any_float { DataType::Float64 }
                 else if saw_value { DataType::Int64 }
                 else { DataType::Float64 };
             if cfg!(debug_assertions) {
-                crate::tprintln!("[storage.infer_dtypes] name='{}' any_list={} any_float={} any_string_label={} -> {:?}", name, any_list, any_float, any_string_label, dt);
+                crate::tprintln!("[storage.infer_dtypes] name='{}' any_list={} list_int={} list_float={} list_string={} any_float={} any_string_label={} -> {:?}", name, any_list, any_list_int, any_list_float, any_list_string, any_float, any_string_label, dt);
             }
             map.insert(name.clone(), dt);
         }

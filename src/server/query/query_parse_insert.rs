@@ -48,7 +48,8 @@ pub fn parse_manual_rows(s: &str) -> Result<Option<(SliceSource, usize)>> {
 
 
 pub fn parse_insert(s: &str) -> Result<Command> {
-    // INSERT INTO table (col1, col2, ...) VALUES (val1, val2, ...), (val3, val4, ...), ...
+    // INSERT INTO table [(col1, col2, ...)] VALUES (v1,...), (..)
+    // INSERT INTO table [(col1, col2, ...)] SELECT ...
     let rest = s[6..].trim(); // after "INSERT"
     let up = rest.to_uppercase();
     
@@ -58,10 +59,13 @@ pub fn parse_insert(s: &str) -> Result<Command> {
     }
     let after_into = rest[5..].trim();
     
-    // Find table name (everything before the opening paren or VALUES keyword)
-    let table_end = after_into.find('(').or_else(|| {
-        after_into.to_uppercase().find(" VALUES")
-    }).ok_or_else(|| anyhow::anyhow!("INSERT syntax error: expected column list or VALUES"))?;
+    // Find table name (everything before the opening paren or VALUES/SELECT/WITH keyword)
+    let up_after = after_into.to_uppercase();
+    let table_end = after_into.find('(')
+        .or_else(|| up_after.find(" VALUES"))
+        .or_else(|| up_after.find(" SELECT"))
+        .or_else(|| up_after.find(" WITH "))
+        .ok_or_else(|| anyhow::anyhow!("INSERT syntax error: expected column list or VALUES/SELECT"))?;
     
     let mut table = after_into[..table_end].trim().to_string();
     // Strip quotes from table name if present
@@ -94,12 +98,10 @@ pub fn parse_insert(s: &str) -> Result<Command> {
         (Vec::new(), remaining)
     };
     
-    // Expect VALUES keyword
+    // Decide between VALUES and SELECT form
     let values_up = values_start.to_uppercase();
-    if !values_up.starts_with("VALUES ") {
-        anyhow::bail!("INSERT syntax error: expected VALUES clause");
-    }
-    let after_values = values_start[7..].trim();
+    if values_up.starts_with("VALUES ") {
+        let after_values = values_start[7..].trim();
     
     // Parse value tuples: (v1, v2, ...), (v3, v4, ...), ...
     let mut values: Vec<Vec<ArithTerm>> = Vec::new();
@@ -160,9 +162,16 @@ pub fn parse_insert(s: &str) -> Result<Command> {
         }
     }
     
-    if values.is_empty() {
-        anyhow::bail!("INSERT syntax error: no values provided");
+        if values.is_empty() {
+            anyhow::bail!("INSERT syntax error: no values provided");
+        }
+        return Ok(Command::Insert { table, columns, values });
     }
-    
-    Ok(Command::Insert { table, columns, values })
+    // Otherwise attempt to parse a SELECT query tail
+    let sel_up = values_start.to_uppercase();
+    if sel_up.starts_with("SELECT") || sel_up.starts_with("WITH ") {
+        let q = parse_select(values_start)?;
+        return Ok(Command::InsertSelect { table, columns, query: q });
+    }
+    anyhow::bail!("INSERT syntax error: expected VALUES or SELECT clause")
 }

@@ -465,6 +465,11 @@ pub async fn execute_query(store: &SharedStore, text: &str) -> Result<serde_json
         Command::Insert { table, columns, values } => {
             crate::server::exec::exec_insert::handle_insert(store, table, columns, values)
         }
+        Command::InsertSelect { table, columns, query } => {
+            // Execute SELECT to a DataFrame, then insert
+            let (df, _into) = crate::server::exec::exec_select::handle_select(store, &query)?;
+            crate::server::exec::exec_insert::handle_insert_from_df(store, table, columns, df)
+        }
         // Script management
         Command::CreateScript { .. }
         | Command::DropScript { .. }
